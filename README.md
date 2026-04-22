@@ -11,6 +11,7 @@
 - ✅ smux 流多路复用（一条隧道跑多个 TCP 连接）
 - ✅ TCP 端口转发（支持同时多个 `-forward` 规则）
 - ✅ TURN 中继兜底（打洞失败自动走服务器转发）
+- ✅ UPnP 主动端口映射（家用路由器可提升打洞成功率）
 - ✅ HTTP 健康检查接口
 
 ## 架构
@@ -139,6 +140,8 @@ client.exe -server <公网IP>:7000 -id A -peer B -force-relay -forward 13389:127
 | `-force-relay` | `false` | 跳过打洞直接走中继 |
 | `-probe` | `false` | NAT 类型探测模式 |
 | `-alt-port` | `7002` | 服务端 STUN 备用端口 |
+| `-no-upnp` | `false` | 禁用 UPnP 主动端口映射 |
+| `-upnp-timeout` | `4s` | UPnP 发现/映射超时 |
 
 ### 服务端 HTTP 接口
 
@@ -159,7 +162,6 @@ client.exe -server <公网IP>:7000 -id A -peer B -force-relay -forward 13389:127
 ## 已知限制
 
 - 无加密（KCP 原生不加密，需要可以自己套一层，或上 QUIC）
-- 无 UPnP 主动开映射
 - 无对称 NAT 端口预测
 - 服务端已注册客户端无过期回收
 - 只支持 IPv4

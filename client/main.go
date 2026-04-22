@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -26,6 +27,7 @@ import (
 	"udp_tunnel_demo/internal/forward"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/tunnel"
+	"udp_tunnel_demo/internal/upnp"
 )
 
 // multiFlag 支持 -forward a -forward b
@@ -42,6 +44,8 @@ func main() {
 	altPort := flag.Int("alt-port", 7002, "服务端 STUN 备用端口")
 	punchTimeout := flag.Duration("punch-timeout", 15*time.Second, "打洞超时时间, 超时后自动切换到 TURN 中继")
 	forceRelay := flag.Bool("force-relay", false, "跳过打洞直接走 TURN 中继")
+	noUpnp := flag.Bool("no-upnp", false, "禁用 UPnP 主动端口映射")
+	upnpTimeout := flag.Duration("upnp-timeout", 4*time.Second, "UPnP 发现/映射超时时间")
 	var forwards multiFlag
 	flag.Var(&forwards, "forward", "TCP 转发规则, 格式 LOCAL_PORT:HOST:PORT (可重复, 例如 -forward 13389:127.0.0.1:3389)")
 	flag.Parse()
@@ -77,7 +81,31 @@ func main() {
 	defer conn.Close()
 	log.Printf("[%s] local socket: %s", *id, conn.LocalAddr())
 
-	reg := &protocol.Message{Type: protocol.MsgRegister, From: *id, Peer: *peerID}
+	// 尝试 UPnP 主动端口映射（失败不影响后续流程）
+	var upnpMapping *upnp.Mapping
+	var upnpAddrStr string
+	if !*noUpnp {
+		localPort := conn.LocalAddr().(*net.UDPAddr).Port
+		ctx, cancel := context.WithTimeout(context.Background(), *upnpTimeout+time.Second)
+		m, uerr := upnp.Try(ctx, localPort, fmt.Sprintf("udp-tunnel %s", *id), *upnpTimeout)
+		cancel()
+		if uerr != nil {
+			log.Printf("[%s] UPnP 映射失败（忽略）: %v", *id, uerr)
+		} else {
+			upnpMapping = m
+			upnpAddrStr = m.External()
+			log.Printf("[%s] 🗺️  UPnP 映射成功: %s -> :%d", *id, upnpAddrStr, m.InternalPort)
+			defer func() {
+				if err := upnpMapping.Close(); err != nil {
+					log.Printf("[%s] UPnP 清除映射失败: %v", *id, err)
+				} else {
+					log.Printf("[%s] UPnP 映射已清除", *id)
+				}
+			}()
+		}
+	}
+
+	reg := &protocol.Message{Type: protocol.MsgRegister, From: *id, Peer: *peerID, UpnpAddr: upnpAddrStr}
 	b, _ := protocol.Encode(reg)
 	if _, err := conn.WriteToUDP(b, srvAddr); err != nil {
 		log.Fatal(err)
@@ -85,6 +113,7 @@ func main() {
 	log.Printf("[%s] registered to server, waiting for peer info...", *id)
 
 	var peerAddr atomic.Pointer[net.UDPAddr]
+	var peerUpnpAddr atomic.Pointer[net.UDPAddr] // 对端声明的 UPnP 公网地址（附加打洞目标）
 	var punched atomic.Bool
 	var punchStarted atomic.Bool
 	var isRelay atomic.Bool // 进入 TURN 中继模式后为 true；此后不再改 peerAddr
@@ -137,9 +166,17 @@ func main() {
 				}
 				peerAddr.Store(paddr)
 				log.Printf("[%s] got peer %s address: %s", *id, msg.Peer, paddr)
+				if msg.UpnpAddr != "" {
+					if uaddr, uerr := net.ResolveUDPAddr("udp", msg.UpnpAddr); uerr == nil {
+						peerUpnpAddr.Store(uaddr)
+						log.Printf("[%s] got peer %s UPnP address: %s", *id, msg.Peer, uaddr)
+					} else {
+						log.Printf("[%s] bad peer upnp addr %q: %v", *id, msg.UpnpAddr, uerr)
+					}
+				}
 				if punchStarted.CompareAndSwap(false, true) {
-					log.Printf("[%s] start punching -> %s", *id, paddr)
-					go punchLoop(conn, &peerAddr, &punched, *id)
+					log.Printf("[%s] start punching -> %s (upnp=%v)", *id, paddr, peerUpnpAddr.Load())
+					go punchLoop(conn, &peerAddr, &peerUpnpAddr, &punched, *id)
 				}
 
 			case protocol.MsgPunch:
@@ -369,11 +406,15 @@ func runProbe(server string, altPort int) {
 	fmt.Println("====================================")
 }
 
-// 持续向对端发 punch 包，直到打通
-func punchLoop(conn *net.UDPConn, peerAddr *atomic.Pointer[net.UDPAddr], punched *atomic.Bool, id string) {
+// 持续向对端候选地址发 punch 包，直到打通。
+// peerAddr 是服务器观察到的地址；peerUpnpAddr 是对端 UPnP 主动映射地址（可为 nil）。
+// 两个都有就都发，哪条路先通就用哪条（adoptPeerAddr 会锁定）。
+func punchLoop(conn *net.UDPConn, peerAddr, peerUpnpAddr *atomic.Pointer[net.UDPAddr], punched *atomic.Bool, id string) {
 	t := time.NewTicker(500 * time.Millisecond)
 	defer t.Stop()
 	attempts := 0
+	punchMsg := &protocol.Message{Type: protocol.MsgPunch, From: id}
+	data, _ := protocol.Encode(punchMsg)
 	for range t.C {
 		if punched.Load() {
 			return
@@ -382,14 +423,22 @@ func punchLoop(conn *net.UDPConn, peerAddr *atomic.Pointer[net.UDPAddr], punched
 		if paddr == nil {
 			return
 		}
-		punch := &protocol.Message{Type: protocol.MsgPunch, From: id}
-		data, _ := protocol.Encode(punch)
+		uaddr := peerUpnpAddr.Load()
 		if _, err := conn.WriteToUDP(data, paddr); err != nil {
 			log.Printf("punch send error: %v", err)
 		}
+		if uaddr != nil && uaddr.String() != paddr.String() {
+			if _, err := conn.WriteToUDP(data, uaddr); err != nil {
+				log.Printf("punch send (upnp) error: %v", err)
+			}
+		}
 		attempts++
 		if attempts%4 == 0 {
-			log.Printf("[%s] punching... sent=%d target=%s", id, attempts, paddr)
+			if uaddr != nil {
+				log.Printf("[%s] punching... sent=%d target=%s + upnp=%s", id, attempts, paddr, uaddr)
+			} else {
+				log.Printf("[%s] punching... sent=%d target=%s", id, attempts, paddr)
+			}
 		}
 		if attempts > 120 {
 			log.Printf("[%s] ❌ punch failed after %d attempts", id, attempts)

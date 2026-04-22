@@ -26,6 +26,7 @@ import (
 type peer struct {
 	id       string
 	addr     *net.UDPAddr
+	upnpAddr string // 对端自称的 UPnP 主动映射公网地址（可选）
 	want     string
 	lastSeen time.Time
 }
@@ -133,7 +134,7 @@ func runUDP(addr string) {
 			continue
 		}
 
-		log.Printf("register: id=%s want=%s from=%s", msg.From, msg.Peer, src)
+		log.Printf("register: id=%s want=%s from=%s upnp=%q", msg.From, msg.Peer, src, msg.UpnpAddr)
 		totalRegister.Add(1)
 
 		mu.Lock()
@@ -141,7 +142,7 @@ func runUDP(addr string) {
 			log.Printf("  (re-register: %s moved from %s to %s)", msg.From, old.addr, src)
 			pairs.Delete(old.addr.String())
 		}
-		peers[msg.From] = &peer{id: msg.From, addr: src, want: msg.Peer, lastSeen: time.Now()}
+		peers[msg.From] = &peer{id: msg.From, addr: src, upnpAddr: msg.UpnpAddr, want: msg.Peer, lastSeen: time.Now()}
 
 		self := peers[msg.From]
 		other, ok := peers[msg.Peer]
@@ -162,9 +163,10 @@ func runUDP(addr string) {
 
 func sendPeer(conn *net.UDPConn, to, about *peer) {
 	msg := &protocol.Message{
-		Type: protocol.MsgPeerInfo,
-		Peer: about.id,
-		Addr: about.addr.String(),
+		Type:     protocol.MsgPeerInfo,
+		Peer:     about.id,
+		Addr:     about.addr.String(),
+		UpnpAddr: about.upnpAddr,
 	}
 	b, _ := protocol.Encode(msg)
 	if _, err := conn.WriteToUDP(b, to.addr); err != nil {
@@ -207,6 +209,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		ID       string `json:"id"`
 		Addr     string `json:"addr"`
+		UpnpAddr string `json:"upnp_addr,omitempty"`
 		Want     string `json:"want"`
 		LastSeen string `json:"last_seen"`
 	}
@@ -214,7 +217,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	list := make([]item, 0, len(peers))
 	for _, p := range peers {
 		list = append(list, item{
-			ID: p.id, Addr: p.addr.String(), Want: p.want,
+			ID: p.id, Addr: p.addr.String(), UpnpAddr: p.upnpAddr, Want: p.want,
 			LastSeen: p.lastSeen.Format(time.RFC3339),
 		})
 	}
