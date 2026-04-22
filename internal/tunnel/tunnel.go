@@ -17,6 +17,8 @@ import (
 	"time"
 
 	kcp "github.com/xtaci/kcp-go/v5"
+
+	"udp_tunnel_demo/internal/secure"
 )
 
 // IsProtocolJSON 判断一个 UDP 载荷是不是我们自己的 JSON 协议包。
@@ -30,6 +32,7 @@ func IsProtocolJSON(b []byte) bool {
 type PacketConn struct {
 	real       *net.UDPConn
 	peer       *atomic.Pointer[net.UDPAddr] // 实际对端地址（可能被动态更新）
+	codec      *secure.Codec
 	inbox      chan inbound
 	closed     chan struct{}
 	closedOnce sync.Once
@@ -48,6 +51,12 @@ func NewPacketConn(real *net.UDPConn, peer *atomic.Pointer[net.UDPAddr]) *Packet
 		inbox:  make(chan inbound, 512),
 		closed: make(chan struct{}),
 	}
+}
+
+func NewSecurePacketConn(real *net.UDPConn, peer *atomic.Pointer[net.UDPAddr], codec *secure.Codec) *PacketConn {
+	p := NewPacketConn(real, peer)
+	p.codec = codec
+	return p
 }
 
 // Feed 由外部 demuxer 在收到 KCP 数据包时调用。
@@ -92,7 +101,19 @@ func (p *PacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 	if dst == nil {
 		return 0, errors.New("no peer address")
 	}
-	return p.real.WriteToUDP(b, dst)
+	out := b
+	if p.codec != nil {
+		framed, err := p.codec.Seal(secure.KindKCP, b)
+		if err != nil {
+			return 0, err
+		}
+		out = framed
+	}
+	_, err := p.real.WriteToUDP(out, dst)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 func (p *PacketConn) Close() error {
@@ -129,6 +150,10 @@ func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("kcp accept: %w", err)
 		}
+		// Accept 只需要临时 deadline。成功后必须清掉底层 PacketConn 的读 deadline，
+		// 否则后续 KCP 收包会在 30 秒后持续返回 timeout，smux 会误判隧道死亡。
+		_ = pc.SetReadDeadline(time.Time{})
+		_ = lis.SetReadDeadline(time.Time{})
 		tuneSession(sess)
 		return sess, nil
 	}
@@ -137,7 +162,7 @@ func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
 	if dst == nil {
 		return nil, errors.New("peer address unknown")
 	}
-	sess, err := kcp.NewConn2(dst, nil, 0, 0, pc)
+	sess, err := kcp.NewConn3(convID, dst, nil, 0, 0, pc)
 	if err != nil {
 		return nil, fmt.Errorf("kcp newconn: %w", err)
 	}

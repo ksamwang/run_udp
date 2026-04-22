@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDP Tunnel</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="login" class="login">
+      <h1>UDP Tunnel</h1>
+      <form id="login-form">
+        <input id="password" type="password" placeholder="管理员密码" autocomplete="current-password">
+        <button type="submit">登录</button>
+      </form>
+      <p id="login-error"></p>
+    </section>
+
+    <section id="app" class="hidden">
+      <header>
+        <h1>UDP Tunnel</h1>
+        <button id="logout">退出</button>
+      </header>
+      <nav>
+        <button data-tab="overview" class="active">总览</button>
+        <button data-tab="devices">设备</button>
+        <button data-tab="forwards">转发</button>
+        <button data-tab="sessions">会话</button>
+        <button data-tab="settings">设置</button>
+      </nav>
+      <section id="overview" class="tab active">
+        <div class="metrics" id="metrics"></div>
+      </section>
+      <section id="devices" class="tab">
+        <table><thead><tr><th>ID</th><th>地址</th><th>在线</th><th>最后活跃</th></tr></thead><tbody id="device-list"></tbody></table>
+      </section>
+      <section id="forwards" class="tab">
+        <form id="rule-form" class="rule-form">
+          <div class="field">
+            <label for="rule-name">规则名称</label>
+            <input id="rule-name" name="name" placeholder="例如：办公室 RDP">
+            <small>用于列表识别这条规则，不影响实际连接。</small>
+          </div>
+          <div class="field">
+            <label for="source-id">入口设备 ID</label>
+            <select id="source-id" name="source_id" required></select>
+            <small>发起访问的一端。本机将监听下面的本地端口。</small>
+          </div>
+          <div class="field">
+            <label for="target-id">出口设备 ID</label>
+            <select id="target-id" name="target_id" required></select>
+            <small>被访问服务所在的一端，例如运行 RDP/SSH 的机器。</small>
+          </div>
+          <div class="field">
+            <label for="local-port">本地端口</label>
+            <input id="local-port" name="local_port" type="number" min="1" max="65535" placeholder="例如：13389" required>
+            <small>入口设备监听的端口。访问 127.0.0.1:13389 会进入隧道。</small>
+          </div>
+          <div class="field">
+            <label for="target-host">目标 Host</label>
+            <input id="target-host" name="target_host" placeholder="例如：127.0.0.1" value="127.0.0.1" required>
+            <small>出口设备视角下的服务地址，通常是 127.0.0.1。</small>
+          </div>
+          <div class="field">
+            <label for="target-port">目标端口</label>
+            <input id="target-port" name="target_port" type="number" min="1" max="65535" placeholder="例如：3389" required>
+            <small>出口设备上的真实服务端口，例如 RDP 3389、SSH 22。</small>
+          </div>
+          <label class="check-field"><input name="enabled" type="checkbox" checked> 启用规则</label>
+          <div class="form-actions">
+            <button type="submit">添加规则</button>
+            <p>示例：入口设备 laptop，本地端口 13389；出口设备 office-pc，目标 127.0.0.1:3389。然后在 laptop 上连接 127.0.0.1:13389。</p>
+          </div>
+        </form>
+        <table><thead><tr><th>名称</th><th>入口</th><th>出口</th><th>映射</th><th>状态</th><th></th></tr></thead><tbody id="rule-list"></tbody></table>
+      </section>
+      <section id="sessions" class="tab">
+        <table><thead><tr><th>ID</th><th>设备</th><th>路径</th><th>中继字节</th><th>最后活跃</th></tr></thead><tbody id="session-list"></tbody></table>
+      </section>
+      <section id="settings" class="tab">
+        <form id="settings-form" class="settings-form">
+          <div class="field">
+            <label for="peer-ttl">设备在线 TTL</label>
+            <input id="peer-ttl" name="peer_ttl" placeholder="例如：90s" required>
+            <small>超过这个时间没有活动的设备会标记为离线。</small>
+          </div>
+          <div class="field">
+            <label for="pair-ttl">配对路由 TTL</label>
+            <input id="pair-ttl" name="pair_ttl" placeholder="例如：2m" required>
+            <small>中继路由长时间无活动后会自动清理。</small>
+          </div>
+          <div class="field">
+            <label for="relay-idle-timeout">中继会话空闲超时</label>
+            <input id="relay-idle-timeout" name="relay_idle_timeout" placeholder="例如：5m" required>
+            <small>空闲会话超过该时间后在统计中结束。</small>
+          </div>
+          <label class="check-field"><input name="allow_relay" type="checkbox"> 允许 TURN 中继连接</label>
+          <label class="check-field"><input name="allow_legacy" type="checkbox"> 允许旧明文 UDP 协议</label>
+          <div class="form-actions">
+            <button type="submit">保存服务端设置</button>
+            <p id="settings-msg"></p>
+          </div>
+        </form>
+        <div class="readonly-grid" id="readonly-settings"></div>
+        <form id="password-form" class="settings-form password-form">
+          <div class="field">
+            <label for="current-password">当前管理员密码</label>
+            <input id="current-password" name="current_password" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field">
+            <label for="new-password">新管理员密码</label>
+            <input id="new-password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
+            <small>至少 8 个字符，保存后立即生效。</small>
+          </div>
+          <div class="form-actions">
+            <button type="submit">修改管理员密码</button>
+            <p id="password-msg"></p>
+          </div>
+        </form>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

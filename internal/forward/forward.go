@@ -50,6 +50,7 @@ func ParseRule(s string) (Rule, error) {
 }
 
 const maxTargetLine = 256
+const streamHandshakeTimeout = 20 * time.Second
 
 // RunIngress 为每条转发规则起一个 TCP 监听，每个入站 TCP 连接走一条 smux 流。
 func RunIngress(sess *smux.Session, rules []Rule) error {
@@ -60,6 +61,10 @@ func RunIngress(sess *smux.Session, rules []Rule) error {
 			return fmt.Errorf("listen %d: %w", r.LocalPort, err)
 		}
 		log.Printf("[forward] ingress %s listening on 127.0.0.1:%d", r.Name, r.LocalPort)
+		go func() {
+			<-sess.CloseChan()
+			_ = ln.Close()
+		}()
 		go acceptLocalTCP(ln, sess, r)
 	}
 	return nil
@@ -92,11 +97,11 @@ func handleIngressConn(tc net.Conn, sess *smux.Session, r Rule) {
 	}
 
 	// 读对端响应
-	stream.SetReadDeadline(time.Now().Add(10 * time.Second))
+	stream.SetReadDeadline(time.Now().Add(streamHandshakeTimeout))
 	br := bufio.NewReader(stream)
 	resp, err := br.ReadString('\n')
 	if err != nil {
-		log.Printf("[forward] %s no response: %v", r.Name, err)
+		log.Printf("[forward] %s no response from remote target handshake after %s: %v", r.Name, streamHandshakeTimeout, err)
 		return
 	}
 	stream.SetReadDeadline(time.Time{})
@@ -127,11 +132,11 @@ func RunEgress(sess *smux.Session) {
 func handleEgressStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	stream.SetReadDeadline(time.Now().Add(10 * time.Second))
+	stream.SetReadDeadline(time.Now().Add(streamHandshakeTimeout))
 	br := bufio.NewReader(io.LimitReader(stream, maxTargetLine))
 	line, err := br.ReadString('\n')
 	if err != nil {
-		log.Printf("[forward/egress] read target failed: %v", err)
+		log.Printf("[forward/egress] read target failed after %s: %v", streamHandshakeTimeout, err)
 		return
 	}
 	stream.SetReadDeadline(time.Time{})
@@ -147,6 +152,7 @@ func handleEgressStream(stream *smux.Stream) {
 	defer tc.Close()
 
 	if _, err := stream.Write([]byte("OK\n")); err != nil {
+		log.Printf("[forward/egress] write OK to %s failed: %v", target, err)
 		return
 	}
 

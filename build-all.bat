@@ -15,7 +15,7 @@ echo === Building client (windows/amd64) ===
 set GOOS=windows
 set GOARCH=amd64
 set CGO_ENABLED=0
-go build -trimpath -ldflags "-s -w" -o "%DIST%\client.exe" .\client
+go build -trimpath -ldflags "-H=windowsgui -s -w" -o "%DIST%\client.exe" .\client
 if errorlevel 1 goto :fail
 
 echo.

@@ -1,0 +1,13 @@
+{
+  "udp_listen": ":7000",
+  "stun_alt_listen": ":7002",
+  "http_listen": ":7001",
+  "database_path": "udp-tunnel.db",
+  "admin_password": "change-me",
+  "psk": "change-this-deployment-secret",
+  "peer_ttl": "90s",
+  "pair_ttl": "2m",
+  "relay_idle_timeout": "5m",
+  "allow_relay": true,
+  "allow_legacy": false
+}
