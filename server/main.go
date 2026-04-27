@@ -58,13 +58,38 @@ type app struct {
 	totalRelayed  atomic.Uint64
 
 	mu       sync.Mutex
-	peers    map[string]*peer
+	peers    map[string]map[string]*peer // from -> want -> peer，一台设备可同时申请多个 peer
 	pairByID map[string]int64
 	pairs    sync.Map // src address string -> pairRoute
 
 	authMu   sync.Mutex
 	sessions map[string]time.Time
 	cfgMu    sync.RWMutex
+}
+
+type agentTunnelReport struct {
+	Peer       string `json:"peer"`
+	State      string `json:"state"`
+	Via        string `json:"via"`
+	NATType    string `json:"nat_type"`
+	PublicAddr string `json:"public_addr"`
+	ConvID     int64  `json:"conv_id"`
+	RTTMs      int    `json:"rtt_ms"`
+}
+
+type agentBootstrapResponse struct {
+	DeviceID     string `json:"device_id"`
+	DeviceName   string `json:"device_name"`
+	Server       string `json:"server"`
+	ServerHTTP   string `json:"server_http"`
+	STUNAltPort  int    `json:"stun_alt_port"`
+	NoUPnP       bool   `json:"no_upnp"`
+	UPnPTimeout  string `json:"upnp_timeout"`
+	LogLevel     string `json:"log_level"`
+	TrayEnabled  bool   `json:"tray_enabled"`
+	PunchTimeout string `json:"punch_timeout"`
+	ForceRelay   bool   `json:"force_relay"`
+	AllowLegacy  bool   `json:"allow_legacy"`
 }
 
 func main() {
@@ -145,7 +170,7 @@ func main() {
 		db:        db,
 		codec:     codec,
 		startTime: time.Now(),
-		peers:     map[string]*peer{},
+		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
 		sessions:  map[string]time.Time{},
 	}
@@ -300,19 +325,29 @@ func (a *app) writeControl(conn *net.UDPConn, dst *net.UDPAddr, msg *protocol.Me
 func (a *app) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.Message) {
 	log.Printf("register: id=%s want=%s from=%s upnp=%q", msg.From, msg.Peer, src, msg.UpnpAddr)
 	a.totalRegister.Add(1)
-	_ = a.db.UpsertDevice(rctx(), msg.From, src.String(), msg.UpnpAddr, msg.Peer, true)
+	name := msg.Name
+	if name == "" {
+		name = msg.From
+	}
+	_ = a.db.UpsertDevice(rctx(), msg.From, name, src.String(), msg.UpnpAddr, msg.Peer, true)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if old, ok := a.peers[msg.From]; ok && old.addr.String() != src.String() {
+	byWant, ok := a.peers[msg.From]
+	if !ok {
+		byWant = map[string]*peer{}
+		a.peers[msg.From] = byWant
+	}
+	if old, ok := byWant[msg.Peer]; ok && old.addr.String() != src.String() {
+		// 同一 (from, want) 换 socket，旧路由作废
 		a.pairs.Delete(old.addr.String())
 	}
-	a.peers[msg.From] = &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, want: msg.Peer, lastSeen: time.Now()}
+	self := &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, want: msg.Peer, lastSeen: time.Now()}
+	byWant[msg.Peer] = self
 
-	self := a.peers[msg.From]
-	other, ok := a.peers[msg.Peer]
-	if !ok || other.want != msg.From {
-		log.Printf("  waiting for peer %s to register...", msg.Peer)
+	other, ok := a.lookupPeer(msg.Peer, msg.From)
+	if !ok {
+		log.Printf("  waiting for peer %s to register want=%s...", msg.Peer, msg.From)
 		return
 	}
 	a.sendPeer(conn, self, other)
@@ -324,6 +359,16 @@ func (a *app) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.
 	a.pairs.Store(other.addr.String(), pairRoute{dst: cloneUDP(self.addr), lastSeen: time.Now(), sessionID: sessionID})
 	log.Printf("paired: %s(%s) <-> %s(%s)", self.id, self.addr, other.id, other.addr)
 	a.totalPaired.Add(1)
+}
+
+// lookupPeer 查 (from, want) 槽。调用方需持有 a.mu。
+func (a *app) lookupPeer(from, want string) (*peer, bool) {
+	byWant, ok := a.peers[from]
+	if !ok {
+		return nil, false
+	}
+	p, ok := byWant[want]
+	return p, ok
 }
 
 func (a *app) sendPeer(conn *net.UDPConn, to, about *peer) {
@@ -358,10 +403,15 @@ func (a *app) cleanupLoop() {
 		pairTTL := a.currentPairTTL()
 		relayIdle := a.currentRelayIdleTimeout()
 		a.mu.Lock()
-		for id, p := range a.peers {
-			if now.Sub(p.lastSeen) > peerTTL {
-				delete(a.peers, id)
-				a.pairs.Delete(p.addr.String())
+		for from, byWant := range a.peers {
+			for want, p := range byWant {
+				if now.Sub(p.lastSeen) > peerTTL {
+					delete(byWant, want)
+					a.pairs.Delete(p.addr.String())
+				}
+			}
+			if len(byWant) == 0 {
+				delete(a.peers, from)
 			}
 		}
 		a.mu.Unlock()
@@ -389,11 +439,14 @@ func (a *app) runHTTP() {
 	mux.HandleFunc("/api/forwards", a.requireWeb(a.handleForwards))
 	mux.HandleFunc("/api/forwards/", a.requireWeb(a.handleForward))
 	mux.HandleFunc("/api/sessions", a.requireWeb(a.handleSessions))
+	mux.HandleFunc("/api/tunnel-states", a.requireWeb(a.handleTunnelStates))
 	mux.HandleFunc("/api/metrics", a.requireWeb(a.handleMetrics))
 	mux.HandleFunc("/api/settings", a.requireWeb(a.handleSettings))
 	mux.HandleFunc("/api/admin/password", a.requireWeb(a.handleChangePassword))
 	mux.HandleFunc("/api/agent/register", a.requireAgent(a.handleAgentRegister))
 	mux.HandleFunc("/api/agent/heartbeat", a.requireAgent(a.handleAgentHeartbeat))
+	mux.HandleFunc("/api/agent/tunnel-status", a.requireAgent(a.handleAgentTunnelStatus))
+	mux.HandleFunc("/api/agent/bootstrap", a.requireAgent(a.handleAgentBootstrap))
 	mux.HandleFunc("/api/agent/rules", a.requireAgent(a.handleAgentRules))
 	mux.Handle("/", a.staticHandler())
 	log.Printf("rendezvous server (HTTP) listening on %s", a.cfg.HTTPListen)
@@ -409,7 +462,10 @@ func (a *app) staticHandler() http.Handler {
 
 func (a *app) handleHealth(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	peerCount := len(a.peers)
+	peerCount := 0
+	for _, byWant := range a.peers {
+		peerCount += len(byWant)
+	}
 	a.mu.Unlock()
 	metrics, _ := a.db.Metrics(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -489,6 +545,9 @@ func (a *app) handleForwards(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = rule.Validate()
 		}
+		if err == nil {
+			err = a.validateRuleUniqueness(r.Context(), rule, 0)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -512,6 +571,9 @@ func (a *app) handleForward(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = rule.Validate()
 		}
+		if err == nil {
+			err = a.validateRuleUniqueness(r.Context(), rule, id)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -529,6 +591,11 @@ func (a *app) handleSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, sessions, err)
 }
 
+func (a *app) handleTunnelStates(w http.ResponseWriter, r *http.Request) {
+	states, err := a.db.ListTunnelStates(r.Context())
+	writeJSONOrError(w, states, err)
+}
+
 func (a *app) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics, err := a.db.Metrics(r.Context())
 	writeJSONOrError(w, metrics, err)
@@ -539,27 +606,41 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		a.cfgMu.RLock()
 		resp := map[string]any{
-			"udp_listen":          a.cfg.UDPListen,
-			"stun_alt_listen":     a.cfg.StunAltListen,
-			"http_listen":         a.cfg.HTTPListen,
-			"database_path":       a.cfg.DatabasePath,
-			"psk_configured":      a.cfg.PSK != "",
-			"peer_ttl":            a.cfg.PeerTTL.String(),
-			"pair_ttl":            a.cfg.PairTTL.String(),
-			"relay_idle_timeout":  a.cfg.RelayIdleTimeout.String(),
-			"allow_relay":         a.cfg.AllowRelay,
-			"allow_legacy":        a.cfg.AllowLegacy,
-			"restart_only_fields": []string{"udp_listen", "stun_alt_listen", "http_listen", "database_path", "psk"},
+			"udp_listen":           a.cfg.UDPListen,
+			"stun_alt_listen":      a.cfg.StunAltListen,
+			"http_listen":          a.cfg.HTTPListen,
+			"database_path":        a.cfg.DatabasePath,
+			"psk_configured":       a.cfg.PSK != "",
+			"peer_ttl":             a.cfg.PeerTTL.String(),
+			"pair_ttl":             a.cfg.PairTTL.String(),
+			"relay_idle_timeout":   a.cfg.RelayIdleTimeout.String(),
+			"allow_relay":          a.cfg.AllowRelay,
+			"allow_legacy":         a.cfg.AllowLegacy,
+			"client_no_upnp":       a.cfg.ClientNoUPnP,
+			"client_upnp_timeout":  a.cfg.ClientUPnPTimeout.String(),
+			"client_log_level":     a.cfg.ClientLogLevel,
+			"client_tray_enabled":  a.cfg.ClientTrayEnabled,
+			"client_punch_timeout": a.cfg.ClientPunchTimeout.String(),
+			"client_force_relay":   a.cfg.ClientForceRelay,
+			"client_allow_legacy":  a.cfg.ClientAllowLegacy,
+			"restart_only_fields":  []string{"udp_listen", "stun_alt_listen", "http_listen", "database_path", "psk"},
 		}
 		a.cfgMu.RUnlock()
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPatch:
 		var req struct {
-			PeerTTL          string `json:"peer_ttl"`
-			PairTTL          string `json:"pair_ttl"`
-			RelayIdleTimeout string `json:"relay_idle_timeout"`
-			AllowRelay       bool   `json:"allow_relay"`
-			AllowLegacy      bool   `json:"allow_legacy"`
+			PeerTTL            string `json:"peer_ttl"`
+			PairTTL            string `json:"pair_ttl"`
+			RelayIdleTimeout   string `json:"relay_idle_timeout"`
+			AllowRelay         bool   `json:"allow_relay"`
+			AllowLegacy        bool   `json:"allow_legacy"`
+			ClientNoUPnP       bool   `json:"client_no_upnp"`
+			ClientUPnPTimeout  string `json:"client_upnp_timeout"`
+			ClientLogLevel     string `json:"client_log_level"`
+			ClientTrayEnabled  bool   `json:"client_tray_enabled"`
+			ClientPunchTimeout string `json:"client_punch_timeout"`
+			ClientForceRelay   bool   `json:"client_force_relay"`
+			ClientAllowLegacy  bool   `json:"client_allow_legacy"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -584,18 +665,46 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "durations must be at least 10s", http.StatusBadRequest)
 			return
 		}
+		clientUPnPTimeout, err := time.ParseDuration(req.ClientUPnPTimeout)
+		if err != nil {
+			http.Error(w, "bad client_upnp_timeout", http.StatusBadRequest)
+			return
+		}
+		clientPunchTimeout, err := time.ParseDuration(req.ClientPunchTimeout)
+		if err != nil {
+			http.Error(w, "bad client_punch_timeout", http.StatusBadRequest)
+			return
+		}
+		if clientUPnPTimeout < time.Second || clientPunchTimeout < time.Second {
+			http.Error(w, "client durations must be at least 1s", http.StatusBadRequest)
+			return
+		}
 		a.cfgMu.Lock()
 		a.cfg.PeerTTL = peerTTL
 		a.cfg.PairTTL = pairTTL
 		a.cfg.RelayIdleTimeout = relayIdle
 		a.cfg.AllowRelay = req.AllowRelay
 		a.cfg.AllowLegacy = req.AllowLegacy
+		a.cfg.ClientNoUPnP = req.ClientNoUPnP
+		a.cfg.ClientUPnPTimeout = clientUPnPTimeout
+		a.cfg.ClientLogLevel = req.ClientLogLevel
+		a.cfg.ClientTrayEnabled = req.ClientTrayEnabled
+		a.cfg.ClientPunchTimeout = clientPunchTimeout
+		a.cfg.ClientForceRelay = req.ClientForceRelay
+		a.cfg.ClientAllowLegacy = req.ClientAllowLegacy
 		a.cfgMu.Unlock()
 		_ = a.db.PutMeta(r.Context(), "setting_peer_ttl", peerTTL.String())
 		_ = a.db.PutMeta(r.Context(), "setting_pair_ttl", pairTTL.String())
 		_ = a.db.PutMeta(r.Context(), "setting_relay_idle_timeout", relayIdle.String())
 		_ = a.db.PutMeta(r.Context(), "setting_allow_relay", strconv.FormatBool(req.AllowRelay))
 		_ = a.db.PutMeta(r.Context(), "setting_allow_legacy", strconv.FormatBool(req.AllowLegacy))
+		_ = a.db.PutMeta(r.Context(), "setting_client_no_upnp", strconv.FormatBool(req.ClientNoUPnP))
+		_ = a.db.PutMeta(r.Context(), "setting_client_upnp_timeout", clientUPnPTimeout.String())
+		_ = a.db.PutMeta(r.Context(), "setting_client_log_level", req.ClientLogLevel)
+		_ = a.db.PutMeta(r.Context(), "setting_client_tray_enabled", strconv.FormatBool(req.ClientTrayEnabled))
+		_ = a.db.PutMeta(r.Context(), "setting_client_punch_timeout", clientPunchTimeout.String())
+		_ = a.db.PutMeta(r.Context(), "setting_client_force_relay", strconv.FormatBool(req.ClientForceRelay))
+		_ = a.db.PutMeta(r.Context(), "setting_client_allow_legacy", strconv.FormatBool(req.ClientAllowLegacy))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -638,27 +747,120 @@ func (a *app) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DeviceID string `json:"device_id"`
-		Name     string `json:"name"`
+		DeviceID string              `json:"device_id"`
+		Name     string              `json:"name"`
+		Addr     string              `json:"addr"`
+		UpnpAddr string              `json:"upnp_addr"`
+		NATType  string              `json:"nat_type"`
+		Tunnels  []agentTunnelReport `json:"tunnels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	err := a.db.UpsertDevice(r.Context(), req.DeviceID, "", "", "", true)
+	addr := req.Addr
+	if addr == "" {
+		addr = requestAddr(r)
+	}
+	name := req.Name
+	if name == "" {
+		name = req.DeviceID
+	}
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
+	if err == nil {
+		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
+	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
 }
 
 func (a *app) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DeviceID string `json:"device_id"`
+		DeviceID string              `json:"device_id"`
+		Name     string              `json:"name"`
+		Addr     string              `json:"addr"`
+		UpnpAddr string              `json:"upnp_addr"`
+		NATType  string              `json:"nat_type"`
+		Tunnels  []agentTunnelReport `json:"tunnels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	err := a.db.UpsertDevice(r.Context(), req.DeviceID, "", "", "", true)
+	addr := req.Addr
+	if addr == "" {
+		addr = requestAddr(r)
+	}
+	name := req.Name
+	if name == "" {
+		name = req.DeviceID
+	}
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
+	if err == nil {
+		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
+	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
+}
+
+func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID   string `json:"device_id"`
+		Peer       string `json:"peer"`
+		State      string `json:"state"`
+		Via        string `json:"via"`
+		NATType    string `json:"nat_type"`
+		Addr       string `json:"addr"`
+		UpnpAddr   string `json:"upnp_addr"`
+		PublicAddr string `json:"public_addr"`
+		ConvID     int64  `json:"conv_id"`
+		RTTMs      int    `json:"rtt_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.Peer == "" {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	addr := req.Addr
+	if addr == "" {
+		addr = requestAddr(r)
+	}
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.DeviceID, addr, req.UpnpAddr, req.Peer, req.State == "connected")
+	if err == nil {
+		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
+			DeviceID:   req.DeviceID,
+			PeerID:     req.Peer,
+			State:      req.State,
+			Via:        req.Via,
+			NATType:    req.NATType,
+			PublicAddr: req.PublicAddr,
+			ConvID:     req.ConvID,
+			RTTMs:      req.RTTMs,
+		})
+	}
+	if err == nil && req.State == "connected" && req.Via != "" {
+		err = a.db.UpdateSessionPathForPair(r.Context(), req.DeviceID, req.Peer, req.Via)
+	}
+	writeJSONOrError(w, map[string]any{"ok": true}, err)
+}
+
+func (a *app) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		DeviceID   string `json:"device_id"`
+		DeviceName string `json:"device_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.DeviceName)
+	if name == "" {
+		name = req.DeviceID
+	}
+	resp := a.bootstrapConfig(r, req.DeviceID, name)
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, requestAddr(r), "", "", false)
+	writeJSONOrError(w, resp, err)
 }
 
 func (a *app) handleAgentRules(w http.ResponseWriter, r *http.Request) {
@@ -772,6 +974,65 @@ func (a *app) applyStoredSettings() error {
 		}
 		a.cfg.AllowLegacy = b
 	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_no_upnp"); err != nil {
+		return err
+	} else if v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientNoUPnP = b
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_upnp_timeout"); err != nil {
+		return err
+	} else if v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientUPnPTimeout = d
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_log_level"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientLogLevel = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_tray_enabled"); err != nil {
+		return err
+	} else if v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientTrayEnabled = b
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_punch_timeout"); err != nil {
+		return err
+	} else if v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientPunchTimeout = d
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_force_relay"); err != nil {
+		return err
+	} else if v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientForceRelay = b
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_allow_legacy"); err != nil {
+		return err
+	} else if v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		a.cfg.ClientAllowLegacy = b
+	}
 	return nil
 }
 
@@ -813,6 +1074,59 @@ func decodeRule(r *http.Request) (store.ForwardRule, error) {
 	return rule, nil
 }
 
+func (a *app) validateRuleUniqueness(ctx context.Context, rule store.ForwardRule, excludeID int64) error {
+	if !rule.Enabled {
+		return nil
+	}
+	conflict, err := a.db.LocalPortConflict(ctx, rule.SourceID, rule.LocalPort, excludeID)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return errors.New("same source_id cannot reuse local_port across enabled rules")
+	}
+	return nil
+}
+
+func (a *app) agentOnline(tunnels []agentTunnelReport) bool {
+	if len(tunnels) == 0 {
+		return true
+	}
+	for _, t := range tunnels {
+		switch t.State {
+		case "connecting", "connected":
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []agentTunnelReport) error {
+	for _, t := range tunnels {
+		if t.Peer == "" {
+			continue
+		}
+		if err := a.db.PutTunnelState(ctx, store.TunnelState{
+			DeviceID:   deviceID,
+			PeerID:     t.Peer,
+			State:      t.State,
+			Via:        t.Via,
+			NATType:    t.NATType,
+			PublicAddr: t.PublicAddr,
+			ConvID:     t.ConvID,
+			RTTMs:      t.RTTMs,
+		}); err != nil {
+			return err
+		}
+		if t.State == "connected" && t.Via != "" {
+			if err := a.db.UpdateSessionPathForPair(ctx, deviceID, t.Peer, t.Via); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func writeJSONOrError(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -829,6 +1143,72 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func requestAddr(r *http.Request) string {
+	host, port, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func (a *app) bootstrapConfig(r *http.Request, deviceID, deviceName string) agentBootstrapResponse {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return agentBootstrapResponse{
+		DeviceID:     deviceID,
+		DeviceName:   deviceName,
+		Server:       externalUDPAddr(r, a.cfg.UDPListen),
+		ServerHTTP:   requestBaseURL(r),
+		STUNAltPort:  portFromAddr(a.cfg.StunAltListen, 7002),
+		NoUPnP:       a.cfg.ClientNoUPnP,
+		UPnPTimeout:  a.cfg.ClientUPnPTimeout.String(),
+		LogLevel:     a.cfg.ClientLogLevel,
+		TrayEnabled:  a.cfg.ClientTrayEnabled,
+		PunchTimeout: a.cfg.ClientPunchTimeout.String(),
+		ForceRelay:   a.cfg.ClientForceRelay,
+		AllowLegacy:  a.cfg.ClientAllowLegacy,
+	}
+}
+
+func externalUDPAddr(r *http.Request, udpListen string) string {
+	host, _, _ := net.SplitHostPort(r.Host)
+	if host == "" {
+		host = r.Host
+	}
+	udpHost, udpPort, err := net.SplitHostPort(udpListen)
+	if err != nil {
+		return net.JoinHostPort(host, "7000")
+	}
+	switch udpHost {
+	case "", "0.0.0.0", "::":
+		udpHost = host
+	}
+	return net.JoinHostPort(udpHost, udpPort)
+}
+
+func requestBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); xf != "" {
+		scheme = xf
+	}
+	return scheme + "://" + r.Host
+}
+
+func portFromAddr(addr string, fallback int) int {
+	_, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fallback
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func randomHex(n int) string {

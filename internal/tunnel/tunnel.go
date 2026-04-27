@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	kcp "github.com/xtaci/kcp-go/v5"
 
@@ -205,4 +207,23 @@ func tuneSession(s *kcp.UDPSession) {
 	s.SetWindowSize(512, 512)
 	s.SetMtu(1200) // 留足空间避免被 NAT 设备分片丢弃
 	s.SetStreamMode(true)
+}
+
+// SessionStats 返回当前 KCP 会话的 conv 和 SRTT（毫秒）。
+func SessionStats(conn net.Conn) (uint32, int, bool) {
+	sess, ok := conn.(*kcp.UDPSession)
+	if !ok {
+		return 0, 0, false
+	}
+	v := reflect.ValueOf(sess).Elem().FieldByName("kcp")
+	if !v.IsValid() || v.IsNil() {
+		return sess.GetConv(), 0, true
+	}
+	kcpVal := reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
+	rttField := kcpVal.Elem().FieldByName("rx_srtt")
+	if !rttField.IsValid() {
+		return sess.GetConv(), 0, true
+	}
+	rttVal := reflect.NewAt(rttField.Type(), unsafe.Pointer(rttField.UnsafeAddr())).Elem()
+	return sess.GetConv(), int(rttVal.Int()), true
 }

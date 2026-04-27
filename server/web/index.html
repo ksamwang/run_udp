@@ -33,7 +33,7 @@
         <div class="metrics" id="metrics"></div>
       </section>
       <section id="devices" class="tab">
-        <table><thead><tr><th>ID</th><th>地址</th><th>在线</th><th>最后活跃</th></tr></thead><tbody id="device-list"></tbody></table>
+        <table><thead><tr><th>名称</th><th>ID</th><th>地址</th><th>在线</th><th>最后活跃</th></tr></thead><tbody id="device-list"></tbody></table>
       </section>
       <section id="forwards" class="tab">
         <form id="rule-form" class="rule-form">
@@ -76,7 +76,7 @@
         <table><thead><tr><th>名称</th><th>入口</th><th>出口</th><th>映射</th><th>状态</th><th></th></tr></thead><tbody id="rule-list"></tbody></table>
       </section>
       <section id="sessions" class="tab">
-        <table><thead><tr><th>ID</th><th>设备</th><th>路径</th><th>中继字节</th><th>最后活跃</th></tr></thead><tbody id="session-list"></tbody></table>
+        <table><thead><tr><th>ID</th><th>设备</th><th>路径</th><th>NAT</th><th>状态</th><th>Conv</th><th>RTT</th><th>中继字节</th><th>最后活跃</th></tr></thead><tbody id="session-list"></tbody></table>
       </section>
       <section id="settings" class="tab">
         <form id="settings-form" class="settings-form">
@@ -95,8 +95,27 @@
             <input id="relay-idle-timeout" name="relay_idle_timeout" placeholder="例如：5m" required>
             <small>空闲会话超过该时间后在统计中结束。</small>
           </div>
+          <div class="field">
+            <label for="client-upnp-timeout">客户端 UPnP 超时</label>
+            <input id="client-upnp-timeout" name="client_upnp_timeout" placeholder="例如：4s" required>
+            <small>agent bootstrap 后默认使用的 UPnP 探测超时。</small>
+          </div>
+          <div class="field">
+            <label for="client-punch-timeout">客户端打洞超时</label>
+            <input id="client-punch-timeout" name="client_punch_timeout" placeholder="例如：30s" required>
+            <small>超时后会回退 relay；对称 NAT 会提前直接 relay。</small>
+          </div>
+          <div class="field">
+            <label for="client-log-level">客户端日志级别</label>
+            <input id="client-log-level" name="client_log_level" placeholder="例如：info" required>
+            <small>通过 bootstrap 下发给 agent 的默认日志级别。</small>
+          </div>
           <label class="check-field"><input name="allow_relay" type="checkbox"> 允许 TURN 中继连接</label>
           <label class="check-field"><input name="allow_legacy" type="checkbox"> 允许旧明文 UDP 协议</label>
+          <label class="check-field"><input name="client_no_upnp" type="checkbox"> 客户端默认禁用 UPnP</label>
+          <label class="check-field"><input name="client_tray_enabled" type="checkbox"> 客户端默认启用托盘</label>
+          <label class="check-field"><input name="client_force_relay" type="checkbox"> 客户端默认强制中继</label>
+          <label class="check-field"><input name="client_allow_legacy" type="checkbox"> 客户端默认允许旧明文协议</label>
           <div class="form-actions">
             <button type="submit">保存服务端设置</button>
             <p id="settings-msg"></p>

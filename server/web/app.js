@@ -22,17 +22,18 @@ function showApp() {
 }
 
 async function refresh() {
-  const [metrics, devices, rules, sessions, settings] = await Promise.all([
-    api("/api/metrics"), api("/api/devices"), api("/api/forwards"), api("/api/sessions"), api("/api/settings")
+  const [metrics, devices, rules, sessions, tunnelStates, settings] = await Promise.all([
+    api("/api/metrics"), api("/api/devices"), api("/api/forwards"), api("/api/sessions"), api("/api/tunnel-states"), api("/api/settings")
   ]);
   $("#metrics").innerHTML = [
     ["设备", metrics.devices], ["在线", metrics.online_devices],
     ["转发规则", metrics.forward_rules], ["中继字节", metrics.relay_bytes]
   ].map(([k, v]) => `<div class="metric">${k}<strong>${v}</strong></div>`).join("");
   updateDeviceSelects(devices);
-  $("#device-list").innerHTML = devices.map(d => `<tr><td>${d.id}</td><td>${d.addr || ""}</td><td>${d.online ? "在线" : "离线"}</td><td>${d.last_seen || ""}</td></tr>`).join("");
+  $("#device-list").innerHTML = devices.map(d => `<tr><td>${escapeHTML(d.name || "")}</td><td>${escapeHTML(d.id)}</td><td>${renderDeviceAddr(d)}</td><td>${d.online ? "在线" : "离线"}</td><td>${d.last_seen || ""}</td></tr>`).join("");
   $("#rule-list").innerHTML = rules.map(r => `<tr><td>${r.name || r.id}</td><td>${r.source_id}:${r.local_port}</td><td>${r.target_id}</td><td>${r.target_host}:${r.target_port}</td><td>${r.enabled ? "启用" : "停用"}</td><td><button data-del="${r.id}">删除</button></td></tr>`).join("");
-  $("#session-list").innerHTML = sessions.map(s => `<tr><td>${s.id}</td><td>${s.source_id} -> ${s.target_id}</td><td>${s.path}</td><td>${s.relay_bytes}</td><td>${s.last_seen}</td></tr>`).join("");
+  const stateMap = buildTunnelStateMap(tunnelStates);
+  $("#session-list").innerHTML = sessions.map(s => renderSessionRow(s, stateMap)).join("");
   updateSettings(settings);
 }
 
@@ -41,7 +42,7 @@ function updateDeviceSelects(devices) {
   if (signature === lastDevices.join("|")) return;
   lastDevices = devices.map(d => `${d.id}:${d.online}`);
   const options = devices.length
-    ? devices.map(d => `<option value="${escapeHTML(d.id)}">${escapeHTML(d.id)}${d.online ? "（在线）" : "（离线）"}</option>`).join("")
+    ? devices.map(d => `<option value="${escapeHTML(d.id)}">${escapeHTML(d.name || d.id)} / ${escapeHTML(d.id)}${d.online ? "（在线）" : "（离线）"}</option>`).join("")
     : `<option value="" disabled selected>暂无设备，先启动客户端 agent</option>`;
   ["#source-id", "#target-id"].forEach(sel => {
     const el = $(sel);
@@ -55,6 +56,45 @@ function escapeHTML(s) {
   return String(s).replace(/[&<>"']/g, ch => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
   }[ch]));
+}
+
+function renderDeviceAddr(device) {
+  const parts = [];
+  if (device.addr) parts.push(`UDP/HTTP: ${escapeHTML(device.addr)}`);
+  if (device.upnp_addr) parts.push(`UPnP: ${escapeHTML(device.upnp_addr)}`);
+  return parts.join("<br>") || "";
+}
+
+function buildTunnelStateMap(states) {
+  const map = new Map();
+  for (const s of states) {
+    map.set(pairKey(s.device_id, s.peer_id), s);
+  }
+  return map;
+}
+
+function pairKey(a, b) {
+  return [a, b].sort().join("\u0000");
+}
+
+function renderSessionRow(session, stateMap) {
+  const state = stateMap.get(pairKey(session.source_id, session.target_id));
+  const path = state?.via || session.path || "";
+  const nat = state?.nat_type || "";
+  const conv = state?.conv_id ? String(state.conv_id) : "";
+  const rtt = state?.rtt_ms ? `${state.rtt_ms} ms` : "";
+  const status = state?.state || "";
+  return `<tr>
+    <td>${session.id}</td>
+    <td>${escapeHTML(session.source_id)} -> ${escapeHTML(session.target_id)}</td>
+    <td>${escapeHTML(path)}</td>
+    <td>${escapeHTML(nat)}</td>
+    <td>${escapeHTML(status)}</td>
+    <td>${escapeHTML(conv)}</td>
+    <td>${escapeHTML(rtt)}</td>
+    <td>${session.relay_bytes}</td>
+    <td>${session.last_seen}</td>
+  </tr>`;
 }
 
 $("#login-form").addEventListener("submit", async (e) => {
@@ -114,6 +154,13 @@ function updateSettings(settings) {
   form.elements.relay_idle_timeout.value = settings.relay_idle_timeout || "";
   form.elements.allow_relay.checked = !!settings.allow_relay;
   form.elements.allow_legacy.checked = !!settings.allow_legacy;
+  form.elements.client_no_upnp.checked = !!settings.client_no_upnp;
+  form.elements.client_upnp_timeout.value = settings.client_upnp_timeout || "";
+  form.elements.client_log_level.value = settings.client_log_level || "";
+  form.elements.client_tray_enabled.checked = !!settings.client_tray_enabled;
+  form.elements.client_punch_timeout.value = settings.client_punch_timeout || "";
+  form.elements.client_force_relay.checked = !!settings.client_force_relay;
+  form.elements.client_allow_legacy.checked = !!settings.client_allow_legacy;
   $("#readonly-settings").innerHTML = [
     ["UDP 监听", settings.udp_listen],
     ["STUN 备用端口", settings.stun_alt_listen],
@@ -129,6 +176,10 @@ $("#settings-form").addEventListener("submit", async (e) => {
   const body = Object.fromEntries(fd.entries());
   body.allow_relay = fd.has("allow_relay");
   body.allow_legacy = fd.has("allow_legacy");
+  body.client_no_upnp = fd.has("client_no_upnp");
+  body.client_tray_enabled = fd.has("client_tray_enabled");
+  body.client_force_relay = fd.has("client_force_relay");
+  body.client_allow_legacy = fd.has("client_allow_legacy");
   try {
     await api("/api/settings", { method: "PATCH", body: JSON.stringify(body) });
     $("#settings-msg").textContent = "已保存";

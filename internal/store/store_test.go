@@ -14,10 +14,10 @@ func TestRulesAndMetrics(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "1.1.1.1:1", "", "B", true); err != nil {
+	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "", "B", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertDevice(ctx, "B", "2.2.2.2:2", "", "A", true); err != nil {
+	if err := s.UpsertDevice(ctx, "B", "B", "2.2.2.2:2", "", "A", true); err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.CreateRule(ctx, ForwardRule{
@@ -50,7 +50,7 @@ func TestMarkOfflineBefore(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "1.1.1.1:1", "", "", true); err != nil {
+	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "", "", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkOfflineBefore(ctx, time.Now().Add(time.Second)); err != nil {
@@ -62,5 +62,63 @@ func TestMarkOfflineBefore(t *testing.T) {
 	}
 	if d.Online {
 		t.Fatal("device should be offline")
+	}
+}
+
+func TestUpsertDevicePreservesNonEmptyFields(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "2.2.2.2:2", "B", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertDevice(ctx, "A", "", "", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetDevice(ctx, "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Addr != "1.1.1.1:1" || d.UpnpAddr != "2.2.2.2:2" || d.Want != "B" {
+		t.Fatalf("fields unexpectedly cleared: %+v", d)
+	}
+}
+
+func TestUpdateSessionPathForPairAndTunnelState(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	id, err := s.StartSession(ctx, "A", "B", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == 0 {
+		t.Fatal("expected session id")
+	}
+	if err := s.UpdateSessionPathForPair(ctx, "B", "A", "p2p"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := s.ListSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Path != "p2p" {
+		t.Fatalf("unexpected sessions: %+v", sessions)
+	}
+	if err := s.PutTunnelState(ctx, TunnelState{DeviceID: "A", PeerID: "B", State: "connected", Via: "p2p", NATType: "cone", ConvID: 123, RTTMs: 45}); err != nil {
+		t.Fatal(err)
+	}
+	states, err := s.ListTunnelStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].RTTMs != 45 || states[0].ConvID != 123 || states[0].NATType != "cone" {
+		t.Fatalf("unexpected tunnel states: %+v", states)
 	}
 }

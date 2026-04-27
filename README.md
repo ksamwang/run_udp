@@ -47,7 +47,14 @@ copy server.json.example server.json
   "pair_ttl": "2m",
   "relay_idle_timeout": "5m",
   "allow_relay": true,
-  "allow_legacy": false
+  "allow_legacy": false,
+  "client_no_upnp": false,
+  "client_upnp_timeout": "4s",
+  "client_log_level": "info",
+  "client_tray_enabled": true,
+  "client_punch_timeout": "30s",
+  "client_force_relay": false,
+  "client_allow_legacy": false
 }
 ```
 
@@ -79,21 +86,16 @@ copy client.json.example client.json
 
 ```json
 {
-  "server": "1.2.3.4:7000",
-  "server_http": "http://1.2.3.4:7001",
-  "device_id": "",
-  "psk": "change-this-deployment-secret",
-  "no_upnp": false,
-  "upnp_timeout": "4s",
-  "log_level": "info",
-  "tray_enabled": true,
-  "punch_timeout": "30s",
-  "force_relay": false,
-  "allow_legacy": false
+  "server_http": "http://tunnel.example.com",
+  "device_name": "",
+  "psk": "change-this-deployment-secret"
 }
 ```
 
-`device_id` 留空时，客户端会自动使用 Windows 计算机名。
+客户端首次启动会自动生成稳定 `device_id`，并默认用 Windows 计算机名作为 `device_name`。  
+运行期的 UDP 地址、打洞/UPnP/relay 默认项会通过 `POST /api/agent/bootstrap` 从服务端下发。
+
+客户端启动时会自动做一次 NAT 探测；如果判定为 `Symmetric NAT`，本进程会直接优先走 relay，不再先等打洞超时。
 
 启动：
 
@@ -162,7 +164,13 @@ Agent 接口：
 
 - `POST /api/agent/register`
 - `POST /api/agent/heartbeat`
+- `POST /api/agent/tunnel-status`
+- `POST /api/agent/bootstrap`
 - `GET /api/agent/rules?device_id=<id>`
+
+隧道状态接口：
+
+- `GET /api/tunnel-states`
 
 Agent API 使用 `X-UDP-Tunnel-PSK` header。
 
@@ -175,6 +183,5 @@ build-all.bat
 
 ## 限制
 
-- 第一版 agent 同一时间只自动连接一个 peer；多 peer 并发规则需要后续扩展。
 - Web 管理页是内嵌原生 HTML/CSS/JS，适合 MVP 管理，不是完整桌面控制台。
 - 设备安全模型是部署级 PSK，不是每设备独立密钥。

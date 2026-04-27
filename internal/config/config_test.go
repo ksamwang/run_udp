@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,5 +46,39 @@ func TestServerAllowRelayDefaultsToTrueWhenOmitted(t *testing.T) {
 	}
 	if !cfg.AllowLegacy {
 		t.Fatal("allow_legacy should be loaded")
+	}
+}
+
+func TestSaveClientLocalJSONWritesMinimalBootstrapConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.json")
+	cfg := DefaultClient()
+	cfg.Server = "1.2.3.4:7000"
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	cfg.DeviceID = "dev-1234"
+	cfg.DeviceName = "office-pc"
+	cfg.PSK = "secret"
+	cfg.NoUPnP = true
+	if err := SaveClientLocalJSON(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) == "" {
+		t.Fatal("expected config content")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["server_http"] != "http://tunnel.example.com" || got["device_id"] != "dev-1234" || got["device_name"] != "office-pc" || got["psk"] != "secret" {
+		t.Fatalf("unexpected saved config: %v", got)
+	}
+	if _, ok := got["server"]; ok {
+		t.Fatalf("server should not be persisted: %v", got)
+	}
+	if _, ok := got["no_upnp"]; ok {
+		t.Fatalf("runtime field should not be persisted: %v", got)
 	}
 }

@@ -1,13 +1,5 @@
 {
-  "server": "1.2.3.4:7000",
-  "server_http": "http://1.2.3.4:7001",
-  "device_id": "",
-  "psk": "change-this-deployment-secret",
-  "no_upnp": false,
-  "upnp_timeout": "4s",
-  "log_level": "info",
-  "tray_enabled": true,
-  "punch_timeout": "30s",
-  "force_relay": false,
-  "allow_legacy": false
+  "server_http": "http://tunnel.example.com",
+  "device_name": "",
+  "psk": "change-this-deployment-secret"
 }

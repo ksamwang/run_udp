@@ -9,5 +9,12 @@
   "pair_ttl": "2m",
   "relay_idle_timeout": "5m",
   "allow_relay": true,
-  "allow_legacy": false
+  "allow_legacy": false,
+  "client_no_upnp": false,
+  "client_upnp_timeout": "4s",
+  "client_log_level": "info",
+  "client_tray_enabled": true,
+  "client_punch_timeout": "30s",
+  "client_force_relay": false,
+  "client_allow_legacy": false
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -55,6 +56,18 @@ type Metrics struct {
 	ForwardRules   int   `json:"forward_rules"`
 	ActiveSessions int   `json:"active_sessions"`
 	RelayBytes     int64 `json:"relay_bytes"`
+}
+
+type TunnelState struct {
+	DeviceID   string `json:"device_id"`
+	PeerID     string `json:"peer_id"`
+	State      string `json:"state"`
+	Via        string `json:"via"`
+	NATType    string `json:"nat_type"`
+	PublicAddr string `json:"public_addr"`
+	ConvID     int64  `json:"conv_id"`
+	RTTMs      int    `json:"rtt_ms"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 func Open(path string) (*Store, error) {
@@ -115,9 +128,23 @@ func (s *Store) migrate(ctx context.Context) error {
 			detail TEXT NOT NULL,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE TABLE IF NOT EXISTS tunnel_states (
+			device_id TEXT NOT NULL,
+			peer_id TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT '',
+			via TEXT NOT NULL DEFAULT '',
+			nat_type TEXT NOT NULL DEFAULT '',
+			public_addr TEXT NOT NULL DEFAULT '',
+			conv_id INTEGER NOT NULL DEFAULT 0,
+			rtt_ms INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (device_id, peer_id)
+		);`,
+		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE tunnel_states ADD COLUMN rtt_ms INTEGER NOT NULL DEFAULT 0;`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
 	}
@@ -139,13 +166,28 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	return v, err
 }
 
-func (s *Store) UpsertDevice(ctx context.Context, id, addr, upnpAddr, want string, online bool) error {
+// TouchDevice 只更新 online + last_seen，不动 addr/upnp/want。HTTP heartbeat 用。
+// 避免覆盖 UDP register 路径上记录的真实地址信息。
+func (s *Store) TouchDevice(ctx context.Context, id string, online bool) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,online,last_seen)
+		VALUES(?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET online=excluded.online, last_seen=excluded.last_seen`,
+		id, id, boolInt(online), now)
+	return err
+}
+
+func (s *Store) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, want string, online bool) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,addr,upnp_addr,want,online,last_seen)
 		VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET addr=excluded.addr, upnp_addr=excluded.upnp_addr,
-			want=excluded.want, online=excluded.online, last_seen=excluded.last_seen`,
-		id, id, addr, upnpAddr, want, boolInt(online), now)
+		ON CONFLICT(id) DO UPDATE SET
+			name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE devices.name END,
+			addr=CASE WHEN excluded.addr<>'' THEN excluded.addr ELSE devices.addr END,
+			upnp_addr=CASE WHEN excluded.upnp_addr<>'' THEN excluded.upnp_addr ELSE devices.upnp_addr END,
+			want=CASE WHEN excluded.want<>'' THEN excluded.want ELSE devices.want END,
+			online=excluded.online, last_seen=excluded.last_seen`,
+		id, name, addr, upnpAddr, want, boolInt(online), now)
 	return err
 }
 
@@ -249,6 +291,18 @@ func (s *Store) TouchSession(ctx context.Context, id int64, relayBytes int64) er
 	return err
 }
 
+func (s *Store) UpdateSessionPathForPair(ctx context.Context, aID, bID, path string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET path=?, last_seen=CURRENT_TIMESTAMP
+		WHERE id=(
+			SELECT id FROM sessions
+			WHERE ended_at='' AND ((source_id=? AND target_id=?) OR (source_id=? AND target_id=?))
+			ORDER BY id DESC
+			LIMIT 1
+		)`, path, aID, bID, bID, aID)
+	return err
+}
+
 func (s *Store) EndIdleSessions(ctx context.Context, cutoff time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET ended_at=CURRENT_TIMESTAMP WHERE ended_at='' AND last_seen < ?`, cutoff.Format(time.RFC3339))
 	return err
@@ -291,6 +345,45 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 		return m, err
 	}
 	return m, nil
+}
+
+func (s *Store) PutTunnelState(ctx context.Context, ts TunnelState) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+		ON CONFLICT(device_id,peer_id) DO UPDATE SET state=excluded.state, via=excluded.via,
+			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms, updated_at=CURRENT_TIMESTAMP`,
+		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs)
+	return err
+}
+
+func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TunnelState
+	for rows.Next() {
+		var t TunnelState
+		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// LocalPortConflict 检查同一 source_id 上是否已经有 enabled 规则用了这个 local_port。
+// excludeID > 0 时表示 update 场景，排除自己。
+func (s *Store) LocalPortConflict(ctx context.Context, sourceID string, localPort int, excludeID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM forward_rules WHERE source_id=? AND local_port=? AND enabled=1 AND id<>?`,
+		sourceID, localPort, excludeID).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *Store) Audit(ctx context.Context, kind, detail string) error {
