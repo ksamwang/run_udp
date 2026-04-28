@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -47,11 +48,14 @@ type agentTunnelStatus struct {
 	ConvID     int64  `json:"conv_id"`
 	RTTMs      int    `json:"rtt_ms"`
 	NATType    string `json:"nat_type"`
+	LastError  string `json:"last_error"`
 }
 
 type agentPeerSession struct {
-	peer string
-	sig  string
+	peer       string
+	sig        string
+	ruleIDs    []int64
+	localPorts []int
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -60,6 +64,13 @@ type agentPeerSession struct {
 	status agentTunnelStatus
 	addr   string
 	upnp   string
+}
+
+type peerRuleSet struct {
+	Peer       string
+	Forward    []forward.Rule
+	RuleIDs    []int64
+	LocalPorts []int
 }
 
 type natProbeResult struct {
@@ -325,37 +336,40 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 			}
 		}
 		for peer, sess := range sessions {
-			nextRules, ok := grouped[peer]
-			nextSig := forwardRulesSignature(nextRules)
+			nextSet, ok := grouped[peer]
+			nextSig := forwardRulesSignature(nextSet)
 			if ok && sess.sig == nextSig {
 				continue
 			}
-			log.Printf("[%s] stopping peer=%s (rule removed or changed)", runtimeCfg.DeviceID, peer)
-			sess.setStatus(agentTunnelStatus{Peer: peer, State: "stopped"})
+			log.Printf("[%s] peer=%s rules=%v local_ports=%v stopping: rule removed or changed", runtimeCfg.DeviceID, peer, sess.ruleIDs, sess.localPorts)
+			sess.setStatus(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_changed"})
 			_ = agentPost(runtimeCfg, "/api/agent/tunnel-status", map[string]any{
 				"device_id": runtimeCfg.DeviceID,
 				"peer":      peer,
-				"state":     "stopped",
+				"state":     "down",
+				"last_error": "rule_changed",
 			})
 			sess.cancel()
 			<-sess.done
 			delete(sessions, peer)
 		}
-		for peer, ingress := range grouped {
+		for peer, ruleSet := range grouped {
 			if _, ok := sessions[peer]; ok {
 				continue
 			}
 			sctx, scancel := context.WithCancel(rootCtx)
 			sess := &agentPeerSession{
-				peer:   peer,
-				sig:    forwardRulesSignature(ingress),
-				cancel: scancel,
-				done:   make(chan struct{}),
+				peer:       peer,
+				sig:        forwardRulesSignature(ruleSet),
+				ruleIDs:    append([]int64(nil), ruleSet.RuleIDs...),
+				localPorts: append([]int(nil), ruleSet.LocalPorts...),
+				cancel:     scancel,
+				done:       make(chan struct{}),
 			}
 			sess.setStatus(agentTunnelStatus{Peer: peer, State: "connecting"})
 			sessions[peer] = sess
-			log.Printf("[%s] activating peer=%s ingress_rules=%d", runtimeCfg.DeviceID, peer, len(ingress))
-			go func(peer string, rules []forward.Rule, st *agentPeerSession) {
+			log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v activating ingress_rules=%d", runtimeCfg.DeviceID, peer, ruleSet.RuleIDs, ruleSet.LocalPorts, len(ruleSet.Forward))
+			go func(peer string, rules peerRuleSet, st *agentPeerSession) {
 				defer close(st.done)
 				report := func(ts agentTunnelStatus, addr, upnp string) {
 					ts.Peer = peer
@@ -374,6 +388,7 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 						"conv_id":     ts.ConvID,
 						"rtt_ms":      ts.RTTMs,
 						"nat_type":    ts.NATType,
+						"last_error":  ts.LastError,
 						"addr":        addr,
 						"upnp_addr":   upnp,
 					}
@@ -383,22 +398,23 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 				}
 				report(agentTunnelStatus{Peer: peer, State: "connecting"}, "", "")
 				for {
-					err := runTunnelOnce(sctx, runtimeCfg, peer, rules, natResult, report)
+					err := runTunnelOnce(sctx, runtimeCfg, peer, rules.Forward, natResult, report)
 					if sctx.Err() != nil {
-						report(agentTunnelStatus{Peer: peer, State: "stopped"}, "", "")
+						report(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_cancelled"}, "", "")
 						return
 					}
-					report(agentTunnelStatus{Peer: peer, State: "down"}, "", "")
-					log.Printf("[%s] agent tunnel peer=%s stopped: %v", runtimeCfg.DeviceID, peer, err)
+					reason := classifyTunnelError(err)
+					report(agentTunnelStatus{Peer: peer, State: "down", LastError: reason}, "", "")
+					log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v tunnel stopped: %s (%v)", runtimeCfg.DeviceID, peer, rules.RuleIDs, rules.LocalPorts, reason, err)
 					select {
 					case <-time.After(3 * time.Second):
 						report(agentTunnelStatus{Peer: peer, State: "connecting"}, "", "")
 					case <-sctx.Done():
-						report(agentTunnelStatus{Peer: peer, State: "stopped"}, "", "")
+						report(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_cancelled"}, "", "")
 						return
 					}
 				}
-			}(peer, ingress, sess)
+			}(peer, ruleSet, sess)
 		}
 		addr, upnp, tunnels := snapshotAgentSessions(sessions)
 		if err := agentPost(runtimeCfg, "/api/agent/heartbeat", map[string]any{
@@ -430,14 +446,14 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 	}
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		return err
+		return fmt.Errorf("local_socket_failed: %w", err)
 	}
 	defer conn.Close()
 	go func() {
 		<-ctx.Done()
 		_ = conn.Close()
 	}()
-	log.Printf("[%s] local socket: %s", cfg.DeviceID, conn.LocalAddr())
+	log.Printf("[%s] peer=%s local socket=%s", cfg.DeviceID, peerID, conn.LocalAddr())
 
 	var upnpMapping *upnp.Mapping
 	var upnpAddrStr string
@@ -447,11 +463,11 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 		m, uerr := upnp.Try(ctx, localPort, fmt.Sprintf("udp-tunnel %s", cfg.DeviceID), cfg.UPnPTimeout)
 		cancel()
 		if uerr != nil {
-			log.Printf("[%s] UPnP mapping failed: %v", cfg.DeviceID, uerr)
+			log.Printf("[%s] peer=%s upnp failed: %v", cfg.DeviceID, peerID, uerr)
 		} else {
 			upnpMapping = m
 			upnpAddrStr = m.External()
-			log.Printf("[%s] UPnP mapped: %s -> :%d", cfg.DeviceID, upnpAddrStr, m.InternalPort)
+			log.Printf("[%s] peer=%s upnp mapped: %s -> :%d", cfg.DeviceID, peerID, upnpAddrStr, m.InternalPort)
 			defer upnpMapping.Close()
 			go refreshUPnPMapping(ctx, cfg.DeviceID, upnpMapping)
 		}
@@ -473,9 +489,9 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 		return writeControl(srvAddr, &protocol.Message{Type: protocol.MsgRegister, From: cfg.DeviceID, Name: cfg.DeviceName, Peer: peerID, UpnpAddr: upnpAddrStr})
 	}
 	if err := register(); err != nil {
-		return err
+		return fmt.Errorf("register_failed: %w", err)
 	}
-	log.Printf("[%s] registered to server, waiting for peer info...", cfg.DeviceID)
+	log.Printf("[%s] peer=%s registered to server, waiting for peer info...", cfg.DeviceID, peerID)
 
 	var peerAddr atomic.Pointer[net.UDPAddr]
 	var peerUpnpAddr atomic.Pointer[net.UDPAddr]
@@ -488,7 +504,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 
 	enterRelay := func(reason string) {
 		if isRelay.CompareAndSwap(false, true) {
-			log.Printf("[%s] relay mode (%s), peerAddr -> %s", cfg.DeviceID, reason, srvAddr)
+			log.Printf("[%s] peer=%s relay mode (%s), peerAddr -> %s", cfg.DeviceID, peerID, reason, srvAddr)
 			peerAddr.Store(srvAddr)
 			punched.Store(true)
 			if closeOnce.done.CompareAndSwap(false, true) {
@@ -543,7 +559,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 				}
 				paddr, err := net.ResolveUDPAddr("udp", msg.Addr)
 				if err != nil {
-					log.Printf("bad peer addr: %v", err)
+					log.Printf("[%s] peer=%s bad peer addr: %v", cfg.DeviceID, peerID, err)
 					continue
 				}
 				peerAddr.Store(paddr)
@@ -560,7 +576,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 				adoptPeerAddrSafe(&peerAddr, src, cfg.DeviceID, &isRelay)
 				_ = writeControl(src, &protocol.Message{Type: protocol.MsgPunchAck, From: cfg.DeviceID})
 				if punched.CompareAndSwap(false, true) {
-					log.Printf("[%s] hole punched via incoming punch: %s", cfg.DeviceID, src)
+					log.Printf("[%s] peer=%s hole punched via incoming punch: %s", cfg.DeviceID, peerID, src)
 					if closeOnce.done.CompareAndSwap(false, true) {
 						close(punchedCh)
 					}
@@ -569,7 +585,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 				rxCount.Add(1)
 				adoptPeerAddrSafe(&peerAddr, src, cfg.DeviceID, &isRelay)
 				if punched.CompareAndSwap(false, true) {
-					log.Printf("[%s] hole punched via ack: %s", cfg.DeviceID, src)
+					log.Printf("[%s] peer=%s hole punched via ack: %s", cfg.DeviceID, peerID, src)
 					if closeOnce.done.CompareAndSwap(false, true) {
 						close(punchedCh)
 					}
@@ -606,7 +622,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 				return
 			}
 			if err := register(); err != nil {
-				log.Printf("[%s] register refresh failed: %v", cfg.DeviceID, err)
+				log.Printf("[%s] peer=%s register refresh failed: %v", cfg.DeviceID, peerID, err)
 			}
 		}
 	}()
@@ -640,7 +656,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 		role = "listener"
 	}
 	convID := secure.ConvID(cfg.PSK, cfg.DeviceID, peerID)
-	log.Printf("[%s] opening KCP tunnel as %s conv=%d", cfg.DeviceID, role, convID)
+	log.Printf("[%s] peer=%s opening KCP tunnel as %s conv=%d", cfg.DeviceID, peerID, role, convID)
 	time.Sleep(300 * time.Millisecond)
 
 	kcpConn, err := tunnel.Open(pc, isListener, convID)
@@ -681,7 +697,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 	}
 	report(agentTunnelStatus{
 		Peer:       peerID,
-		State:      "connected",
+		State:      via,
 		Via:        via,
 		PublicAddr: upnpAddrStr,
 		ConvID:     int64(convID),
@@ -700,7 +716,7 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 			case <-t.C:
 				report(agentTunnelStatus{
 					Peer:       peerID,
-					State:      "connected",
+					State:      via,
 					Via:        via,
 					PublicAddr: upnpAddrStr,
 					ConvID:     int64(convID),
@@ -713,13 +729,13 @@ func runTunnelOnce(ctx context.Context, cfg config.Client, peerID string, rules 
 	go forward.RunEgress(mux)
 	if len(rules) > 0 {
 		if err := forward.RunIngress(mux, rules); err != nil {
-			return err
+			return fmt.Errorf("ingress_listen_failed: %w", err)
 		}
 	} else {
-		log.Printf("[%s] no local forward rules; egress only", cfg.DeviceID)
+		log.Printf("[%s] peer=%s no local forward rules; egress only", cfg.DeviceID, peerID)
 	}
 	<-mux.CloseChan()
-	return io.EOF
+	return fmt.Errorf("kcp_eof: %w", io.EOF)
 }
 
 func agentPost(cfg config.Client, path string, body any) error {
@@ -762,32 +778,41 @@ func agentRules(cfg config.Client) ([]store.ForwardRule, error) {
 //   - 我是 target：确保 grouped[source] 存在（egress 端不需要本地 forward.Rule）
 //
 // 返回的每个 key 都是一个独立的 peer，agent 会为它单独起 socket、register、隧道。
-func groupRulesByPeer(deviceID string, rules []store.ForwardRule) map[string][]forward.Rule {
-	grouped := map[string][]forward.Rule{}
+func groupRulesByPeer(deviceID string, rules []store.ForwardRule) map[string]peerRuleSet {
+	grouped := map[string]peerRuleSet{}
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
 		switch deviceID {
 		case r.SourceID:
-			grouped[r.TargetID] = append(grouped[r.TargetID], forward.Rule{
+			set := grouped[r.TargetID]
+			set.Peer = r.TargetID
+			set.Forward = append(set.Forward, forward.Rule{
 				LocalPort: r.LocalPort,
 				Target:    fmt.Sprintf("%s:%d", r.TargetHost, r.TargetPort),
 				Name:      r.Name,
 			})
+			set.RuleIDs = append(set.RuleIDs, r.ID)
+			set.LocalPorts = append(set.LocalPorts, r.LocalPort)
+			grouped[r.TargetID] = set
 		case r.TargetID:
 			if _, ok := grouped[r.SourceID]; !ok {
-				grouped[r.SourceID] = nil
+				grouped[r.SourceID] = peerRuleSet{Peer: r.SourceID}
 			}
 		}
 	}
 	return grouped
 }
 
-func forwardRulesSignature(rules []forward.Rule) string {
-	parts := make([]string, 0, len(rules))
-	for _, r := range rules {
-		parts = append(parts, fmt.Sprintf("%s:%d->%s", r.Name, r.LocalPort, r.Target))
+func forwardRulesSignature(rules peerRuleSet) string {
+	parts := make([]string, 0, len(rules.Forward))
+	for i, r := range rules.Forward {
+		ruleID := int64(0)
+		if i < len(rules.RuleIDs) {
+			ruleID = rules.RuleIDs[i]
+		}
+		parts = append(parts, fmt.Sprintf("#%d:%s:%d->%s", ruleID, r.Name, r.LocalPort, r.Target))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ",")
@@ -815,6 +840,29 @@ func snapshotAgentSessions(sessions map[string]*agentPeerSession) (string, strin
 		}
 	}
 	return addr, upnp, out
+}
+
+func classifyTunnelError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "rule_cancelled"
+	case strings.Contains(msg, "register_failed"):
+		return "register_failed"
+	case strings.Contains(msg, "ingress_listen_failed"):
+		return "ingress_listen_failed"
+	case strings.Contains(msg, "local_socket_failed"):
+		return "local_socket_failed"
+	case strings.Contains(msg, "kcp_eof"):
+		return "kcp_eof"
+	case strings.Contains(msg, "i/o timeout"):
+		return "io_timeout"
+	default:
+		return msg
+	}
 }
 
 func ensureLocalIdentity(cfg *config.Client, configPath string) error {

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -67,6 +68,14 @@ type app struct {
 	cfgMu    sync.RWMutex
 }
 
+type apiError struct {
+	Status  int    `json:"-"`
+	Code    string `json:"code"`
+	Message string `json:"error"`
+}
+
+func (e *apiError) Error() string { return e.Message }
+
 type agentTunnelReport struct {
 	Peer       string `json:"peer"`
 	State      string `json:"state"`
@@ -75,6 +84,7 @@ type agentTunnelReport struct {
 	PublicAddr string `json:"public_addr"`
 	ConvID     int64  `json:"conv_id"`
 	RTTMs      int    `json:"rtt_ms"`
+	LastError  string `json:"last_error"`
 }
 
 type agentBootstrapResponse struct {
@@ -428,6 +438,14 @@ func (a *app) cleanupLoop() {
 }
 
 func (a *app) runHTTP() {
+	mux := a.httpMux()
+	log.Printf("rendezvous server (HTTP) listening on %s", a.cfg.HTTPListen)
+	if err := http.ListenAndServe(a.cfg.HTTPListen, mux); err != nil {
+		log.Fatalf("http listen failed: %v", err)
+	}
+}
+
+func (a *app) httpMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", a.handleHealth)
 	mux.HandleFunc("/peers", a.handlePeers)
@@ -449,10 +467,7 @@ func (a *app) runHTTP() {
 	mux.HandleFunc("/api/agent/bootstrap", a.requireAgent(a.handleAgentBootstrap))
 	mux.HandleFunc("/api/agent/rules", a.requireAgent(a.handleAgentRules))
 	mux.Handle("/", a.staticHandler())
-	log.Printf("rendezvous server (HTTP) listening on %s", a.cfg.HTTPListen)
-	if err := http.ListenAndServe(a.cfg.HTTPListen, mux); err != nil {
-		log.Fatalf("http listen failed: %v", err)
-	}
+	return mux
 }
 
 func (a *app) staticHandler() http.Handler {
@@ -525,34 +540,70 @@ func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleDevices(w http.ResponseWriter, r *http.Request) {
-	devices, err := a.db.ListDevices(r.Context())
+	devices, err := a.enrichedDevices(r.Context())
 	writeJSONOrError(w, devices, err)
 }
 
 func (a *app) handleDevice(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/devices/")
-	d, err := a.db.GetDevice(r.Context(), id)
-	writeJSONOrError(w, d, err)
+	switch r.Method {
+	case http.MethodGet:
+		d, err := a.db.GetDevice(r.Context(), id)
+		writeJSONOrError(w, d, err)
+	case http.MethodPatch:
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
+			return
+		}
+		err := a.db.SetDeviceEnabled(r.Context(), id, req.Enabled)
+		if err == nil {
+			_ = a.db.Audit(r.Context(), "device_set_enabled", fmt.Sprintf("%s enabled=%v", id, req.Enabled))
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	case http.MethodDelete:
+		n, err := a.db.EnabledRuleReferenceCount(r.Context(), id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		if n > 0 {
+			writeJSONOrError(w, nil, badRequest("device_in_use", "device is still referenced by enabled rules"))
+			return
+		}
+		err = a.db.DeleteDevice(r.Context(), id)
+		if err == nil {
+			_ = a.db.Audit(r.Context(), "device_delete", id)
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (a *app) handleForwards(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := a.db.ListRules(r.Context())
+		rules, err := a.enrichedRules(r.Context())
 		writeJSONOrError(w, rules, err)
 	case http.MethodPost:
 		rule, err := decodeRule(r)
 		if err == nil {
-			err = rule.Validate()
+			err = normalizeRuleValidationError(rule.Validate(), rule)
 		}
 		if err == nil {
-			err = a.validateRuleUniqueness(r.Context(), rule, 0)
+			err = a.validateRule(r.Context(), rule, 0)
 		}
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONOrError(w, nil, err)
 			return
 		}
 		rule, err = a.db.CreateRule(r.Context(), rule)
+		if err == nil {
+			_ = a.db.Audit(r.Context(), "rule_create", fmt.Sprintf("#%d %s->%s:%d", rule.ID, rule.SourceID, rule.TargetID, rule.LocalPort))
+		}
 		writeJSONOrError(w, rule, err)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -569,18 +620,26 @@ func (a *app) handleForward(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPatch:
 		rule, err := decodeRule(r)
 		if err == nil {
-			err = rule.Validate()
+			err = normalizeRuleValidationError(rule.Validate(), rule)
 		}
 		if err == nil {
-			err = a.validateRuleUniqueness(r.Context(), rule, id)
+			err = a.validateRule(r.Context(), rule, id)
 		}
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONOrError(w, nil, err)
 			return
 		}
-		writeJSONOrError(w, map[string]any{"ok": true}, a.db.UpdateRule(r.Context(), id, rule))
+		err = a.db.UpdateRule(r.Context(), id, rule)
+		if err == nil {
+			_ = a.db.Audit(r.Context(), "rule_update", fmt.Sprintf("#%d %s->%s:%d", id, rule.SourceID, rule.TargetID, rule.LocalPort))
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	case http.MethodDelete:
-		writeJSONOrError(w, map[string]any{"ok": true}, a.db.DeleteRule(r.Context(), id))
+		err := a.db.DeleteRule(r.Context(), id)
+		if err == nil {
+			_ = a.db.Audit(r.Context(), "rule_delete", fmt.Sprintf("#%d", id))
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -758,6 +817,10 @@ func (a *app) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
+	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
 	addr := req.Addr
 	if addr == "" {
 		addr = requestAddr(r)
@@ -784,6 +847,10 @@ func (a *app) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	addr := req.Addr
@@ -813,16 +880,22 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		PublicAddr string `json:"public_addr"`
 		ConvID     int64  `json:"conv_id"`
 		RTTMs      int    `json:"rtt_ms"`
+		LastError  string `json:"last_error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.Peer == "" {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	addr := req.Addr
 	if addr == "" {
 		addr = requestAddr(r)
 	}
-	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.DeviceID, addr, req.UpnpAddr, req.Peer, req.State == "connected")
+	online := req.State == "connecting" || req.State == "p2p" || req.State == "relay"
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.DeviceID, addr, req.UpnpAddr, req.Peer, online)
 	if err == nil {
 		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
 			DeviceID:   req.DeviceID,
@@ -833,9 +906,10 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 			PublicAddr: req.PublicAddr,
 			ConvID:     req.ConvID,
 			RTTMs:      req.RTTMs,
+			LastError:  req.LastError,
 		})
 	}
-	if err == nil && req.State == "connected" && req.Via != "" {
+	if err == nil && (req.State == "p2p" || req.State == "relay") && req.Via != "" {
 		err = a.db.UpdateSessionPathForPair(r.Context(), req.DeviceID, req.Peer, req.Via)
 	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
@@ -854,6 +928,10 @@ func (a *app) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
+	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeJSONOrError(w, nil, err)
+		return
+	}
 	name := strings.TrimSpace(req.DeviceName)
 	if name == "" {
 		name = req.DeviceID
@@ -867,6 +945,10 @@ func (a *app) handleAgentRules(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.URL.Query().Get("device_id")
 	if deviceID == "" {
 		http.Error(w, "device_id required", http.StatusBadRequest)
+		return
+	}
+	if err := a.ensureAgentDeviceAllowed(r.Context(), deviceID); err != nil {
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	rules, err := a.db.RulesForDevice(r.Context(), deviceID)
@@ -1074,7 +1156,40 @@ func decodeRule(r *http.Request) (store.ForwardRule, error) {
 	return rule, nil
 }
 
-func (a *app) validateRuleUniqueness(ctx context.Context, rule store.ForwardRule, excludeID int64) error {
+func normalizeRuleValidationError(err error, rule store.ForwardRule) error {
+	if err == nil {
+		return nil
+	}
+	if rule.SourceID == rule.TargetID && strings.TrimSpace(rule.SourceID) != "" {
+		return badRequest("same_device_forbidden", "source_id and target_id must differ")
+	}
+	return badRequest("bad_rule", err.Error())
+}
+
+func (a *app) validateRule(ctx context.Context, rule store.ForwardRule, excludeID int64) error {
+	if strings.TrimSpace(rule.SourceID) == "" || strings.TrimSpace(rule.TargetID) == "" {
+		return badRequest("device_not_found", "source_id and target_id are required")
+	}
+	source, err := a.db.GetDevice(ctx, rule.SourceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return badRequest("device_not_found", "source device not found")
+		}
+		return err
+	}
+	target, err := a.db.GetDevice(ctx, rule.TargetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return badRequest("device_not_found", "target device not found")
+		}
+		return err
+	}
+	if source.ID == target.ID {
+		return badRequest("same_device_forbidden", "source_id and target_id must differ")
+	}
+	if !source.Enabled || !target.Enabled {
+		return badRequest("device_disabled", "source or target device is disabled")
+	}
 	if !rule.Enabled {
 		return nil
 	}
@@ -1083,7 +1198,7 @@ func (a *app) validateRuleUniqueness(ctx context.Context, rule store.ForwardRule
 		return err
 	}
 	if conflict {
-		return errors.New("same source_id cannot reuse local_port across enabled rules")
+		return badRequest("local_port_conflict", "same source_id cannot reuse local_port across enabled rules")
 	}
 	return nil
 }
@@ -1094,7 +1209,7 @@ func (a *app) agentOnline(tunnels []agentTunnelReport) bool {
 	}
 	for _, t := range tunnels {
 		switch t.State {
-		case "connecting", "connected":
+		case "connecting", "p2p", "relay":
 			return true
 		}
 	}
@@ -1115,10 +1230,11 @@ func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 			PublicAddr: t.PublicAddr,
 			ConvID:     t.ConvID,
 			RTTMs:      t.RTTMs,
+			LastError:  t.LastError,
 		}); err != nil {
 			return err
 		}
-		if t.State == "connected" && t.Via != "" {
+		if (t.State == "p2p" || t.State == "relay") && t.Via != "" {
 			if err := a.db.UpdateSessionPathForPair(ctx, deviceID, t.Peer, t.Via); err != nil {
 				return err
 			}
@@ -1127,13 +1243,170 @@ func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 	return nil
 }
 
+func (a *app) ensureAgentDeviceAllowed(ctx context.Context, deviceID string) error {
+	d, err := a.db.GetDevice(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	if !d.Enabled {
+		return badRequest("device_disabled", "device is disabled")
+	}
+	return nil
+}
+
+func (a *app) enrichedDevices(ctx context.Context) ([]store.Device, error) {
+	devices, err := a.db.ListDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := a.db.ListRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	states, err := a.db.ListTunnelStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stateMap := latestStateByPair(states)
+	deviceErrs := map[string]string{}
+	for _, st := range states {
+		if st.LastError != "" && deviceErrs[st.DeviceID] == "" {
+			deviceErrs[st.DeviceID] = st.LastError
+		}
+	}
+	ruleCount := map[string]int{}
+	healthy := map[string]bool{}
+	for _, r := range rules {
+		if !r.Enabled {
+			continue
+		}
+		ruleCount[r.SourceID]++
+		ruleCount[r.TargetID]++
+		if st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID)]; ok && (st.State == "p2p" || st.State == "relay") {
+			healthy[r.SourceID] = true
+			healthy[r.TargetID] = true
+		}
+	}
+	for i := range devices {
+		switch {
+		case ruleCount[devices[i].ID] == 0:
+			devices[i].HealthSummary = "无规则"
+		case healthy[devices[i].ID]:
+			devices[i].HealthSummary = "至少一条隧道正常"
+		default:
+			devices[i].HealthSummary = "有规则但未建链"
+		}
+		devices[i].LastError = deviceErrs[devices[i].ID]
+	}
+	return devices, nil
+}
+
+func (a *app) enrichedRules(ctx context.Context) ([]store.ForwardRule, error) {
+	rules, err := a.db.ListRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	devices, err := a.db.ListDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	states, err := a.db.ListTunnelStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deviceMap := map[string]store.Device{}
+	for _, d := range devices {
+		deviceMap[d.ID] = d
+	}
+	stateMap := latestStateByPair(states)
+	for i := range rules {
+		r := &rules[i]
+		if !r.Enabled {
+			r.RuntimeState = "disabled"
+			r.LastError = ""
+			r.LastUpdatedAt = r.UpdatedAt
+			continue
+		}
+		src, srcOK := deviceMap[r.SourceID]
+		dst, dstOK := deviceMap[r.TargetID]
+		switch {
+		case !srcOK || !dstOK:
+			r.RuntimeState = "down"
+			r.LastError = "device_not_found"
+			r.LastUpdatedAt = r.UpdatedAt
+		case !src.Enabled || !dst.Enabled:
+			r.RuntimeState = "down"
+			r.LastError = "device_disabled"
+			r.LastUpdatedAt = r.UpdatedAt
+		default:
+			st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID)]
+			if !ok {
+				r.RuntimeState = "down"
+				r.LastError = "session_not_established"
+				r.LastUpdatedAt = r.UpdatedAt
+				continue
+			}
+			r.RuntimeState = normalizeRuntimeState(st.State, st.Via)
+			r.LastError = st.LastError
+			r.LastUpdatedAt = st.UpdatedAt
+		}
+	}
+	return rules, nil
+}
+
+func latestStateByPair(states []store.TunnelState) map[string]store.TunnelState {
+	out := map[string]store.TunnelState{}
+	for _, st := range states {
+		key := pairStateKey(st.DeviceID, st.PeerID)
+		if _, ok := out[key]; !ok {
+			out[key] = st
+		}
+	}
+	return out
+}
+
+func pairStateKey(a, b string) string {
+	if a <= b {
+		return a + "\x00" + b
+	}
+	return b + "\x00" + a
+}
+
+func normalizeRuntimeState(state, via string) string {
+	switch state {
+	case "p2p", "relay", "connecting", "down", "disabled":
+		return state
+	case "connected":
+		if via == "relay" {
+			return "relay"
+		}
+		return "p2p"
+	case "stopped", "":
+		return "down"
+	default:
+		if via == "relay" {
+			return "relay"
+		}
+		return state
+	}
+}
+
+func badRequest(code, message string) error {
+	return &apiError{Status: http.StatusBadRequest, Code: code, Message: message}
+}
+
 func writeJSONOrError(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		status := http.StatusInternalServerError
+		var apiErr *apiError
+		if errors.As(err, &apiErr) {
+			writeJSON(w, apiErr.Status, apiErr)
+			return
+		}
 		if errors.Is(err, sqlErrNoRows()) {
 			status = http.StatusNotFound
 		}
-		http.Error(w, err.Error(), status)
+		writeJSON(w, status, map[string]any{"code": "internal_error", "error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, v)

@@ -16,27 +16,33 @@ type Store struct {
 }
 
 type Device struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Addr      string `json:"addr"`
-	UpnpAddr  string `json:"upnp_addr,omitempty"`
-	Want      string `json:"want,omitempty"`
-	Online    bool   `json:"online"`
-	LastSeen  string `json:"last_seen"`
-	CreatedAt string `json:"created_at"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Addr          string `json:"addr"`
+	UpnpAddr      string `json:"upnp_addr,omitempty"`
+	Want          string `json:"want,omitempty"`
+	Online        bool   `json:"online"`
+	Enabled       bool   `json:"enabled"`
+	LastSeen      string `json:"last_seen"`
+	CreatedAt     string `json:"created_at"`
+	HealthSummary string `json:"health_summary,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
 }
 
 type ForwardRule struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	SourceID   string `json:"source_id"`
-	TargetID   string `json:"target_id"`
-	LocalPort  int    `json:"local_port"`
-	TargetHost string `json:"target_host"`
-	TargetPort int    `json:"target_port"`
-	Enabled    bool   `json:"enabled"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	SourceID      string `json:"source_id"`
+	TargetID      string `json:"target_id"`
+	LocalPort     int    `json:"local_port"`
+	TargetHost    string `json:"target_host"`
+	TargetPort    int    `json:"target_port"`
+	Enabled       bool   `json:"enabled"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+	RuntimeState  string `json:"runtime_state,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
+	LastUpdatedAt string `json:"last_updated_at,omitempty"`
 }
 
 type Session struct {
@@ -67,6 +73,7 @@ type TunnelState struct {
 	PublicAddr string `json:"public_addr"`
 	ConvID     int64  `json:"conv_id"`
 	RTTMs      int    `json:"rtt_ms"`
+	LastError  string `json:"last_error"`
 	UpdatedAt  string `json:"updated_at"`
 }
 
@@ -97,6 +104,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			upnp_addr TEXT NOT NULL DEFAULT '',
 			want TEXT NOT NULL DEFAULT '',
 			online INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
 			last_seen TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -137,11 +145,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			public_addr TEXT NOT NULL DEFAULT '',
 			conv_id INTEGER NOT NULL DEFAULT 0,
 			rtt_ms INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (device_id, peer_id)
 		);`,
+		`ALTER TABLE devices ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;`,
 		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE tunnel_states ADD COLUMN rtt_ms INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE tunnel_states ADD COLUMN last_error TEXT NOT NULL DEFAULT '';`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -170,24 +181,24 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 // 避免覆盖 UDP register 路径上记录的真实地址信息。
 func (s *Store) TouchDevice(ctx context.Context, id string, online bool) error {
 	now := time.Now().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,online,last_seen)
-		VALUES(?,?,?,?)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,online,enabled,last_seen)
+		VALUES(?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET online=excluded.online, last_seen=excluded.last_seen`,
-		id, id, boolInt(online), now)
+		id, id, boolInt(online), 1, now)
 	return err
 }
 
 func (s *Store) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, want string, online bool) error {
 	now := time.Now().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,addr,upnp_addr,want,online,last_seen)
-		VALUES(?,?,?,?,?,?,?)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,name,addr,upnp_addr,want,online,enabled,last_seen)
+		VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE devices.name END,
 			addr=CASE WHEN excluded.addr<>'' THEN excluded.addr ELSE devices.addr END,
 			upnp_addr=CASE WHEN excluded.upnp_addr<>'' THEN excluded.upnp_addr ELSE devices.upnp_addr END,
 			want=CASE WHEN excluded.want<>'' THEN excluded.want ELSE devices.want END,
 			online=excluded.online, last_seen=excluded.last_seen`,
-		id, name, addr, upnpAddr, want, boolInt(online), now)
+		id, name, addr, upnpAddr, want, boolInt(online), 1, now)
 	return err
 }
 
@@ -197,7 +208,7 @@ func (s *Store) MarkOfflineBefore(ctx context.Context, cutoff time.Time) error {
 }
 
 func (s *Store) ListDevices(ctx context.Context) ([]Device, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,addr,upnp_addr,want,online,last_seen,created_at FROM devices ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,addr,upnp_addr,want,online,enabled,last_seen,created_at FROM devices ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +216,12 @@ func (s *Store) ListDevices(ctx context.Context) ([]Device, error) {
 	var out []Device
 	for rows.Next() {
 		var d Device
-		var online int
-		if err := rows.Scan(&d.ID, &d.Name, &d.Addr, &d.UpnpAddr, &d.Want, &online, &d.LastSeen, &d.CreatedAt); err != nil {
+		var online, enabled int
+		if err := rows.Scan(&d.ID, &d.Name, &d.Addr, &d.UpnpAddr, &d.Want, &online, &enabled, &d.LastSeen, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		d.Online = online != 0
+		d.Enabled = enabled != 0
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -217,11 +229,42 @@ func (s *Store) ListDevices(ctx context.Context) ([]Device, error) {
 
 func (s *Store) GetDevice(ctx context.Context, id string) (Device, error) {
 	var d Device
-	var online int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,addr,upnp_addr,want,online,last_seen,created_at FROM devices WHERE id=?`, id).
-		Scan(&d.ID, &d.Name, &d.Addr, &d.UpnpAddr, &d.Want, &online, &d.LastSeen, &d.CreatedAt)
+	var online, enabled int
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,addr,upnp_addr,want,online,enabled,last_seen,created_at FROM devices WHERE id=?`, id).
+		Scan(&d.ID, &d.Name, &d.Addr, &d.UpnpAddr, &d.Want, &online, &enabled, &d.LastSeen, &d.CreatedAt)
 	d.Online = online != 0
+	d.Enabled = enabled != 0
 	return d, err
+}
+
+func (s *Store) SetDeviceEnabled(ctx context.Context, id string, enabled bool) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE devices SET enabled=? WHERE id=?`, boolInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteDevice(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) EnabledRuleReferenceCount(ctx context.Context, deviceID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM forward_rules WHERE enabled=1 AND (source_id=? OR target_id=?)`, deviceID, deviceID).Scan(&n)
+	return n, err
 }
 
 func (s *Store) ListRules(ctx context.Context) ([]ForwardRule, error) {
@@ -348,16 +391,16 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 }
 
 func (s *Store) PutTunnelState(ctx context.Context, ts TunnelState) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(device_id,peer_id) DO UPDATE SET state=excluded.state, via=excluded.via,
-			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms, updated_at=CURRENT_TIMESTAMP`,
-		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs)
+			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms, last_error=excluded.last_error, updated_at=CURRENT_TIMESTAMP`,
+		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs, ts.LastError)
 	return err
 }
 
 func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +408,7 @@ func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
 	var out []TunnelState
 	for rows.Next() {
 		var t TunnelState
-		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.LastError, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

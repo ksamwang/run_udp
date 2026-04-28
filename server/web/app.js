@@ -2,7 +2,17 @@ const $ = (s) => document.querySelector(s);
 let lastDevices = [];
 const api = async (url, opts = {}) => {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let payload;
+    try {
+      payload = await res.json();
+    } catch {
+      throw new Error(await res.text());
+    }
+    const err = new Error(payload.error || "request failed");
+    err.code = payload.code || "";
+    throw err;
+  }
   return res.json();
 };
 
@@ -30,25 +40,47 @@ async function refresh() {
     ["转发规则", metrics.forward_rules], ["中继字节", metrics.relay_bytes]
   ].map(([k, v]) => `<div class="metric">${k}<strong>${v}</strong></div>`).join("");
   updateDeviceSelects(devices);
-  $("#device-list").innerHTML = devices.map(d => `<tr><td>${escapeHTML(d.name || "")}</td><td>${escapeHTML(d.id)}</td><td>${renderDeviceAddr(d)}</td><td>${d.online ? "在线" : "离线"}</td><td>${d.last_seen || ""}</td></tr>`).join("");
-  $("#rule-list").innerHTML = rules.map(r => `<tr><td>${r.name || r.id}</td><td>${r.source_id}:${r.local_port}</td><td>${r.target_id}</td><td>${r.target_host}:${r.target_port}</td><td>${r.enabled ? "启用" : "停用"}</td><td><button data-del="${r.id}">删除</button></td></tr>`).join("");
+  $("#device-list").innerHTML = devices.map(d => `<tr>
+    <td>${escapeHTML(d.name || "")}</td>
+    <td>${escapeHTML(d.id)}</td>
+    <td>${renderDeviceAddr(d)}</td>
+    <td>${d.enabled ? (d.online ? "在线" : "离线") : "已禁用"}</td>
+    <td>${escapeHTML(d.health_summary || "")}</td>
+    <td>${escapeHTML(d.last_error || "")}</td>
+    <td>${d.last_seen || ""}</td>
+    <td>
+      <button data-toggle-device="${escapeHTML(d.id)}" data-enabled="${d.enabled ? "1" : "0"}">${d.enabled ? "禁用" : "启用"}</button>
+      <button data-del-device="${escapeHTML(d.id)}">删除</button>
+    </td>
+  </tr>`).join("");
+  $("#rule-list").innerHTML = rules.map(r => `<tr>
+    <td>${escapeHTML(r.name || String(r.id))}</td>
+    <td>${escapeHTML(r.source_id)}:${r.local_port}</td>
+    <td>${escapeHTML(r.target_id)}</td>
+    <td>${escapeHTML(r.target_host)}:${r.target_port}</td>
+    <td>${escapeHTML(r.runtime_state || (r.enabled ? "down" : "disabled"))}</td>
+    <td>${escapeHTML(r.last_error || "")}</td>
+    <td>${escapeHTML(r.last_updated_at || r.updated_at || "")}</td>
+    <td><button data-del="${r.id}">删除</button></td>
+  </tr>`).join("");
   const stateMap = buildTunnelStateMap(tunnelStates);
   $("#session-list").innerHTML = sessions.map(s => renderSessionRow(s, stateMap)).join("");
   updateSettings(settings);
 }
 
 function updateDeviceSelects(devices) {
-  const signature = devices.map(d => `${d.id}:${d.online}`).join("|");
+  const enabledDevices = devices.filter(d => d.enabled);
+  const signature = enabledDevices.map(d => `${d.id}:${d.online}:${d.enabled}`).join("|");
   if (signature === lastDevices.join("|")) return;
-  lastDevices = devices.map(d => `${d.id}:${d.online}`);
-  const options = devices.length
-    ? devices.map(d => `<option value="${escapeHTML(d.id)}">${escapeHTML(d.name || d.id)} / ${escapeHTML(d.id)}${d.online ? "（在线）" : "（离线）"}</option>`).join("")
-    : `<option value="" disabled selected>暂无设备，先启动客户端 agent</option>`;
+  lastDevices = enabledDevices.map(d => `${d.id}:${d.online}:${d.enabled}`);
+  const options = enabledDevices.length
+    ? enabledDevices.map(d => `<option value="${escapeHTML(d.id)}">${escapeHTML(d.name || d.id)} / ${escapeHTML(d.id)}${d.online ? "（在线）" : "（离线）"}</option>`).join("")
+    : `<option value="" disabled selected>暂无可用设备，先启动并启用客户端 agent</option>`;
   ["#source-id", "#target-id"].forEach(sel => {
     const el = $(sel);
     const prev = el.value;
     el.innerHTML = options;
-    if (devices.some(d => d.id === prev)) el.value = prev;
+    if (enabledDevices.some(d => d.id === prev)) el.value = prev;
   });
 }
 
@@ -84,6 +116,7 @@ function renderSessionRow(session, stateMap) {
   const conv = state?.conv_id ? String(state.conv_id) : "";
   const rtt = state?.rtt_ms ? `${state.rtt_ms} ms` : "";
   const status = state?.state || "";
+  const lastError = state?.last_error || "";
   return `<tr>
     <td>${session.id}</td>
     <td>${escapeHTML(session.source_id)} -> ${escapeHTML(session.target_id)}</td>
@@ -93,7 +126,7 @@ function renderSessionRow(session, stateMap) {
     <td>${escapeHTML(conv)}</td>
     <td>${escapeHTML(rtt)}</td>
     <td>${session.relay_bytes}</td>
-    <td>${session.last_seen}</td>
+    <td>${session.last_seen}<br><small>${escapeHTML(lastError)}</small></td>
   </tr>`;
 }
 
@@ -133,7 +166,12 @@ $("#rule-form").addEventListener("submit", async (e) => {
     alert("入口设备和出口设备不能相同。");
     return;
   }
-  await api("/api/forwards", { method: "POST", body: JSON.stringify(body) });
+  try {
+    await api("/api/forwards", { method: "POST", body: JSON.stringify(body) });
+  } catch (err) {
+    alert(`保存规则失败：${err.message}${err.code ? ` (${err.code})` : ""}`);
+    return;
+  }
   e.currentTarget.reset();
   $("#target-host").value = "127.0.0.1";
   refresh();
@@ -144,6 +182,28 @@ $("#rule-list").addEventListener("click", async (e) => {
   if (!id) return;
   await api(`/api/forwards/${id}`, { method: "DELETE" });
   refresh();
+});
+
+$("#device-list").addEventListener("click", async (e) => {
+  const toggleID = e.target.dataset.toggleDevice;
+  if (toggleID) {
+    const enabled = e.target.dataset.enabled === "1";
+    try {
+      await api(`/api/devices/${toggleID}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
+      refresh();
+    } catch (err) {
+      alert(`更新设备失败：${err.message}${err.code ? ` (${err.code})` : ""}`);
+    }
+    return;
+  }
+  const deleteID = e.target.dataset.delDevice;
+  if (!deleteID) return;
+  try {
+    await api(`/api/devices/${deleteID}`, { method: "DELETE" });
+    refresh();
+  } catch (err) {
+    alert(`删除设备失败：${err.message}${err.code ? ` (${err.code})` : ""}`);
+  }
 });
 
 function updateSettings(settings) {
