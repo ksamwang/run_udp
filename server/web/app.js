@@ -60,6 +60,8 @@ async function refresh() {
     <td>${escapeHTML(r.target_host)}:${r.target_port}</td>
     <td>${escapeHTML(r.runtime_state || (r.enabled ? "down" : "disabled"))}</td>
     <td>${escapeHTML(r.last_error || "")}</td>
+    <td>${escapeHTML(r.attempt ? String(r.attempt) : "")}</td>
+    <td>${escapeHTML(r.next_retry_at || "")}</td>
     <td>${escapeHTML(r.last_updated_at || r.updated_at || "")}</td>
     <td><button data-del="${r.id}">删除</button></td>
   </tr>`).join("");
@@ -117,6 +119,8 @@ function renderSessionRow(session, stateMap) {
   const rtt = state?.rtt_ms ? `${state.rtt_ms} ms` : "";
   const status = state?.state || "";
   const lastError = state?.last_error || "";
+  const attempt = state?.attempt ? String(state.attempt) : "";
+  const nextRetryAt = state?.next_retry_at || "";
   return `<tr>
     <td>${session.id}</td>
     <td>${escapeHTML(session.source_id)} -> ${escapeHTML(session.target_id)}</td>
@@ -125,6 +129,8 @@ function renderSessionRow(session, stateMap) {
     <td>${escapeHTML(status)}</td>
     <td>${escapeHTML(conv)}</td>
     <td>${escapeHTML(rtt)}</td>
+    <td>${escapeHTML(attempt)}</td>
+    <td>${escapeHTML(nextRetryAt)}</td>
     <td>${session.relay_bytes}</td>
     <td>${session.last_seen}<br><small>${escapeHTML(lastError)}</small></td>
   </tr>`;

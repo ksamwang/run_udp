@@ -43,6 +43,8 @@ type ForwardRule struct {
 	RuntimeState  string `json:"runtime_state,omitempty"`
 	LastError     string `json:"last_error,omitempty"`
 	LastUpdatedAt string `json:"last_updated_at,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
+	NextRetryAt   string `json:"next_retry_at,omitempty"`
 }
 
 type Session struct {
@@ -65,16 +67,19 @@ type Metrics struct {
 }
 
 type TunnelState struct {
-	DeviceID   string `json:"device_id"`
-	PeerID     string `json:"peer_id"`
-	State      string `json:"state"`
-	Via        string `json:"via"`
-	NATType    string `json:"nat_type"`
-	PublicAddr string `json:"public_addr"`
-	ConvID     int64  `json:"conv_id"`
-	RTTMs      int    `json:"rtt_ms"`
-	LastError  string `json:"last_error"`
-	UpdatedAt  string `json:"updated_at"`
+	DeviceID         string `json:"device_id"`
+	PeerID           string `json:"peer_id"`
+	State            string `json:"state"`
+	Via              string `json:"via"`
+	NATType          string `json:"nat_type"`
+	PublicAddr       string `json:"public_addr"`
+	ConvID           int64  `json:"conv_id"`
+	RTTMs            int    `json:"rtt_ms"`
+	LastError        string `json:"last_error"`
+	Attempt          int    `json:"attempt"`
+	NextRetryAt      string `json:"next_retry_at"`
+	LastTransitionAt string `json:"last_transition_at"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 func Open(path string) (*Store, error) {
@@ -146,6 +151,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			conv_id INTEGER NOT NULL DEFAULT 0,
 			rtt_ms INTEGER NOT NULL DEFAULT 0,
 			last_error TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0,
+			next_retry_at TEXT NOT NULL DEFAULT '',
+			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (device_id, peer_id)
 		);`,
@@ -153,6 +161,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE tunnel_states ADD COLUMN rtt_ms INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE tunnel_states ADD COLUMN last_error TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE tunnel_states ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE tunnel_states ADD COLUMN next_retry_at TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE tunnel_states ADD COLUMN last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -391,16 +402,22 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 }
 
 func (s *Store) PutTunnelState(ctx context.Context, ts TunnelState) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+	lastTransitionAt := ts.LastTransitionAt
+	if lastTransitionAt == "" {
+		lastTransitionAt = time.Now().Format(time.RFC3339)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(device_id,peer_id) DO UPDATE SET state=excluded.state, via=excluded.via,
-			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms, last_error=excluded.last_error, updated_at=CURRENT_TIMESTAMP`,
-		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs, ts.LastError)
+			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms,
+			last_error=excluded.last_error, attempt=excluded.attempt, next_retry_at=excluded.next_retry_at,
+			last_transition_at=excluded.last_transition_at, updated_at=CURRENT_TIMESTAMP`,
+		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs, ts.LastError, ts.Attempt, ts.NextRetryAt, lastTransitionAt)
 	return err
 }
 
 func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +425,7 @@ func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
 	var out []TunnelState
 	for rows.Next() {
 		var t TunnelState
-		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.LastError, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.LastError, &t.Attempt, &t.NextRetryAt, &t.LastTransitionAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

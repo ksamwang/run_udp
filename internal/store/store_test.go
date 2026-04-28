@@ -111,14 +111,17 @@ func TestUpdateSessionPathForPairAndTunnelState(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].Path != "p2p" {
 		t.Fatalf("unexpected sessions: %+v", sessions)
 	}
-	if err := s.PutTunnelState(ctx, TunnelState{DeviceID: "A", PeerID: "B", State: "p2p", Via: "p2p", NATType: "cone", ConvID: 123, RTTMs: 45, LastError: "none"}); err != nil {
+	if err := s.PutTunnelState(ctx, TunnelState{
+		DeviceID: "A", PeerID: "B", State: "p2p", Via: "p2p", NATType: "cone",
+		ConvID: 123, RTTMs: 45, LastError: "none", Attempt: 2, NextRetryAt: "2026-04-28T03:00:00Z", LastTransitionAt: "2026-04-28T02:59:00Z",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	states, err := s.ListTunnelStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(states) != 1 || states[0].RTTMs != 45 || states[0].ConvID != 123 || states[0].NATType != "cone" || states[0].LastError != "none" {
+	if len(states) != 1 || states[0].RTTMs != 45 || states[0].ConvID != 123 || states[0].NATType != "cone" || states[0].LastError != "none" || states[0].Attempt != 2 || states[0].NextRetryAt == "" || states[0].LastTransitionAt == "" {
 		t.Fatalf("unexpected tunnel states: %+v", states)
 	}
 }

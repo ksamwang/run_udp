@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	mrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -41,14 +42,17 @@ func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 type agentTunnelStatus struct {
-	Peer       string `json:"peer"`
-	State      string `json:"state"`
-	Via        string `json:"via"`
-	PublicAddr string `json:"public_addr"`
-	ConvID     int64  `json:"conv_id"`
-	RTTMs      int    `json:"rtt_ms"`
-	NATType    string `json:"nat_type"`
-	LastError  string `json:"last_error"`
+	Peer             string `json:"peer"`
+	State            string `json:"state"`
+	Via              string `json:"via"`
+	PublicAddr       string `json:"public_addr"`
+	ConvID           int64  `json:"conv_id"`
+	RTTMs            int    `json:"rtt_ms"`
+	NATType          string `json:"nat_type"`
+	LastError        string `json:"last_error"`
+	Attempt          int    `json:"attempt"`
+	NextRetryAt      string `json:"next_retry_at"`
+	LastTransitionAt string `json:"last_transition_at"`
 }
 
 type agentPeerSession struct {
@@ -59,11 +63,13 @@ type agentPeerSession struct {
 
 	cancel context.CancelFunc
 	done   chan struct{}
+	wake   chan string
 
-	mu     sync.RWMutex
-	status agentTunnelStatus
-	addr   string
-	upnp   string
+	mu           sync.RWMutex
+	status       agentTunnelStatus
+	addr         string
+	upnp         string
+	tunnelCancel context.CancelFunc
 }
 
 type peerRuleSet struct {
@@ -79,6 +85,16 @@ type natProbeResult struct {
 	AltAddr     string
 	ForceRelay  bool
 }
+
+type natRuntime struct {
+	mu     sync.RWMutex
+	result natProbeResult
+}
+
+var (
+	backoffRandMu sync.Mutex
+	backoffRand   = mrand.New(mrand.NewSource(time.Now().UnixNano()))
+)
 
 type bootstrapResponse struct {
 	DeviceID     string `json:"device_id"`
@@ -98,6 +114,9 @@ type bootstrapResponse struct {
 func (s *agentPeerSession) setStatus(st agentTunnelStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if st.LastTransitionAt == "" {
+		st.LastTransitionAt = time.Now().Format(time.RFC3339)
+	}
 	s.status = st
 }
 
@@ -116,6 +135,45 @@ func (s *agentPeerSession) snapshot() (agentTunnelStatus, string, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status, s.addr, s.upnp
+}
+
+func (s *agentPeerSession) setTunnelCancel(cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tunnelCancel = cancel
+}
+
+func (s *agentPeerSession) clearTunnelCancel(cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if fmt.Sprintf("%p", s.tunnelCancel) == fmt.Sprintf("%p", cancel) {
+		s.tunnelCancel = nil
+	}
+}
+
+func (s *agentPeerSession) trigger(reason string) {
+	s.mu.RLock()
+	cancel := s.tunnelCancel
+	s.mu.RUnlock()
+	select {
+	case s.wake <- reason:
+	default:
+	}
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (n *natRuntime) Get() natProbeResult {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.result
+}
+
+func (n *natRuntime) Set(res natProbeResult) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.result = res
 }
 
 func main() {
@@ -214,7 +272,7 @@ func main() {
 	}
 	natResult := autoDetectNAT(runtimeCfg, bootstrapAltPort)
 	if *agent || (runtimeCfg.ServerHTTP != "" && runtimeCfg.DeviceID != "" && runtimeCfg.PeerID == "") {
-		runAgent(cfg, runtimeCfg, *configPath, natResult)
+		runAgent(cfg, runtimeCfg, *configPath, natResult, bootstrapAltPort)
 		return
 	}
 	if runtimeCfg.DeviceID == "" || runtimeCfg.PeerID == "" {
@@ -259,18 +317,18 @@ func waitForSignal(deviceID string) {
 	log.Printf("[%s] signal received, shutting down", deviceID)
 }
 
-func runAgent(localCfg, runtimeCfg config.Client, configPath string, natResult natProbeResult) {
+func runAgent(localCfg, runtimeCfg config.Client, configPath string, natResult natProbeResult, altPort int) {
 	if runtimeCfg.ServerHTTP == "" {
 		runtimeCfg.ServerHTTP = udpToHTTP(runtimeCfg.Server)
 	}
 	configURL := startClientConfigServer(&localCfg, configPath, restartSelf)
 	log.Printf("[%s] agent starting (control=%s tray=%v name=%q)", runtimeCfg.DeviceID, runtimeCfg.ServerHTTP, runtimeCfg.TrayEnabled, runtimeCfg.DeviceName)
 	if runtimeCfg.TrayEnabled {
-		go runAgentLoop(runtimeCfg, natResult)
+		go runAgentLoop(runtimeCfg, natResult, altPort)
 		runTray(runtimeCfg.DeviceID, runtimeCfg.ServerHTTP, configURL, func() { os.Exit(0) })
 		return
 	}
-	runAgentLoop(runtimeCfg, natResult)
+	runAgentLoop(runtimeCfg, natResult, altPort)
 }
 
 func restartSelf() {
@@ -290,7 +348,7 @@ func restartSelf() {
 	os.Exit(0)
 }
 
-func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
+func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort int) {
 	if err := agentPost(runtimeCfg, "/api/agent/register", map[string]any{
 		"device_id": runtimeCfg.DeviceID,
 		"name":      runtimeCfg.DeviceName,
@@ -303,25 +361,34 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 
 	rootCtx, cancelAll := context.WithCancel(context.Background())
 	defer cancelAll()
+	natState := &natRuntime{result: natResult}
 	sessions := map[string]*agentPeerSession{}
 	var lastEmptyLog time.Time
 	var lastRulesSig string
-	for {
-		select {
-		case <-stop:
-			log.Printf("[%s] signal received, shutting down", runtimeCfg.DeviceID)
-			cancelAll()
-			for _, sess := range sessions {
-				<-sess.done
-			}
-			return
-		default:
+	var lastHeartbeatAddr, lastHeartbeatUPnP string
+	rulesTicker := time.NewTicker(5 * time.Second)
+	defer rulesTicker.Stop()
+	heartbeatTicker := time.NewTicker(10 * time.Second)
+	defer heartbeatTicker.Stop()
+	resumeCh := startResumeMonitor(rootCtx)
+
+	refreshNAT := func(reason string) {
+		next := autoDetectNAT(runtimeCfg, altPort)
+		natState.Set(next)
+		log.Printf("[%s] network change reason=%s nat=%s primary=%s alt=%s", runtimeCfg.DeviceID, reason, next.NATType, next.PrimaryAddr, next.AltAddr)
+	}
+	triggerAllPeers := func(reason string) {
+		refreshNAT(reason)
+		for peer, sess := range sessions {
+			log.Printf("[%s] peer=%s trigger immediate reconnect: %s", runtimeCfg.DeviceID, peer, reason)
+			sess.trigger(reason)
 		}
+	}
+	syncRules := func() {
 		rules, err := agentRules(runtimeCfg)
 		if err != nil {
 			log.Printf("[%s] pull rules failed: %v", runtimeCfg.DeviceID, err)
-			time.Sleep(5 * time.Second)
-			continue
+			return
 		}
 		sig := rulesSignature(rules)
 		if sig != lastRulesSig {
@@ -329,11 +396,9 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 			lastRulesSig = sig
 		}
 		grouped := groupRulesByPeer(runtimeCfg.DeviceID, rules)
-		if len(grouped) == 0 {
-			if time.Since(lastEmptyLog) > 60*time.Second {
-				log.Printf("[%s] no enabled rule references this device (rules=%d); waiting", runtimeCfg.DeviceID, len(rules))
-				lastEmptyLog = time.Now()
-			}
+		if len(grouped) == 0 && time.Since(lastEmptyLog) > 60*time.Second {
+			log.Printf("[%s] no enabled rule references this device (rules=%d); waiting", runtimeCfg.DeviceID, len(rules))
+			lastEmptyLog = time.Now()
 		}
 		for peer, sess := range sessions {
 			nextSet, ok := grouped[peer]
@@ -342,11 +407,11 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 				continue
 			}
 			log.Printf("[%s] peer=%s rules=%v local_ports=%v stopping: rule removed or changed", runtimeCfg.DeviceID, peer, sess.ruleIDs, sess.localPorts)
-			sess.setStatus(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_changed"})
+			sess.setStatus(agentTunnelStatus{Peer: peer, State: "disabled", LastError: "rule_changed"})
 			_ = agentPost(runtimeCfg, "/api/agent/tunnel-status", map[string]any{
-				"device_id": runtimeCfg.DeviceID,
-				"peer":      peer,
-				"state":     "down",
+				"device_id":  runtimeCfg.DeviceID,
+				"peer":       peer,
+				"state":      "disabled",
 				"last_error": "rule_changed",
 			})
 			sess.cancel()
@@ -365,69 +430,64 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult) {
 				localPorts: append([]int(nil), ruleSet.LocalPorts...),
 				cancel:     scancel,
 				done:       make(chan struct{}),
+				wake:       make(chan string, 1),
 			}
-			sess.setStatus(agentTunnelStatus{Peer: peer, State: "connecting"})
 			sessions[peer] = sess
 			log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v activating ingress_rules=%d", runtimeCfg.DeviceID, peer, ruleSet.RuleIDs, ruleSet.LocalPorts, len(ruleSet.Forward))
-			go func(peer string, rules peerRuleSet, st *agentPeerSession) {
-				defer close(st.done)
-				report := func(ts agentTunnelStatus, addr, upnp string) {
-					ts.Peer = peer
-					st.setStatus(ts)
-					st.setDeviceAddrs(addr, upnp)
-					if ts.State == "" {
-						return
-					}
-					body := map[string]any{
-						"device_id":   runtimeCfg.DeviceID,
-						"name":        runtimeCfg.DeviceName,
-						"peer":        peer,
-						"state":       ts.State,
-						"via":         ts.Via,
-						"public_addr": ts.PublicAddr,
-						"conv_id":     ts.ConvID,
-						"rtt_ms":      ts.RTTMs,
-						"nat_type":    ts.NATType,
-						"last_error":  ts.LastError,
-						"addr":        addr,
-						"upnp_addr":   upnp,
-					}
-					if err := agentPost(runtimeCfg, "/api/agent/tunnel-status", body); err != nil && sctx.Err() == nil {
-						log.Printf("[%s] tunnel-status peer=%s failed: %v", runtimeCfg.DeviceID, peer, err)
-					}
-				}
-				report(agentTunnelStatus{Peer: peer, State: "connecting"}, "", "")
-				for {
-					err := runTunnelOnce(sctx, runtimeCfg, peer, rules.Forward, natResult, report)
-					if sctx.Err() != nil {
-						report(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_cancelled"}, "", "")
-						return
-					}
-					reason := classifyTunnelError(err)
-					report(agentTunnelStatus{Peer: peer, State: "down", LastError: reason}, "", "")
-					log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v tunnel stopped: %s (%v)", runtimeCfg.DeviceID, peer, rules.RuleIDs, rules.LocalPorts, reason, err)
-					select {
-					case <-time.After(3 * time.Second):
-						report(agentTunnelStatus{Peer: peer, State: "connecting"}, "", "")
-					case <-sctx.Done():
-						report(agentTunnelStatus{Peer: peer, State: "down", LastError: "rule_cancelled"}, "", "")
-						return
-					}
-				}
-			}(peer, ruleSet, sess)
+			go runPeerWorker(sctx, runtimeCfg, natState, peer, ruleSet, sess)
 		}
+	}
+	sendHeartbeat := func() {
 		addr, upnp, tunnels := snapshotAgentSessions(sessions)
+		if addr != "" && lastHeartbeatAddr != "" && addr != lastHeartbeatAddr {
+			log.Printf("[%s] local/public addr changed: %s -> %s", runtimeCfg.DeviceID, lastHeartbeatAddr, addr)
+			lastHeartbeatAddr = addr
+			lastHeartbeatUPnP = upnp
+			triggerAllPeers("addr_changed")
+		} else {
+			if addr != "" {
+				lastHeartbeatAddr = addr
+			}
+			if upnp != "" {
+				if lastHeartbeatUPnP != "" && upnp != lastHeartbeatUPnP {
+					log.Printf("[%s] upnp/public addr changed: %s -> %s", runtimeCfg.DeviceID, lastHeartbeatUPnP, upnp)
+					lastHeartbeatUPnP = upnp
+					triggerAllPeers("upnp_changed")
+				} else {
+					lastHeartbeatUPnP = upnp
+				}
+			}
+		}
 		if err := agentPost(runtimeCfg, "/api/agent/heartbeat", map[string]any{
 			"device_id": runtimeCfg.DeviceID,
 			"name":      runtimeCfg.DeviceName,
 			"addr":      addr,
 			"upnp_addr": upnp,
-			"nat_type":  natResult.NATType,
+			"nat_type":  natState.Get().NATType,
 			"tunnels":   tunnels,
 		}); err != nil {
 			log.Printf("[%s] heartbeat failed: %v", runtimeCfg.DeviceID, err)
 		}
-		time.Sleep(10 * time.Second)
+	}
+	syncRules()
+	sendHeartbeat()
+	for {
+		select {
+		case <-stop:
+			log.Printf("[%s] signal received, shutting down", runtimeCfg.DeviceID)
+			cancelAll()
+			for _, sess := range sessions {
+				<-sess.done
+			}
+			return
+		case <-rulesTicker.C:
+			syncRules()
+		case <-heartbeatTicker.C:
+			sendHeartbeat()
+		case reason := <-resumeCh:
+			log.Printf("[%s] system/network event: %s", runtimeCfg.DeviceID, reason)
+			triggerAllPeers(reason)
+		}
 	}
 }
 
@@ -842,6 +902,133 @@ func snapshotAgentSessions(sessions map[string]*agentPeerSession) (string, strin
 	return addr, upnp, out
 }
 
+func runPeerWorker(ctx context.Context, runtimeCfg config.Client, natState *natRuntime, peer string, rules peerRuleSet, st *agentPeerSession) {
+	defer close(st.done)
+	attempt := 0
+	report := func(ts agentTunnelStatus, addr, upnp string) {
+		ts.Peer = peer
+		st.setStatus(ts)
+		st.setDeviceAddrs(addr, upnp)
+		if ts.State == "" {
+			return
+		}
+		body := map[string]any{
+			"device_id":          runtimeCfg.DeviceID,
+			"name":               runtimeCfg.DeviceName,
+			"peer":               peer,
+			"state":              ts.State,
+			"via":                ts.Via,
+			"public_addr":        ts.PublicAddr,
+			"conv_id":            ts.ConvID,
+			"rtt_ms":             ts.RTTMs,
+			"nat_type":           ts.NATType,
+			"last_error":         ts.LastError,
+			"attempt":            ts.Attempt,
+			"next_retry_at":      ts.NextRetryAt,
+			"last_transition_at": ts.LastTransitionAt,
+			"addr":               addr,
+			"upnp_addr":          upnp,
+		}
+		if err := agentPost(runtimeCfg, "/api/agent/tunnel-status", body); err != nil && ctx.Err() == nil {
+			log.Printf("[%s] tunnel-status peer=%s failed: %v", runtimeCfg.DeviceID, peer, err)
+		}
+	}
+	for {
+		if ctx.Err() != nil {
+			report(agentTunnelStatus{Peer: peer, State: "disabled", LastError: "rule_cancelled"}, "", "")
+			return
+		}
+		connected := false
+		transitionAt := time.Now().Format(time.RFC3339)
+		report(agentTunnelStatus{
+			Peer:             peer,
+			State:            "connecting",
+			Attempt:          attempt,
+			LastTransitionAt: transitionAt,
+		}, "", "")
+		runCtx, runCancel := context.WithCancel(ctx)
+		st.setTunnelCancel(runCancel)
+		err := runTunnelOnce(runCtx, runtimeCfg, peer, rules.Forward, natState.Get(), func(ts agentTunnelStatus, addr, upnp string) {
+			if ts.State == "p2p" || ts.State == "relay" {
+				connected = true
+				attempt = 0
+			}
+			if ts.LastTransitionAt == "" {
+				ts.LastTransitionAt = time.Now().Format(time.RFC3339)
+			}
+			report(ts, addr, upnp)
+		})
+		st.clearTunnelCancel(runCancel)
+		if ctx.Err() != nil {
+			report(agentTunnelStatus{Peer: peer, State: "disabled", LastError: "rule_cancelled"}, "", "")
+			return
+		}
+		reason, triggered := drainWakeReason(st.wake)
+		if triggered {
+			log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v immediate reconnect: %s", runtimeCfg.DeviceID, peer, rules.RuleIDs, rules.LocalPorts, reason)
+			if reason == "addr_changed" || reason == "upnp_changed" || reason == "system_resume" {
+				attempt = 0
+			}
+			continue
+		}
+		tunnelReason := classifyTunnelError(err)
+		log.Printf("[%s] peer=%s rule_ids=%v local_ports=%v tunnel stopped: %s (%v)", runtimeCfg.DeviceID, peer, rules.RuleIDs, rules.LocalPorts, tunnelReason, err)
+		if connected {
+			attempt = 0
+		}
+		if !shouldRetryTunnelError(tunnelReason) {
+			report(agentTunnelStatus{
+				Peer:             peer,
+				State:            "down",
+				LastError:        tunnelReason,
+				Attempt:          attempt,
+				LastTransitionAt: time.Now().Format(time.RFC3339),
+			}, "", "")
+			select {
+			case <-ctx.Done():
+				report(agentTunnelStatus{Peer: peer, State: "disabled", LastError: "rule_cancelled"}, "", "")
+				return
+			case reason := <-st.wake:
+				log.Printf("[%s] peer=%s wake from down: %s", runtimeCfg.DeviceID, peer, reason)
+				if reason == "addr_changed" || reason == "upnp_changed" || reason == "system_resume" {
+					attempt = 0
+				}
+				continue
+			}
+		}
+		attempt++
+		delay := nextBackoffDelay(attempt)
+		nextRetry := time.Now().Add(delay).Format(time.RFC3339)
+		report(agentTunnelStatus{
+			Peer:             peer,
+			State:            "backoff",
+			LastError:        tunnelReason,
+			Attempt:          attempt,
+			NextRetryAt:      nextRetry,
+			LastTransitionAt: time.Now().Format(time.RFC3339),
+		}, "", "")
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			report(agentTunnelStatus{Peer: peer, State: "disabled", LastError: "rule_cancelled"}, "", "")
+			return
+		case reason := <-st.wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			log.Printf("[%s] peer=%s wake during backoff: %s", runtimeCfg.DeviceID, peer, reason)
+			if reason == "addr_changed" || reason == "upnp_changed" || reason == "system_resume" {
+				attempt = 0
+			}
+		case <-timer.C:
+		}
+	}
+}
+
 func classifyTunnelError(err error) string {
 	if err == nil {
 		return ""
@@ -850,8 +1037,14 @@ func classifyTunnelError(err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return "rule_cancelled"
+	case strings.Contains(msg, "peer_info_timeout"):
+		return "peer_info_timeout"
+	case strings.Contains(msg, "punch_timeout"):
+		return "punch_timeout"
 	case strings.Contains(msg, "register_failed"):
 		return "register_failed"
+	case strings.Contains(msg, "kcp_open_failed"):
+		return "kcp_open_failed"
 	case strings.Contains(msg, "ingress_listen_failed"):
 		return "ingress_listen_failed"
 	case strings.Contains(msg, "local_socket_failed"):
@@ -862,6 +1055,53 @@ func classifyTunnelError(err error) string {
 		return "io_timeout"
 	default:
 		return msg
+	}
+}
+
+func shouldRetryTunnelError(reason string) bool {
+	switch reason {
+	case "rule_cancelled", "rule_changed", "ingress_listen_failed":
+		return false
+	default:
+		return true
+	}
+}
+
+func nextBackoffDelay(attempt int) time.Duration {
+	steps := []time.Duration{
+		time.Second,
+		2 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+		20 * time.Second,
+		30 * time.Second,
+		60 * time.Second,
+	}
+	if attempt <= 0 {
+		return steps[0]
+	}
+	idx := attempt - 1
+	if idx >= len(steps) {
+		idx = len(steps) - 1
+	}
+	base := steps[idx]
+	jitterMin := float64(base) * 0.10
+	jitterMax := float64(base) * 0.20
+	if jitterMax <= jitterMin {
+		return base
+	}
+	backoffRandMu.Lock()
+	jitter := jitterMin + backoffRand.Float64()*(jitterMax-jitterMin)
+	backoffRandMu.Unlock()
+	return base + time.Duration(jitter)
+}
+
+func drainWakeReason(ch <-chan string) (string, bool) {
+	select {
+	case reason := <-ch:
+		return reason, true
+	default:
+		return "", false
 	}
 }
 

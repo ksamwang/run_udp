@@ -77,14 +77,17 @@ type apiError struct {
 func (e *apiError) Error() string { return e.Message }
 
 type agentTunnelReport struct {
-	Peer       string `json:"peer"`
-	State      string `json:"state"`
-	Via        string `json:"via"`
-	NATType    string `json:"nat_type"`
-	PublicAddr string `json:"public_addr"`
-	ConvID     int64  `json:"conv_id"`
-	RTTMs      int    `json:"rtt_ms"`
-	LastError  string `json:"last_error"`
+	Peer             string `json:"peer"`
+	State            string `json:"state"`
+	Via              string `json:"via"`
+	NATType          string `json:"nat_type"`
+	PublicAddr       string `json:"public_addr"`
+	ConvID           int64  `json:"conv_id"`
+	RTTMs            int    `json:"rtt_ms"`
+	LastError        string `json:"last_error"`
+	Attempt          int    `json:"attempt"`
+	NextRetryAt      string `json:"next_retry_at"`
+	LastTransitionAt string `json:"last_transition_at"`
 }
 
 type agentBootstrapResponse struct {
@@ -881,6 +884,9 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		ConvID     int64  `json:"conv_id"`
 		RTTMs      int    `json:"rtt_ms"`
 		LastError  string `json:"last_error"`
+		Attempt    int    `json:"attempt"`
+		NextRetryAt string `json:"next_retry_at"`
+		LastTransitionAt string `json:"last_transition_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.Peer == "" {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -898,15 +904,18 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.DeviceID, addr, req.UpnpAddr, req.Peer, online)
 	if err == nil {
 		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
-			DeviceID:   req.DeviceID,
-			PeerID:     req.Peer,
-			State:      req.State,
-			Via:        req.Via,
-			NATType:    req.NATType,
-			PublicAddr: req.PublicAddr,
-			ConvID:     req.ConvID,
-			RTTMs:      req.RTTMs,
-			LastError:  req.LastError,
+			DeviceID:         req.DeviceID,
+			PeerID:           req.Peer,
+			State:            req.State,
+			Via:              req.Via,
+			NATType:          req.NATType,
+			PublicAddr:       req.PublicAddr,
+			ConvID:           req.ConvID,
+			RTTMs:            req.RTTMs,
+			LastError:        req.LastError,
+			Attempt:          req.Attempt,
+			NextRetryAt:      req.NextRetryAt,
+			LastTransitionAt: req.LastTransitionAt,
 		})
 	}
 	if err == nil && (req.State == "p2p" || req.State == "relay") && req.Via != "" {
@@ -1204,16 +1213,7 @@ func (a *app) validateRule(ctx context.Context, rule store.ForwardRule, excludeI
 }
 
 func (a *app) agentOnline(tunnels []agentTunnelReport) bool {
-	if len(tunnels) == 0 {
-		return true
-	}
-	for _, t := range tunnels {
-		switch t.State {
-		case "connecting", "p2p", "relay":
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []agentTunnelReport) error {
@@ -1222,15 +1222,18 @@ func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 			continue
 		}
 		if err := a.db.PutTunnelState(ctx, store.TunnelState{
-			DeviceID:   deviceID,
-			PeerID:     t.Peer,
-			State:      t.State,
-			Via:        t.Via,
-			NATType:    t.NATType,
-			PublicAddr: t.PublicAddr,
-			ConvID:     t.ConvID,
-			RTTMs:      t.RTTMs,
-			LastError:  t.LastError,
+			DeviceID:         deviceID,
+			PeerID:           t.Peer,
+			State:            t.State,
+			Via:              t.Via,
+			NATType:          t.NATType,
+			PublicAddr:       t.PublicAddr,
+			ConvID:           t.ConvID,
+			RTTMs:            t.RTTMs,
+			LastError:        t.LastError,
+			Attempt:          t.Attempt,
+			NextRetryAt:      t.NextRetryAt,
+			LastTransitionAt: t.LastTransitionAt,
 		}); err != nil {
 			return err
 		}
@@ -1293,6 +1296,8 @@ func (a *app) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 			devices[i].HealthSummary = "无规则"
 		case healthy[devices[i].ID]:
 			devices[i].HealthSummary = "至少一条隧道正常"
+		case hasBackoff(stateMap, devices[i].ID):
+			devices[i].HealthSummary = "回退重试中"
 		default:
 			devices[i].HealthSummary = "有规则但未建链"
 		}
@@ -1349,6 +1354,8 @@ func (a *app) enrichedRules(ctx context.Context) ([]store.ForwardRule, error) {
 			r.RuntimeState = normalizeRuntimeState(st.State, st.Via)
 			r.LastError = st.LastError
 			r.LastUpdatedAt = st.UpdatedAt
+			r.Attempt = st.Attempt
+			r.NextRetryAt = st.NextRetryAt
 		}
 	}
 	return rules, nil
@@ -1374,7 +1381,7 @@ func pairStateKey(a, b string) string {
 
 func normalizeRuntimeState(state, via string) string {
 	switch state {
-	case "p2p", "relay", "connecting", "down", "disabled":
+	case "p2p", "relay", "connecting", "down", "disabled", "backoff":
 		return state
 	case "connected":
 		if via == "relay" {
@@ -1389,6 +1396,15 @@ func normalizeRuntimeState(state, via string) string {
 		}
 		return state
 	}
+}
+
+func hasBackoff(states map[string]store.TunnelState, deviceID string) bool {
+	for _, st := range states {
+		if (st.DeviceID == deviceID || st.PeerID == deviceID) && st.State == "backoff" {
+			return true
+		}
+	}
+	return false
 }
 
 func badRequest(code, message string) error {
