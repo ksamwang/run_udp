@@ -194,6 +194,28 @@ func TestHandleAgentEndpointsRejectDisabledDevice(t *testing.T) {
 	}
 }
 
+func TestHandleClientRelease(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.ClientReleaseVersion = "0.4.0"
+	a.cfg.ClientReleaseSHA256 = "abc123"
+	a.cfg.ClientReleasePublishedAt = "2026-04-28T18:00:00Z"
+	a.cfg.ClientReleaseNotes = "stable release"
+	a.cfg.ClientReleaseMinimumSupported = "0.3.0"
+	a.cfg.ClientReleaseURL = "https://example.com/udp-tunnel-client-0.4.0-setup.exe"
+
+	rec := doAgentJSON(t, a.httpMux(), http.MethodGet, "/api/client/release", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp clientReleaseResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Version != "0.4.0" || resp.URL == "" || resp.SHA256 != "abc123" {
+		t.Fatalf("unexpected release response: %+v", resp)
+	}
+}
+
 func newTestApp(t *testing.T) *app {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "server-test.db"))

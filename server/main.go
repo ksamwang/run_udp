@@ -105,6 +105,15 @@ type agentBootstrapResponse struct {
 	AllowLegacy  bool   `json:"allow_legacy"`
 }
 
+type clientReleaseResponse struct {
+	Version                 string `json:"version"`
+	URL                     string `json:"url"`
+	SHA256                  string `json:"sha256"`
+	PublishedAt             string `json:"published_at"`
+	Notes                   string `json:"notes"`
+	MinimumSupportedVersion string `json:"minimum_supported_version"`
+}
+
 func main() {
 	cfg := config.DefaultServer()
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
@@ -469,6 +478,8 @@ func (a *app) httpMux() *http.ServeMux {
 	mux.HandleFunc("/api/agent/tunnel-status", a.requireAgent(a.handleAgentTunnelStatus))
 	mux.HandleFunc("/api/agent/bootstrap", a.requireAgent(a.handleAgentBootstrap))
 	mux.HandleFunc("/api/agent/rules", a.requireAgent(a.handleAgentRules))
+	mux.HandleFunc("/api/client/release", a.requireAgent(a.handleClientRelease))
+	mux.HandleFunc("/downloads/client/installer", a.handleClientInstaller)
 	mux.Handle("/", a.staticHandler())
 	return mux
 }
@@ -668,41 +679,55 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		a.cfgMu.RLock()
 		resp := map[string]any{
-			"udp_listen":           a.cfg.UDPListen,
-			"stun_alt_listen":      a.cfg.StunAltListen,
-			"http_listen":          a.cfg.HTTPListen,
-			"database_path":        a.cfg.DatabasePath,
-			"psk_configured":       a.cfg.PSK != "",
-			"peer_ttl":             a.cfg.PeerTTL.String(),
-			"pair_ttl":             a.cfg.PairTTL.String(),
-			"relay_idle_timeout":   a.cfg.RelayIdleTimeout.String(),
-			"allow_relay":          a.cfg.AllowRelay,
-			"allow_legacy":         a.cfg.AllowLegacy,
-			"client_no_upnp":       a.cfg.ClientNoUPnP,
-			"client_upnp_timeout":  a.cfg.ClientUPnPTimeout.String(),
-			"client_log_level":     a.cfg.ClientLogLevel,
-			"client_tray_enabled":  a.cfg.ClientTrayEnabled,
-			"client_punch_timeout": a.cfg.ClientPunchTimeout.String(),
-			"client_force_relay":   a.cfg.ClientForceRelay,
-			"client_allow_legacy":  a.cfg.ClientAllowLegacy,
-			"restart_only_fields":  []string{"udp_listen", "stun_alt_listen", "http_listen", "database_path", "psk"},
+			"udp_listen":                               a.cfg.UDPListen,
+			"stun_alt_listen":                          a.cfg.StunAltListen,
+			"http_listen":                              a.cfg.HTTPListen,
+			"database_path":                            a.cfg.DatabasePath,
+			"psk_configured":                           a.cfg.PSK != "",
+			"peer_ttl":                                 a.cfg.PeerTTL.String(),
+			"pair_ttl":                                 a.cfg.PairTTL.String(),
+			"relay_idle_timeout":                       a.cfg.RelayIdleTimeout.String(),
+			"allow_relay":                              a.cfg.AllowRelay,
+			"allow_legacy":                             a.cfg.AllowLegacy,
+			"client_no_upnp":                           a.cfg.ClientNoUPnP,
+			"client_upnp_timeout":                      a.cfg.ClientUPnPTimeout.String(),
+			"client_log_level":                         a.cfg.ClientLogLevel,
+			"client_tray_enabled":                      a.cfg.ClientTrayEnabled,
+			"client_punch_timeout":                     a.cfg.ClientPunchTimeout.String(),
+			"client_force_relay":                       a.cfg.ClientForceRelay,
+			"client_allow_legacy":                      a.cfg.ClientAllowLegacy,
+			"client_release_version":                   a.cfg.ClientReleaseVersion,
+			"client_release_url":                       a.cfg.ClientReleaseURL,
+			"client_release_sha256":                    a.cfg.ClientReleaseSHA256,
+			"client_release_published_at":              a.cfg.ClientReleasePublishedAt,
+			"client_release_notes":                     a.cfg.ClientReleaseNotes,
+			"client_release_minimum_supported_version": a.cfg.ClientReleaseMinimumSupported,
+			"client_release_file":                      a.cfg.ClientReleaseFile,
+			"restart_only_fields":                      []string{"udp_listen", "stun_alt_listen", "http_listen", "database_path", "psk"},
 		}
 		a.cfgMu.RUnlock()
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPatch:
 		var req struct {
-			PeerTTL            string `json:"peer_ttl"`
-			PairTTL            string `json:"pair_ttl"`
-			RelayIdleTimeout   string `json:"relay_idle_timeout"`
-			AllowRelay         bool   `json:"allow_relay"`
-			AllowLegacy        bool   `json:"allow_legacy"`
-			ClientNoUPnP       bool   `json:"client_no_upnp"`
-			ClientUPnPTimeout  string `json:"client_upnp_timeout"`
-			ClientLogLevel     string `json:"client_log_level"`
-			ClientTrayEnabled  bool   `json:"client_tray_enabled"`
-			ClientPunchTimeout string `json:"client_punch_timeout"`
-			ClientForceRelay   bool   `json:"client_force_relay"`
-			ClientAllowLegacy  bool   `json:"client_allow_legacy"`
+			PeerTTL                       string `json:"peer_ttl"`
+			PairTTL                       string `json:"pair_ttl"`
+			RelayIdleTimeout              string `json:"relay_idle_timeout"`
+			AllowRelay                    bool   `json:"allow_relay"`
+			AllowLegacy                   bool   `json:"allow_legacy"`
+			ClientNoUPnP                  bool   `json:"client_no_upnp"`
+			ClientUPnPTimeout             string `json:"client_upnp_timeout"`
+			ClientLogLevel                string `json:"client_log_level"`
+			ClientTrayEnabled             bool   `json:"client_tray_enabled"`
+			ClientPunchTimeout            string `json:"client_punch_timeout"`
+			ClientForceRelay              bool   `json:"client_force_relay"`
+			ClientAllowLegacy             bool   `json:"client_allow_legacy"`
+			ClientReleaseVersion          string `json:"client_release_version"`
+			ClientReleaseURL              string `json:"client_release_url"`
+			ClientReleaseSHA256           string `json:"client_release_sha256"`
+			ClientReleasePublishedAt      string `json:"client_release_published_at"`
+			ClientReleaseNotes            string `json:"client_release_notes"`
+			ClientReleaseMinimumSupported string `json:"client_release_minimum_supported_version"`
+			ClientReleaseFile             string `json:"client_release_file"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -754,6 +779,13 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		a.cfg.ClientPunchTimeout = clientPunchTimeout
 		a.cfg.ClientForceRelay = req.ClientForceRelay
 		a.cfg.ClientAllowLegacy = req.ClientAllowLegacy
+		a.cfg.ClientReleaseVersion = req.ClientReleaseVersion
+		a.cfg.ClientReleaseURL = req.ClientReleaseURL
+		a.cfg.ClientReleaseSHA256 = req.ClientReleaseSHA256
+		a.cfg.ClientReleasePublishedAt = req.ClientReleasePublishedAt
+		a.cfg.ClientReleaseNotes = req.ClientReleaseNotes
+		a.cfg.ClientReleaseMinimumSupported = req.ClientReleaseMinimumSupported
+		a.cfg.ClientReleaseFile = req.ClientReleaseFile
 		a.cfgMu.Unlock()
 		_ = a.db.PutMeta(r.Context(), "setting_peer_ttl", peerTTL.String())
 		_ = a.db.PutMeta(r.Context(), "setting_pair_ttl", pairTTL.String())
@@ -767,6 +799,13 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		_ = a.db.PutMeta(r.Context(), "setting_client_punch_timeout", clientPunchTimeout.String())
 		_ = a.db.PutMeta(r.Context(), "setting_client_force_relay", strconv.FormatBool(req.ClientForceRelay))
 		_ = a.db.PutMeta(r.Context(), "setting_client_allow_legacy", strconv.FormatBool(req.ClientAllowLegacy))
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_version", req.ClientReleaseVersion)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_url", req.ClientReleaseURL)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_sha256", req.ClientReleaseSHA256)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_published_at", req.ClientReleasePublishedAt)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_notes", req.ClientReleaseNotes)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_minimum_supported_version", req.ClientReleaseMinimumSupported)
+		_ = a.db.PutMeta(r.Context(), "setting_client_release_file", req.ClientReleaseFile)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -873,19 +912,19 @@ func (a *app) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DeviceID   string `json:"device_id"`
-		Peer       string `json:"peer"`
-		State      string `json:"state"`
-		Via        string `json:"via"`
-		NATType    string `json:"nat_type"`
-		Addr       string `json:"addr"`
-		UpnpAddr   string `json:"upnp_addr"`
-		PublicAddr string `json:"public_addr"`
-		ConvID     int64  `json:"conv_id"`
-		RTTMs      int    `json:"rtt_ms"`
-		LastError  string `json:"last_error"`
-		Attempt    int    `json:"attempt"`
-		NextRetryAt string `json:"next_retry_at"`
+		DeviceID         string `json:"device_id"`
+		Peer             string `json:"peer"`
+		State            string `json:"state"`
+		Via              string `json:"via"`
+		NATType          string `json:"nat_type"`
+		Addr             string `json:"addr"`
+		UpnpAddr         string `json:"upnp_addr"`
+		PublicAddr       string `json:"public_addr"`
+		ConvID           int64  `json:"conv_id"`
+		RTTMs            int    `json:"rtt_ms"`
+		LastError        string `json:"last_error"`
+		Attempt          int    `json:"attempt"`
+		NextRetryAt      string `json:"next_retry_at"`
 		LastTransitionAt string `json:"last_transition_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.Peer == "" {
@@ -962,6 +1001,21 @@ func (a *app) handleAgentRules(w http.ResponseWriter, r *http.Request) {
 	}
 	rules, err := a.db.RulesForDevice(r.Context(), deviceID)
 	writeJSONOrError(w, rules, err)
+}
+
+func (a *app) handleClientRelease(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.clientRelease(r))
+}
+
+func (a *app) handleClientInstaller(w http.ResponseWriter, r *http.Request) {
+	a.cfgMu.RLock()
+	file := a.cfg.ClientReleaseFile
+	a.cfgMu.RUnlock()
+	if strings.TrimSpace(file) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, file)
 }
 
 func (a *app) requireWeb(next http.HandlerFunc) http.HandlerFunc {
@@ -1123,6 +1177,41 @@ func (a *app) applyStoredSettings() error {
 			return err
 		}
 		a.cfg.ClientAllowLegacy = b
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_version"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseVersion = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_url"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseURL = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_sha256"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseSHA256 = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_published_at"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleasePublishedAt = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_notes"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseNotes = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_minimum_supported_version"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseMinimumSupported = v
+	}
+	if v, err := a.db.GetMeta(ctx, "setting_client_release_file"); err != nil {
+		return err
+	} else if v != "" {
+		a.cfg.ClientReleaseFile = v
 	}
 	return nil
 }
@@ -1458,6 +1547,23 @@ func (a *app) bootstrapConfig(r *http.Request, deviceID, deviceName string) agen
 		PunchTimeout: a.cfg.ClientPunchTimeout.String(),
 		ForceRelay:   a.cfg.ClientForceRelay,
 		AllowLegacy:  a.cfg.ClientAllowLegacy,
+	}
+}
+
+func (a *app) clientRelease(r *http.Request) clientReleaseResponse {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	url := strings.TrimSpace(a.cfg.ClientReleaseURL)
+	if url == "" && strings.TrimSpace(a.cfg.ClientReleaseFile) != "" {
+		url = requestBaseURL(r) + "/downloads/client/installer"
+	}
+	return clientReleaseResponse{
+		Version:                 a.cfg.ClientReleaseVersion,
+		URL:                     url,
+		SHA256:                  a.cfg.ClientReleaseSHA256,
+		PublishedAt:             a.cfg.ClientReleasePublishedAt,
+		Notes:                   a.cfg.ClientReleaseNotes,
+		MinimumSupportedVersion: a.cfg.ClientReleaseMinimumSupported,
 	}
 }
 

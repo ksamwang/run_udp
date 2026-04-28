@@ -110,6 +110,34 @@
             <input id="client-log-level" name="client_log_level" placeholder="例如：info" required>
             <small>通过 bootstrap 下发给 agent 的默认日志级别。</small>
           </div>
+          <div class="field">
+            <label for="client-release-version">客户端发布版本</label>
+            <input id="client-release-version" name="client_release_version" placeholder="例如：0.4.0">
+          </div>
+          <div class="field">
+            <label for="client-release-url">客户端发布 URL</label>
+            <input id="client-release-url" name="client_release_url" placeholder="留空则使用服务端托管下载地址">
+          </div>
+          <div class="field">
+            <label for="client-release-sha256">客户端发布 SHA256</label>
+            <input id="client-release-sha256" name="client_release_sha256" placeholder="安装包 SHA256">
+          </div>
+          <div class="field">
+            <label for="client-release-published-at">发布时间</label>
+            <input id="client-release-published-at" name="client_release_published_at" placeholder="例如：2026-04-28T18:00:00Z">
+          </div>
+          <div class="field">
+            <label for="client-release-min-version">最低支持版本</label>
+            <input id="client-release-min-version" name="client_release_minimum_supported_version" placeholder="例如：0.3.0">
+          </div>
+          <div class="field">
+            <label for="client-release-file">安装包文件路径</label>
+            <input id="client-release-file" name="client_release_file" placeholder="例如：D:\releases\udp-tunnel-client-0.4.0-setup.exe">
+          </div>
+          <div class="field full">
+            <label for="client-release-notes">更新说明</label>
+            <input id="client-release-notes" name="client_release_notes" placeholder="本次更新摘要">
+          </div>
           <label class="check-field"><input name="allow_relay" type="checkbox"> 允许 TURN 中继连接</label>
           <label class="check-field"><input name="allow_legacy" type="checkbox"> 允许旧明文 UDP 协议</label>
           <label class="check-field"><input name="client_no_upnp" type="checkbox"> 客户端默认禁用 UPnP</label>

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -89,6 +90,20 @@ type natProbeResult struct {
 type natRuntime struct {
 	mu     sync.RWMutex
 	result natProbeResult
+}
+
+type releaseInfo struct {
+	Version                 string `json:"version"`
+	URL                     string `json:"url"`
+	SHA256                  string `json:"sha256"`
+	PublishedAt             string `json:"published_at"`
+	Notes                   string `json:"notes"`
+	MinimumSupportedVersion string `json:"minimum_supported_version"`
+}
+
+type updateManager struct {
+	mu      sync.Mutex
+	trigger chan string
 }
 
 var (
@@ -192,6 +207,16 @@ func main() {
 	noUpnp := fs.Bool("no-upnp", cfg.NoUPnP, "disable UPnP mapping")
 	upnpTimeout := fs.Duration("upnp-timeout", cfg.UPnPTimeout, "UPnP timeout")
 	agent := fs.Bool("agent", false, "run as product agent and pull rules from control plane")
+	trayMode := fs.Bool("tray", false, "run tray helper only")
+	serviceMode := fs.Bool("service", false, "run as Windows service")
+	installService := fs.Bool("install-service", false, "install Windows service")
+	uninstallService := fs.Bool("uninstall-service", false, "uninstall Windows service")
+	startServiceFlag := fs.Bool("start-service", false, "start Windows service")
+	stopServiceFlag := fs.Bool("stop-service", false, "stop Windows service")
+	restartServiceFlag := fs.Bool("restart-service", false, "restart Windows service")
+	checkUpdatesFlag := fs.Bool("check-updates", false, "check for updates immediately")
+	updaterMode := fs.Bool("updater", false, "internal updater helper mode")
+	updatePackage := fs.String("update-package", "", "installer package path for updater helper")
 	var forwards multiFlag
 	fs.Var(&forwards, "forward", "TCP forward rule LOCAL:HOST:PORT")
 	fs.Parse(os.Args[1:])
@@ -227,11 +252,64 @@ func main() {
 	if len(forwards) > 0 {
 		cfg.Forwards = forwards
 	}
+	if *installService || *uninstallService || *startServiceFlag || *stopServiceFlag || *restartServiceFlag {
+		exePath := currentExePath()
+		configAbs := *configPath
+		if !filepath.IsAbs(configAbs) {
+			if dir, err := exeDir(); err == nil {
+				configAbs = filepath.Join(dir, configAbs)
+			}
+		}
+		switch {
+		case *installService:
+			if err := installWindowsService(exePath, configAbs); err != nil {
+				log.Fatal(err)
+			}
+			if err := ensureTrayStartup(exePath, configAbs); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case *uninstallService:
+			_ = removeTrayStartup()
+			if err := uninstallWindowsService(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case *startServiceFlag:
+			if err := startWindowsService(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case *stopServiceFlag:
+			if err := stopWindowsService(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case *restartServiceFlag:
+			if err := restartWindowsService(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+	}
 	if err := ensureLocalIdentity(&cfg, *configPath); err != nil {
 		log.Fatal(err)
 	}
 	logPath := setupLogging(cfg.DeviceID)
 	logStartup(cfg, *configPath, logPath, *agent, *probe)
+	if st, err := queryWindowsServiceStatus(); err == nil {
+		appRuntime.SetServiceStatus(st)
+	}
+	if *updaterMode {
+		if err := runUpdaterHelper(*updatePackage); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *trayMode {
+		runTrayProcess(cfg, *configPath)
+		return
+	}
 	if needsBootstrapConfig(cfg, *probe, len(forwards) > 0 || flagSet(fs, "peer")) {
 		runBootstrapConfigMode(&cfg, *configPath)
 		return
@@ -271,6 +349,20 @@ func main() {
 		return
 	}
 	natResult := autoDetectNAT(runtimeCfg, bootstrapAltPort)
+	if *serviceMode {
+		if err := runWindowsService(func(ctx context.Context) {
+			runAgentLoop(ctx, runtimeCfg, *configPath, natResult, bootstrapAltPort, newUpdateManager(runtimeCfg, *configPath, true))
+		}); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *checkUpdatesFlag {
+		if _, err := checkForUpdates(runtimeCfg, *configPath, false); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *agent || (runtimeCfg.ServerHTTP != "" && runtimeCfg.DeviceID != "" && runtimeCfg.PeerID == "") {
 		runAgent(cfg, runtimeCfg, *configPath, natResult, bootstrapAltPort)
 		return
@@ -299,7 +391,10 @@ func needsBootstrapConfig(cfg config.Client, probeMode bool, explicitPeer bool) 
 }
 
 func runBootstrapConfigMode(cfg *config.Client, configPath string) {
-	configURL := startClientConfigServer(cfg, configPath, restartSelf)
+	configURL := startClientConfigServer(cfg, configPath, clientConfigHooks{
+		OnSaved: restartSelf,
+		Runtime: currentRuntimeInfo,
+	})
 	if configURL != "" {
 		log.Printf("[%s] bootstrap config required; opening local settings page: %s", cfg.DeviceID, configURL)
 		openBrowser(configURL)
@@ -321,14 +416,27 @@ func runAgent(localCfg, runtimeCfg config.Client, configPath string, natResult n
 	if runtimeCfg.ServerHTTP == "" {
 		runtimeCfg.ServerHTTP = udpToHTTP(runtimeCfg.Server)
 	}
-	configURL := startClientConfigServer(&localCfg, configPath, restartSelf)
+	configURL := startClientConfigServer(&localCfg, configPath, clientConfigHooks{
+		OnSaved: restartSelf,
+		Runtime: currentRuntimeInfo,
+	})
 	log.Printf("[%s] agent starting (control=%s tray=%v name=%q)", runtimeCfg.DeviceID, runtimeCfg.ServerHTTP, runtimeCfg.TrayEnabled, runtimeCfg.DeviceName)
 	if runtimeCfg.TrayEnabled {
-		go runAgentLoop(runtimeCfg, natResult, altPort)
-		runTray(runtimeCfg.DeviceID, runtimeCfg.ServerHTTP, configURL, func() { os.Exit(0) })
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go runAgentLoop(ctx, runtimeCfg, configPath, natResult, altPort, newUpdateManager(runtimeCfg, configPath, false))
+		runTray(runtimeCfg.DeviceID, runtimeCfg.ServerHTTP, configURL, trayActions{
+			OpenLogs:     openLogs,
+			CheckUpdates: func() error { _, err := checkForUpdates(runtimeCfg, configPath, false); return err },
+			RuntimeStatus: func() string {
+				return currentRuntimeInfo().ServiceStatus
+			},
+		}, func() { stop() })
 		return
 	}
-	runAgentLoop(runtimeCfg, natResult, altPort)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	runAgentLoop(ctx, runtimeCfg, configPath, natResult, altPort, newUpdateManager(runtimeCfg, configPath, false))
 }
 
 func restartSelf() {
@@ -348,7 +456,54 @@ func restartSelf() {
 	os.Exit(0)
 }
 
-func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort int) {
+func runTrayProcess(cfg config.Client, configPath string) {
+	configURL := startClientConfigServer(&cfg, configPath, clientConfigHooks{
+		OnSaved: func() {
+			if err := spawnServiceCommand("-restart-service"); err != nil {
+				log.Printf("restart service helper failed: %v", err)
+			}
+			os.Exit(0)
+		},
+		Runtime:        currentRuntimeInfo,
+		RestartService: restartWindowsService,
+		CheckUpdates: func() error {
+			_, err := checkForUpdates(cfg, configPath, false)
+			return err
+		},
+	})
+	runTray(cfg.DeviceID, cfg.ServerHTTP, configURL, trayActions{
+		OpenLogs:     openLogs,
+		Restart:      restartWindowsService,
+		CheckUpdates: func() error { _, err := checkForUpdates(cfg, configPath, false); return err },
+		RuntimeStatus: func() string {
+			if st, err := queryWindowsServiceStatus(); err == nil {
+				appRuntime.SetServiceStatus(st)
+				return st
+			}
+			return currentRuntimeInfo().ServiceStatus
+		},
+	}, func() { os.Exit(0) })
+}
+
+func newUpdateManager(cfg config.Client, configPath string, serviceMode bool) *updateManager {
+	if !serviceMode {
+		return nil
+	}
+	appRuntime.SetUpdateStatus("idle", "", "")
+	return &updateManager{trigger: make(chan string, 1)}
+}
+
+func (u *updateManager) Trigger(reason string) {
+	if u == nil {
+		return
+	}
+	select {
+	case u.trigger <- reason:
+	default:
+	}
+}
+
+func runAgentLoop(ctx context.Context, runtimeCfg config.Client, configPath string, natResult natProbeResult, altPort int, updates *updateManager) {
 	if err := agentPost(runtimeCfg, "/api/agent/register", map[string]any{
 		"device_id": runtimeCfg.DeviceID,
 		"name":      runtimeCfg.DeviceName,
@@ -356,9 +511,6 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort in
 	}); err != nil {
 		log.Printf("[%s] agent register failed: %v", runtimeCfg.DeviceID, err)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
 	rootCtx, cancelAll := context.WithCancel(context.Background())
 	defer cancelAll()
 	natState := &natRuntime{result: natResult}
@@ -370,6 +522,15 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort in
 	defer rulesTicker.Stop()
 	heartbeatTicker := time.NewTicker(10 * time.Second)
 	defer heartbeatTicker.Stop()
+	var updateTicker *time.Ticker
+	var updateTick <-chan time.Time
+	var updateTrigger <-chan string
+	if updates != nil {
+		updateTicker = time.NewTicker(6 * time.Hour)
+		defer updateTicker.Stop()
+		updateTick = updateTicker.C
+		updateTrigger = updates.trigger
+	}
 	resumeCh := startResumeMonitor(rootCtx)
 
 	refreshNAT := func(reason string) {
@@ -473,7 +634,7 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort in
 	sendHeartbeat()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			log.Printf("[%s] signal received, shutting down", runtimeCfg.DeviceID)
 			cancelAll()
 			for _, sess := range sessions {
@@ -484,6 +645,15 @@ func runAgentLoop(runtimeCfg config.Client, natResult natProbeResult, altPort in
 			syncRules()
 		case <-heartbeatTicker.C:
 			sendHeartbeat()
+		case <-updateTick:
+			if _, err := checkForUpdates(runtimeCfg, configPath, false); err != nil {
+				log.Printf("[%s] auto update check failed: %v", runtimeCfg.DeviceID, err)
+			}
+		case reason := <-updateTrigger:
+			log.Printf("[%s] update check trigger: %s", runtimeCfg.DeviceID, reason)
+			if _, err := checkForUpdates(runtimeCfg, configPath, false); err != nil {
+				log.Printf("[%s] manual update check failed: %v", runtimeCfg.DeviceID, err)
+			}
 		case reason := <-resumeCh:
 			log.Printf("[%s] system/network event: %s", runtimeCfg.DeviceID, reason)
 			triggerAllPeers(reason)

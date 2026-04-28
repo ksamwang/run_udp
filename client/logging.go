@@ -37,6 +37,7 @@ func setupLogging(deviceID string) string {
 	// 第一个 writer 返回 error 后 io.MultiWriter 会直接停手，文件就拿不到任何写入。
 	log.SetOutput(f)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	appRuntime.SetLogPath(logPath)
 	return logPath
 }
 
@@ -52,6 +53,7 @@ func logStartup(cfg config.Client, configPath, logPath string, agent, probe bool
 	log.Printf("[%s] mode=%s config=%s log=%s", cfg.DeviceID, mode, configPath, logPath)
 	log.Printf("[%s] server=%q server_http=%q peer=%q",
 		cfg.DeviceID, cfg.Server, cfg.ServerHTTP, cfg.PeerID)
+	log.Printf("[%s] version=%s commit=%s build_time=%s", cfg.DeviceID, Version, Commit, BuildTime)
 	log.Printf("[%s] device_name=%q", cfg.DeviceID, cfg.DeviceName)
 	log.Printf("[%s] psk_set=%v psk_len=%d allow_legacy=%v force_relay=%v",
 		cfg.DeviceID, cfg.PSK != "", len(cfg.PSK), cfg.AllowLegacy, cfg.ForceRelay)

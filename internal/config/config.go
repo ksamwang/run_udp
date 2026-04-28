@@ -12,25 +12,32 @@ import (
 )
 
 type Server struct {
-	UDPListen          string        `json:"udp_listen"`
-	StunAltListen      string        `json:"stun_alt_listen"`
-	HTTPListen         string        `json:"http_listen"`
-	DatabasePath       string        `json:"database_path"`
-	AdminPassword      string        `json:"admin_password"`
-	AdminPasswordHash  string        `json:"admin_password_hash"`
-	PSK                string        `json:"psk"`
-	PeerTTL            time.Duration `json:"peer_ttl"`
-	PairTTL            time.Duration `json:"pair_ttl"`
-	RelayIdleTimeout   time.Duration `json:"relay_idle_timeout"`
-	AllowRelay         bool          `json:"allow_relay"`
-	AllowLegacy        bool          `json:"allow_legacy"`
-	ClientNoUPnP       bool          `json:"client_no_upnp"`
-	ClientUPnPTimeout  time.Duration `json:"client_upnp_timeout"`
-	ClientLogLevel     string        `json:"client_log_level"`
-	ClientTrayEnabled  bool          `json:"client_tray_enabled"`
-	ClientPunchTimeout time.Duration `json:"client_punch_timeout"`
-	ClientForceRelay   bool          `json:"client_force_relay"`
-	ClientAllowLegacy  bool          `json:"client_allow_legacy"`
+	UDPListen                     string        `json:"udp_listen"`
+	StunAltListen                 string        `json:"stun_alt_listen"`
+	HTTPListen                    string        `json:"http_listen"`
+	DatabasePath                  string        `json:"database_path"`
+	AdminPassword                 string        `json:"admin_password"`
+	AdminPasswordHash             string        `json:"admin_password_hash"`
+	PSK                           string        `json:"psk"`
+	PeerTTL                       time.Duration `json:"peer_ttl"`
+	PairTTL                       time.Duration `json:"pair_ttl"`
+	RelayIdleTimeout              time.Duration `json:"relay_idle_timeout"`
+	AllowRelay                    bool          `json:"allow_relay"`
+	AllowLegacy                   bool          `json:"allow_legacy"`
+	ClientNoUPnP                  bool          `json:"client_no_upnp"`
+	ClientUPnPTimeout             time.Duration `json:"client_upnp_timeout"`
+	ClientLogLevel                string        `json:"client_log_level"`
+	ClientTrayEnabled             bool          `json:"client_tray_enabled"`
+	ClientPunchTimeout            time.Duration `json:"client_punch_timeout"`
+	ClientForceRelay              bool          `json:"client_force_relay"`
+	ClientAllowLegacy             bool          `json:"client_allow_legacy"`
+	ClientReleaseVersion          string        `json:"client_release_version"`
+	ClientReleaseURL              string        `json:"client_release_url"`
+	ClientReleaseSHA256           string        `json:"client_release_sha256"`
+	ClientReleasePublishedAt      string        `json:"client_release_published_at"`
+	ClientReleaseNotes            string        `json:"client_release_notes"`
+	ClientReleaseMinimumSupported string        `json:"client_release_minimum_supported_version"`
+	ClientReleaseFile             string        `json:"client_release_file"`
 }
 
 type Client struct {
@@ -84,25 +91,32 @@ func DefaultClient() Client {
 
 func (s *Server) UnmarshalJSON(b []byte) error {
 	type serverJSON struct {
-		UDPListen          string       `json:"udp_listen"`
-		StunAltListen      string       `json:"stun_alt_listen"`
-		HTTPListen         string       `json:"http_listen"`
-		DatabasePath       string       `json:"database_path"`
-		AdminPassword      string       `json:"admin_password"`
-		AdminPasswordHash  string       `json:"admin_password_hash"`
-		PSK                string       `json:"psk"`
-		PeerTTL            durationJSON `json:"peer_ttl"`
-		PairTTL            durationJSON `json:"pair_ttl"`
-		RelayIdleTimeout   durationJSON `json:"relay_idle_timeout"`
-		AllowRelay         *bool        `json:"allow_relay"`
-		AllowLegacy        *bool        `json:"allow_legacy"`
-		ClientNoUPnP       *bool        `json:"client_no_upnp"`
-		ClientUPnPTimeout  durationJSON `json:"client_upnp_timeout"`
-		ClientLogLevel     string       `json:"client_log_level"`
-		ClientTrayEnabled  *bool        `json:"client_tray_enabled"`
-		ClientPunchTimeout durationJSON `json:"client_punch_timeout"`
-		ClientForceRelay   *bool        `json:"client_force_relay"`
-		ClientAllowLegacy  *bool        `json:"client_allow_legacy"`
+		UDPListen                     string       `json:"udp_listen"`
+		StunAltListen                 string       `json:"stun_alt_listen"`
+		HTTPListen                    string       `json:"http_listen"`
+		DatabasePath                  string       `json:"database_path"`
+		AdminPassword                 string       `json:"admin_password"`
+		AdminPasswordHash             string       `json:"admin_password_hash"`
+		PSK                           string       `json:"psk"`
+		PeerTTL                       durationJSON `json:"peer_ttl"`
+		PairTTL                       durationJSON `json:"pair_ttl"`
+		RelayIdleTimeout              durationJSON `json:"relay_idle_timeout"`
+		AllowRelay                    *bool        `json:"allow_relay"`
+		AllowLegacy                   *bool        `json:"allow_legacy"`
+		ClientNoUPnP                  *bool        `json:"client_no_upnp"`
+		ClientUPnPTimeout             durationJSON `json:"client_upnp_timeout"`
+		ClientLogLevel                string       `json:"client_log_level"`
+		ClientTrayEnabled             *bool        `json:"client_tray_enabled"`
+		ClientPunchTimeout            durationJSON `json:"client_punch_timeout"`
+		ClientForceRelay              *bool        `json:"client_force_relay"`
+		ClientAllowLegacy             *bool        `json:"client_allow_legacy"`
+		ClientReleaseVersion          string       `json:"client_release_version"`
+		ClientReleaseURL              string       `json:"client_release_url"`
+		ClientReleaseSHA256           string       `json:"client_release_sha256"`
+		ClientReleasePublishedAt      string       `json:"client_release_published_at"`
+		ClientReleaseNotes            string       `json:"client_release_notes"`
+		ClientReleaseMinimumSupported string       `json:"client_release_minimum_supported_version"`
+		ClientReleaseFile             string       `json:"client_release_file"`
 	}
 	var x serverJSON
 	if err := json.Unmarshal(b, &x); err != nil {
@@ -159,51 +173,86 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 	if x.ClientAllowLegacy != nil {
 		s.ClientAllowLegacy = *x.ClientAllowLegacy
 	}
+	if x.ClientReleaseVersion != "" {
+		s.ClientReleaseVersion = x.ClientReleaseVersion
+	}
+	if x.ClientReleaseURL != "" {
+		s.ClientReleaseURL = x.ClientReleaseURL
+	}
+	if x.ClientReleaseSHA256 != "" {
+		s.ClientReleaseSHA256 = x.ClientReleaseSHA256
+	}
+	if x.ClientReleasePublishedAt != "" {
+		s.ClientReleasePublishedAt = x.ClientReleasePublishedAt
+	}
+	if x.ClientReleaseNotes != "" {
+		s.ClientReleaseNotes = x.ClientReleaseNotes
+	}
+	if x.ClientReleaseMinimumSupported != "" {
+		s.ClientReleaseMinimumSupported = x.ClientReleaseMinimumSupported
+	}
+	if x.ClientReleaseFile != "" {
+		s.ClientReleaseFile = x.ClientReleaseFile
+	}
 	return nil
 }
 
 func (s Server) MarshalJSON() ([]byte, error) {
 	type serverJSON struct {
-		UDPListen          string `json:"udp_listen"`
-		StunAltListen      string `json:"stun_alt_listen"`
-		HTTPListen         string `json:"http_listen"`
-		DatabasePath       string `json:"database_path"`
-		AdminPassword      string `json:"admin_password,omitempty"`
-		AdminPasswordHash  string `json:"admin_password_hash,omitempty"`
-		PSK                string `json:"psk"`
-		PeerTTL            string `json:"peer_ttl"`
-		PairTTL            string `json:"pair_ttl"`
-		RelayIdleTimeout   string `json:"relay_idle_timeout"`
-		AllowRelay         bool   `json:"allow_relay"`
-		AllowLegacy        bool   `json:"allow_legacy"`
-		ClientNoUPnP       bool   `json:"client_no_upnp"`
-		ClientUPnPTimeout  string `json:"client_upnp_timeout"`
-		ClientLogLevel     string `json:"client_log_level"`
-		ClientTrayEnabled  bool   `json:"client_tray_enabled"`
-		ClientPunchTimeout string `json:"client_punch_timeout"`
-		ClientForceRelay   bool   `json:"client_force_relay"`
-		ClientAllowLegacy  bool   `json:"client_allow_legacy"`
+		UDPListen                     string `json:"udp_listen"`
+		StunAltListen                 string `json:"stun_alt_listen"`
+		HTTPListen                    string `json:"http_listen"`
+		DatabasePath                  string `json:"database_path"`
+		AdminPassword                 string `json:"admin_password,omitempty"`
+		AdminPasswordHash             string `json:"admin_password_hash,omitempty"`
+		PSK                           string `json:"psk"`
+		PeerTTL                       string `json:"peer_ttl"`
+		PairTTL                       string `json:"pair_ttl"`
+		RelayIdleTimeout              string `json:"relay_idle_timeout"`
+		AllowRelay                    bool   `json:"allow_relay"`
+		AllowLegacy                   bool   `json:"allow_legacy"`
+		ClientNoUPnP                  bool   `json:"client_no_upnp"`
+		ClientUPnPTimeout             string `json:"client_upnp_timeout"`
+		ClientLogLevel                string `json:"client_log_level"`
+		ClientTrayEnabled             bool   `json:"client_tray_enabled"`
+		ClientPunchTimeout            string `json:"client_punch_timeout"`
+		ClientForceRelay              bool   `json:"client_force_relay"`
+		ClientAllowLegacy             bool   `json:"client_allow_legacy"`
+		ClientReleaseVersion          string `json:"client_release_version,omitempty"`
+		ClientReleaseURL              string `json:"client_release_url,omitempty"`
+		ClientReleaseSHA256           string `json:"client_release_sha256,omitempty"`
+		ClientReleasePublishedAt      string `json:"client_release_published_at,omitempty"`
+		ClientReleaseNotes            string `json:"client_release_notes,omitempty"`
+		ClientReleaseMinimumSupported string `json:"client_release_minimum_supported_version,omitempty"`
+		ClientReleaseFile             string `json:"client_release_file,omitempty"`
 	}
 	return json.Marshal(serverJSON{
-		UDPListen:          s.UDPListen,
-		StunAltListen:      s.StunAltListen,
-		HTTPListen:         s.HTTPListen,
-		DatabasePath:       s.DatabasePath,
-		AdminPassword:      s.AdminPassword,
-		AdminPasswordHash:  s.AdminPasswordHash,
-		PSK:                s.PSK,
-		PeerTTL:            s.PeerTTL.String(),
-		PairTTL:            s.PairTTL.String(),
-		RelayIdleTimeout:   s.RelayIdleTimeout.String(),
-		AllowRelay:         s.AllowRelay,
-		AllowLegacy:        s.AllowLegacy,
-		ClientNoUPnP:       s.ClientNoUPnP,
-		ClientUPnPTimeout:  s.ClientUPnPTimeout.String(),
-		ClientLogLevel:     s.ClientLogLevel,
-		ClientTrayEnabled:  s.ClientTrayEnabled,
-		ClientPunchTimeout: s.ClientPunchTimeout.String(),
-		ClientForceRelay:   s.ClientForceRelay,
-		ClientAllowLegacy:  s.ClientAllowLegacy,
+		UDPListen:                     s.UDPListen,
+		StunAltListen:                 s.StunAltListen,
+		HTTPListen:                    s.HTTPListen,
+		DatabasePath:                  s.DatabasePath,
+		AdminPassword:                 s.AdminPassword,
+		AdminPasswordHash:             s.AdminPasswordHash,
+		PSK:                           s.PSK,
+		PeerTTL:                       s.PeerTTL.String(),
+		PairTTL:                       s.PairTTL.String(),
+		RelayIdleTimeout:              s.RelayIdleTimeout.String(),
+		AllowRelay:                    s.AllowRelay,
+		AllowLegacy:                   s.AllowLegacy,
+		ClientNoUPnP:                  s.ClientNoUPnP,
+		ClientUPnPTimeout:             s.ClientUPnPTimeout.String(),
+		ClientLogLevel:                s.ClientLogLevel,
+		ClientTrayEnabled:             s.ClientTrayEnabled,
+		ClientPunchTimeout:            s.ClientPunchTimeout.String(),
+		ClientForceRelay:              s.ClientForceRelay,
+		ClientAllowLegacy:             s.ClientAllowLegacy,
+		ClientReleaseVersion:          s.ClientReleaseVersion,
+		ClientReleaseURL:              s.ClientReleaseURL,
+		ClientReleaseSHA256:           s.ClientReleaseSHA256,
+		ClientReleasePublishedAt:      s.ClientReleasePublishedAt,
+		ClientReleaseNotes:            s.ClientReleaseNotes,
+		ClientReleaseMinimumSupported: s.ClientReleaseMinimumSupported,
+		ClientReleaseFile:             s.ClientReleaseFile,
 	})
 }
 

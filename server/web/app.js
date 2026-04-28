@@ -227,12 +227,21 @@ function updateSettings(settings) {
   form.elements.client_punch_timeout.value = settings.client_punch_timeout || "";
   form.elements.client_force_relay.checked = !!settings.client_force_relay;
   form.elements.client_allow_legacy.checked = !!settings.client_allow_legacy;
+  form.elements.client_release_version.value = settings.client_release_version || "";
+  form.elements.client_release_url.value = settings.client_release_url || "";
+  form.elements.client_release_sha256.value = settings.client_release_sha256 || "";
+  form.elements.client_release_published_at.value = settings.client_release_published_at || "";
+  form.elements.client_release_notes.value = settings.client_release_notes || "";
+  form.elements.client_release_minimum_supported_version.value = settings.client_release_minimum_supported_version || "";
+  form.elements.client_release_file.value = settings.client_release_file || "";
   $("#readonly-settings").innerHTML = [
     ["UDP 监听", settings.udp_listen],
     ["STUN 备用端口", settings.stun_alt_listen],
     ["HTTP 面板", settings.http_listen],
     ["数据库", settings.database_path],
-    ["PSK", settings.psk_configured ? "已配置" : "未配置"]
+    ["PSK", settings.psk_configured ? "已配置" : "未配置"],
+    ["客户端发布版本", settings.client_release_version || ""],
+    ["客户端发布URL", settings.client_release_url || ""]
   ].map(([k, v]) => `<div class="readonly-item"><span>${k}</span><strong>${escapeHTML(v || "")}</strong></div>`).join("");
 }
 
