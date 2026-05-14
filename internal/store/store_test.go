@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -164,84 +163,6 @@ func TestRuleProfileValidationAndBulkPersistence(t *testing.T) {
 	bad.Profile = "video"
 	if err := bad.Validate(); err == nil {
 		t.Fatal("expected invalid profile error")
-	}
-}
-
-func TestMigrateOldDatabaseAddsInteractiveProfiles(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stmts := []string{
-		`CREATE TABLE forward_rules (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL DEFAULT '',
-			source_id TEXT NOT NULL,
-			target_id TEXT NOT NULL,
-			local_port INTEGER NOT NULL,
-			target_host TEXT NOT NULL,
-			target_port INTEGER NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 1,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`INSERT INTO forward_rules(name,source_id,target_id,local_port,target_host,target_port,enabled) VALUES('rdp','A','B',13389,'127.0.0.1',3389,1);`,
-		`CREATE TABLE tunnel_states (
-			device_id TEXT NOT NULL,
-			peer_id TEXT NOT NULL,
-			state TEXT NOT NULL DEFAULT '',
-			via TEXT NOT NULL DEFAULT '',
-			nat_type TEXT NOT NULL DEFAULT '',
-			public_addr TEXT NOT NULL DEFAULT '',
-			conv_id INTEGER NOT NULL DEFAULT 0,
-			rtt_ms INTEGER NOT NULL DEFAULT 0,
-			last_error TEXT NOT NULL DEFAULT '',
-			attempt INTEGER NOT NULL DEFAULT 0,
-			next_retry_at TEXT NOT NULL DEFAULT '',
-			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (device_id, peer_id)
-		);`,
-		`INSERT INTO tunnel_states(device_id,peer_id,state,via) VALUES('A','B','p2p','p2p');`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	rules, err := s.ListRules(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].Profile != ProfileInteractive {
-		t.Fatalf("unexpected migrated rules: %+v", rules)
-	}
-	states, err := s.ListTunnelStates(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 1 || states[0].Profile != ProfileInteractive {
-		t.Fatalf("unexpected migrated states: %+v", states)
-	}
-	if err := s.PutTunnelState(context.Background(), TunnelState{DeviceID: "A", PeerID: "B", Profile: ProfileBulk, State: "p2p", Via: "p2p"}); err != nil {
-		t.Fatal(err)
-	}
-	states, err = s.ListTunnelStates(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 2 {
-		t.Fatalf("expected separate profile states after migration, got %+v", states)
 	}
 }
 

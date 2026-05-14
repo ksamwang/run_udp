@@ -164,9 +164,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY (device_id, peer_id, profile)
 		);`,
 		`ALTER TABLE devices ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;`,
-		`ALTER TABLE forward_rules ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
-		`ALTER TABLE sessions ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
-		`ALTER TABLE tunnel_states ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
 		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE tunnel_states ADD COLUMN rtt_ms INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE tunnel_states ADD COLUMN last_error TEXT NOT NULL DEFAULT '';`,
@@ -179,62 +176,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.migrateTunnelStateProfileKey(ctx); err != nil {
-		return err
-	}
 	return nil
-}
-
-func (s *Store) migrateTunnelStateProfileKey(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(tunnel_states)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	pkCols := map[string]int{}
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return err
-		}
-		if pk > 0 {
-			pkCols[name] = pk
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if pkCols["device_id"] > 0 && pkCols["peer_id"] > 0 && pkCols["profile"] > 0 {
-		return nil
-	}
-	_, err = s.db.ExecContext(ctx, `
-		CREATE TABLE tunnel_states_new (
-			device_id TEXT NOT NULL,
-			peer_id TEXT NOT NULL,
-			profile TEXT NOT NULL DEFAULT 'interactive',
-			state TEXT NOT NULL DEFAULT '',
-			via TEXT NOT NULL DEFAULT '',
-			nat_type TEXT NOT NULL DEFAULT '',
-			public_addr TEXT NOT NULL DEFAULT '',
-			conv_id INTEGER NOT NULL DEFAULT 0,
-			rtt_ms INTEGER NOT NULL DEFAULT 0,
-			last_error TEXT NOT NULL DEFAULT '',
-			attempt INTEGER NOT NULL DEFAULT 0,
-			next_retry_at TEXT NOT NULL DEFAULT '',
-			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (device_id, peer_id, profile)
-		);
-		INSERT OR REPLACE INTO tunnel_states_new(device_id,peer_id,profile,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at)
-			SELECT device_id,peer_id,COALESCE(NULLIF(profile,''),'interactive'),state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at FROM tunnel_states;
-		DROP TABLE tunnel_states;
-		ALTER TABLE tunnel_states_new RENAME TO tunnel_states;
-	`)
-	return err
 }
 
 func (s *Store) PutMeta(ctx context.Context, key, value string) error {
