@@ -286,6 +286,63 @@ func TestHandleAgentEndpointsRejectDisabledDevice(t *testing.T) {
 	}
 }
 
+func TestHandleAgentTunnelStatusDoesNotOverwriteNameWithID(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.db.UpsertDevice(ctx, "dev-a", "office-pc", "", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetDeviceEnabled(ctx, "dev-a", true); err != nil {
+		t.Fatal(err)
+	}
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+
+	rec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/tunnel-status", map[string]any{
+		"device_id": "dev-a",
+		"peer":      "dev-b",
+		"profile":   "interactive",
+		"state":     "p2p",
+		"via":       "p2p",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	d, err := a.db.GetDevice(ctx, "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "office-pc" {
+		t.Fatalf("tunnel status should not overwrite display name with id: %+v", d)
+	}
+}
+
+func TestAgentRegisterAndHeartbeatEmptyNamePreserveDisplayName(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.db.UpsertDevice(ctx, "dev-a", "office-pc", "", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetDeviceEnabled(ctx, "dev-a", true); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/agent/register", "/api/agent/heartbeat"} {
+		rec := doAgentJSON(t, a.httpMux(), http.MethodPost, path, map[string]any{
+			"device_id": "dev-a",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+	d, err := a.db.GetDevice(ctx, "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "office-pc" {
+		t.Fatalf("empty agent names should preserve display name: %+v", d)
+	}
+}
+
 func TestHandleClientRelease(t *testing.T) {
 	a := newTestApp(t)
 	a.cfg.ClientReleaseVersion = "0.4.0"

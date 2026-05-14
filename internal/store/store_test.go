@@ -90,6 +90,31 @@ func TestUpsertDevicePreservesNonEmptyFields(t *testing.T) {
 	}
 }
 
+func TestUpsertDeviceEmptyNameDoesNotOverwriteDisplayName(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.UpsertDevice(ctx, "dev-123", "office-pc", "1.1.1.1:1", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertDevice(ctx, "dev-123", "", "2.2.2.2:2", "", "peer", true); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetDevice(ctx, "dev-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "office-pc" {
+		t.Fatalf("empty update should preserve display name: %+v", d)
+	}
+	if d.Addr != "2.2.2.2:2" || d.Want != "peer" {
+		t.Fatalf("expected other fields to update: %+v", d)
+	}
+}
+
 func TestUpdateSessionPathForPairAndTunnelState(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

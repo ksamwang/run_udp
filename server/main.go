@@ -351,9 +351,6 @@ func (a *app) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.
 	log.Printf("register: id=%s want=%s profile=%s from=%s upnp=%q", msg.From, msg.Peer, profile, src, msg.UpnpAddr)
 	a.totalRegister.Add(1)
 	name := msg.Name
-	if name == "" {
-		name = msg.From
-	}
 	_ = a.db.UpsertDevice(rctx(), msg.From, name, src.String(), msg.UpnpAddr, msg.Peer, true)
 
 	a.mu.Lock()
@@ -877,9 +874,6 @@ func (a *app) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		addr = requestAddr(r)
 	}
 	name := req.Name
-	if name == "" {
-		name = req.DeviceID
-	}
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
 	if err == nil {
 		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
@@ -909,9 +903,6 @@ func (a *app) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		addr = requestAddr(r)
 	}
 	name := req.Name
-	if name == "" {
-		name = req.DeviceID
-	}
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
 	if err == nil {
 		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
@@ -922,6 +913,7 @@ func (a *app) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID         string `json:"device_id"`
+		Name             string `json:"name"`
 		Peer             string `json:"peer"`
 		Profile          string `json:"profile"`
 		State            string `json:"state"`
@@ -951,7 +943,7 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		addr = requestAddr(r)
 	}
 	online := req.State == "connecting" || req.State == "p2p" || req.State == "relay"
-	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.DeviceID, addr, req.UpnpAddr, req.Peer, online)
+	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.Name, addr, req.UpnpAddr, req.Peer, online)
 	if err == nil {
 		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
 			DeviceID:         req.DeviceID,
@@ -993,9 +985,6 @@ func (a *app) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(req.DeviceName)
-	if name == "" {
-		name = req.DeviceID
-	}
 	resp := a.bootstrapConfig(r, req.DeviceID, name)
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, requestAddr(r), "", "", false)
 	writeJSONOrError(w, resp, err)
