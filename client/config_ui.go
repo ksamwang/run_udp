@@ -14,6 +14,7 @@ import (
 
 type clientConfigHooks struct {
 	OnSaved        func()
+	SaveConfig     func(config.Client) (bool, error)
 	Runtime        func() clientRuntimeInfo
 	RestartService func() error
 	CheckUpdates   func() error
@@ -77,14 +78,26 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 			s.cfg.DeviceName = defaultDeviceName()
 		}
 		s.cfg.PSK = req.PSK
-		err := config.SaveClientLocalJSON(s.path, s.cfg)
+		elevated := false
+		var err error
+		if s.hooks.SaveConfig != nil {
+			elevated, err = s.hooks.SaveConfig(s.cfg)
+		} else {
+			err = config.SaveClientLocalJSON(s.path, s.cfg)
+		}
 		s.mu.Unlock()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeClientJSON(w, map[string]any{"ok": true, "restart_required": true, "process_exiting": s.hooks.OnSaved != nil})
-		if s.hooks.OnSaved != nil {
+		processExiting := s.hooks.OnSaved != nil && !elevated
+		writeClientJSON(w, map[string]any{
+			"ok":                 true,
+			"restart_required":   true,
+			"process_exiting":    processExiting,
+			"elevation_required": elevated,
+		})
+		if processExiting {
 			go func() {
 				time.Sleep(500 * time.Millisecond)
 				s.hooks.OnSaved()
@@ -182,7 +195,7 @@ const clientConfigHTML = `<!doctype html>
 const form=document.querySelector("#form"),msg=document.querySelector("#msg"),runtime=document.querySelector("#runtime");
 async function load(){const r=await fetch("/api/config");const c=await r.json();for(const [k,v] of Object.entries(c)){const el=form.elements[k];if(!el)continue;if(el.type==="checkbox")el.checked=!!v;else el.value=String(v??"");}}
 async function loadRuntime(){const r=await fetch("/api/runtime");const c=await r.json();runtime.innerHTML=[["版本",c.version],["提交",c.commit],["构建时间",c.build_time],["安装路径",c.install_path],["日志路径",c.log_path],["服务状态",c.service_status],["更新状态",c.update_status],["上次检查",c.last_update_check],["最近错误",c.last_update_error]].map(([k,v])=>"<div><strong>"+k+":</strong> "+String(v||"")+"</div>").join("");}
-form.addEventListener("submit",async e=>{e.preventDefault();const fd=new FormData(form),body=Object.fromEntries(fd.entries());delete body.device_id;const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){msg.textContent="保存失败："+await r.text();return;}const resp=await r.json();msg.textContent=resp.process_exiting?"已保存，客户端正在重启":"已保存，重启客户端后生效";if(resp.process_exiting){Array.from(form.elements).forEach(el=>el.disabled=true);}});
+form.addEventListener("submit",async e=>{e.preventDefault();const fd=new FormData(form),body=Object.fromEntries(fd.entries());delete body.device_id;const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){msg.textContent="保存失败："+await r.text();return;}const resp=await r.json();msg.textContent=resp.elevation_required?"已请求管理员权限保存配置，请确认 UAC 后再重启服务":(resp.process_exiting?"已保存，客户端正在重启":"已保存，重启客户端后生效");if(resp.process_exiting){Array.from(form.elements).forEach(el=>el.disabled=true);}});
 document.querySelector("#restart-service").addEventListener("click",async()=>{const r=await fetch("/api/restart-service",{method:"POST"});msg.textContent=r.ok?"服务重启请求已发送":"服务重启失败："+await r.text();loadRuntime().catch(()=>{});});
 document.querySelector("#check-updates").addEventListener("click",async()=>{const r=await fetch("/api/check-updates",{method:"POST"});msg.textContent=r.ok?"更新检查已触发":"更新检查失败："+await r.text();loadRuntime().catch(()=>{});});
 Promise.all([load(),loadRuntime()]).catch(e=>msg.textContent=e);

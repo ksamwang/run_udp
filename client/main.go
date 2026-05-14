@@ -217,9 +217,22 @@ func main() {
 	checkUpdatesFlag := fs.Bool("check-updates", false, "check for updates immediately")
 	updaterMode := fs.Bool("updater", false, "internal updater helper mode")
 	updatePackage := fs.String("update-package", "", "installer package path for updater helper")
+	applyClientConfig := fs.String("apply-client-config", "", "internal elevated client config source")
 	var forwards multiFlag
 	fs.Var(&forwards, "forward", "TCP forward rule LOCAL:HOST:PORT")
 	fs.Parse(os.Args[1:])
+
+	if *applyClientConfig != "" {
+		next := config.DefaultClient()
+		if err := config.LoadJSON(*applyClientConfig, &next); err != nil {
+			log.Fatal(err)
+		}
+		if err := config.SaveClientLocalJSON(*configPath, next); err != nil {
+			log.Fatal(err)
+		}
+		_ = os.Remove(*applyClientConfig)
+		return
+	}
 
 	_ = config.LoadJSON(*configPath, &cfg)
 	if flagSet(fs, "server") {
@@ -464,8 +477,9 @@ func runTrayProcess(cfg config.Client, configPath string) {
 			}
 			os.Exit(0)
 		},
+		SaveConfig:     func(next config.Client) (bool, error) { return saveClientConfigWithElevation(configPath, next) },
 		Runtime:        currentRuntimeInfo,
-		RestartService: restartWindowsService,
+		RestartService: restartWindowsServiceWithElevation,
 		CheckUpdates: func() error {
 			_, err := checkForUpdates(cfg, configPath, false)
 			return err
@@ -473,7 +487,7 @@ func runTrayProcess(cfg config.Client, configPath string) {
 	})
 	runTray(cfg.DeviceID, cfg.ServerHTTP, configURL, trayActions{
 		OpenLogs:     openLogs,
-		Restart:      restartWindowsService,
+		Restart:      restartWindowsServiceWithElevation,
 		CheckUpdates: func() error { _, err := checkForUpdates(cfg, configPath, false); return err },
 		RuntimeStatus: func() string {
 			if st, err := queryWindowsServiceStatus(); err == nil {

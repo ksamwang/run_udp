@@ -210,13 +210,7 @@ func openLogs() error {
 }
 
 func spawnServiceCommand(arg string) error {
-	exe := currentExePath()
-	if exe == "" {
-		return errors.New("executable path unavailable")
-	}
-	cmd := exec.Command(exe, arg)
-	cmd.Dir = filepath.Dir(exe)
-	return cmd.Start()
+	return runElevatedSelf(arg)
 }
 
 func isServiceInteractive() bool {
