@@ -50,7 +50,7 @@ func NewPacketConn(real *net.UDPConn, peer *atomic.Pointer[net.UDPAddr]) *Packet
 	return &PacketConn{
 		real:   real,
 		peer:   peer,
-		inbox:  make(chan inbound, 512),
+		inbox:  make(chan inbound, packetInboxSize),
 		closed: make(chan struct{}),
 	}
 }
@@ -127,6 +127,8 @@ func (p *PacketConn) LocalAddr() net.Addr                { return p.real.LocalAd
 func (p *PacketConn) SetDeadline(t time.Time) error      { p.rdead.Store(&t); return nil }
 func (p *PacketConn) SetReadDeadline(t time.Time) error  { p.rdead.Store(&t); return nil }
 func (p *PacketConn) SetWriteDeadline(_ time.Time) error { return nil }
+func (p *PacketConn) SetReadBuffer(bytes int) error      { return p.real.SetReadBuffer(bytes) }
+func (p *PacketConn) SetWriteBuffer(bytes int) error     { return p.real.SetWriteBuffer(bytes) }
 
 type errTimeout struct{}
 
@@ -140,7 +142,7 @@ func (errTimeout) Temporary() bool { return true }
 //	listener=false: 主动发起（kcp.NewConn2）
 //
 // 两端约定由 ID 字典序小的一方当 listener，另一方当 dialer。
-func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
+func Open(pc *PacketConn, listener bool, convID uint32, profile string) (net.Conn, error) {
 	if listener {
 		lis, err := kcp.ServeConn(nil, 0, 0, pc)
 		if err != nil {
@@ -156,7 +158,7 @@ func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
 		// 否则后续 KCP 收包会在 30 秒后持续返回 timeout，smux 会误判隧道死亡。
 		_ = pc.SetReadDeadline(time.Time{})
 		_ = lis.SetReadDeadline(time.Time{})
-		tuneSession(sess)
+		tuneSession(sess, profile)
 		return sess, nil
 	}
 
@@ -169,7 +171,7 @@ func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
 		return nil, fmt.Errorf("kcp newconn: %w", err)
 	}
 	_ = convID
-	tuneSession(sess)
+	tuneSession(sess, profile)
 	// 立即发一个 ping 探测包：KCP 本身懒启动，必须有 Write 才会发首包，
 	// 对端的 Accept 才会返回。Listener 端会识别并丢弃这个探测包。
 	if _, err := sess.Write([]byte(handshakeMarker)); err != nil {
@@ -182,6 +184,8 @@ func Open(pc *PacketConn, listener bool, convID uint32) (net.Conn, error) {
 // handshakeMarker 是 Dialer 建立会话后立即写入的首个数据，
 // 用于触发 Listener 侧 Accept 返回。Listener 读到后需要丢弃。
 const handshakeMarker = "\x00KCP-HELLO\n"
+
+const packetInboxSize = 16 * 1024
 
 // ConsumeHandshake 消费 Listener 端收到的首个探测包，确认隧道双向就绪。
 // 如果收到的首个字节流不是预期的 marker，会报错。
@@ -201,12 +205,31 @@ func ConsumeHandshake(sess net.Conn) error {
 	return nil
 }
 
-func tuneSession(s *kcp.UDPSession) {
+func tuneSession(s *kcp.UDPSession, profile string) {
+	cfg := profileConfig(profile)
 	// 极速模式：无延迟、10ms 间隔、快速重传、关拥塞控制
 	s.SetNoDelay(1, 10, 2, 1)
-	s.SetWindowSize(512, 512)
+	s.SetWindowSize(cfg.KCPWindow, cfg.KCPWindow)
 	s.SetMtu(1200) // 留足空间避免被 NAT 设备分片丢弃
 	s.SetStreamMode(true)
+	if cfg.UDPSocketBuffer > 0 {
+		_ = s.SetReadBuffer(cfg.UDPSocketBuffer)
+		_ = s.SetWriteBuffer(cfg.UDPSocketBuffer)
+	}
+}
+
+type ProfileConfig struct {
+	KCPWindow       int
+	UDPSocketBuffer int
+}
+
+func profileConfig(profile string) ProfileConfig {
+	switch profile {
+	case "bulk":
+		return ProfileConfig{KCPWindow: 8192, UDPSocketBuffer: 16 * 1024 * 1024}
+	default:
+		return ProfileConfig{KCPWindow: 1024}
+	}
 }
 
 // SessionStats 返回当前 KCP 会话的 conv 和 SRTT（毫秒）。

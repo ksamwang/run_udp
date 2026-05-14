@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"udp_tunnel_demo/internal/config"
+	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/store"
 )
 
@@ -85,6 +87,96 @@ func TestHandleForwardsLocalPortConflict(t *testing.T) {
 	}
 	if resp["code"] != "local_port_conflict" {
 		t.Fatalf("expected local_port_conflict got %v body=%s", resp["code"], rec.Body.String())
+	}
+}
+
+func TestHandleForwardsProfileValidationAndBulkRule(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+
+	rec := doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", map[string]any{
+		"name": "smb", "source_id": "dev-a", "target_id": "dev-b", "profile": "bulk", "local_port": 1445,
+		"target_host": "127.0.0.1", "target_port": 445, "enabled": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var rule store.ForwardRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &rule); err != nil {
+		t.Fatal(err)
+	}
+	if rule.Profile != store.ProfileBulk {
+		t.Fatalf("expected bulk profile: %+v", rule)
+	}
+
+	rec = doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", map[string]any{
+		"name": "bad", "source_id": "dev-a", "target_id": "dev-b", "profile": "video", "local_port": 1446,
+		"target_host": "127.0.0.1", "target_port": 445, "enabled": true,
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnrichedRulesMatchesProfileTunnelState(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+	if _, err := a.db.CreateRule(ctx, store.ForwardRule{
+		Name: "rdp", SourceID: "dev-a", TargetID: "dev-b", Profile: store.ProfileInteractive, LocalPort: 13389,
+		TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.CreateRule(ctx, store.ForwardRule{
+		Name: "smb", SourceID: "dev-a", TargetID: "dev-b", Profile: store.ProfileBulk, LocalPort: 1445,
+		TargetHost: "127.0.0.1", TargetPort: 445, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutTunnelState(ctx, store.TunnelState{
+		DeviceID: "dev-a", PeerID: "dev-b", Profile: store.ProfileBulk, State: "p2p", Via: "p2p",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := a.enrichedRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateByName := map[string]string{}
+	for _, r := range rules {
+		stateByName[r.Name] = r.RuntimeState
+	}
+	if stateByName["smb"] != "p2p" || stateByName["rdp"] != "down" {
+		t.Fatalf("unexpected runtime states: %+v", stateByName)
+	}
+}
+
+func TestRegisterPairsSameDevicesByProfile(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 11001}, &protocol.Message{From: "dev-a", Peer: "dev-b", Profile: store.ProfileInteractive})
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 11002}, &protocol.Message{From: "dev-b", Peer: "dev-a", Profile: store.ProfileInteractive})
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12001}, &protocol.Message{From: "dev-a", Peer: "dev-b", Profile: store.ProfileBulk})
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12002}, &protocol.Message{From: "dev-b", Peer: "dev-a", Profile: store.ProfileBulk})
+	if len(a.pairByID) != 2 {
+		t.Fatalf("expected separate profile pair sessions, got %+v", a.pairByID)
+	}
+	if _, ok := a.peers["dev-a"][peerSlotKey("dev-b", store.ProfileInteractive)]; !ok {
+		t.Fatalf("missing interactive peer slot: %+v", a.peers)
+	}
+	if _, ok := a.peers["dev-a"][peerSlotKey("dev-b", store.ProfileBulk)]; !ok {
+		t.Fatalf("missing bulk peer slot: %+v", a.peers)
 	}
 }
 

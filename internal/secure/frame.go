@@ -95,7 +95,7 @@ func (c *Codec) Open(frame []byte) (byte, []byte, error) {
 	return kind, plain, nil
 }
 
-func ConvID(psk, a, b string) uint32 {
+func ConvID(psk, a, b, profile string) uint32 {
 	ids := []string{a, b}
 	sort.Strings(ids)
 	mac := hmac.New(sha256.New, []byte(psk))
@@ -104,6 +104,8 @@ func ConvID(psk, a, b string) uint32 {
 	mac.Write([]byte(ids[0]))
 	mac.Write([]byte{0})
 	mac.Write([]byte(ids[1]))
+	mac.Write([]byte{0})
+	mac.Write([]byte(profile))
 	sum := mac.Sum(nil)
 	v := binary.BigEndian.Uint32(sum[:4])
 	if v == 0 {

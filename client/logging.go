@@ -68,8 +68,8 @@ func logStartup(cfg config.Client, configPath, logPath string, agent, probe bool
 func rulesSignature(rules []store.ForwardRule) string {
 	parts := make([]string, 0, len(rules))
 	for _, r := range rules {
-		parts = append(parts, fmt.Sprintf("#%d:%s->%s:%d->%s:%d:en=%v",
-			r.ID, r.SourceID, r.TargetID, r.LocalPort, r.TargetHost, r.TargetPort, r.Enabled))
+		parts = append(parts, fmt.Sprintf("#%d:%s:%s->%s:%d->%s:%d:en=%v",
+			r.ID, store.NormalizeProfile(r.Profile), r.SourceID, r.TargetID, r.LocalPort, r.TargetHost, r.TargetPort, r.Enabled))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ",")

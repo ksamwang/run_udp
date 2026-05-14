@@ -55,6 +55,7 @@ async function refresh() {
   </tr>`).join("");
   $("#rule-list").innerHTML = rules.map(r => `<tr>
     <td>${escapeHTML(r.name || String(r.id))}</td>
+    <td>${profileLabel(r.profile)}</td>
     <td>${escapeHTML(r.source_id)}:${r.local_port}</td>
     <td>${escapeHTML(r.target_id)}</td>
     <td>${escapeHTML(r.target_host)}:${r.target_port}</td>
@@ -102,17 +103,18 @@ function renderDeviceAddr(device) {
 function buildTunnelStateMap(states) {
   const map = new Map();
   for (const s of states) {
-    map.set(pairKey(s.device_id, s.peer_id), s);
+    map.set(pairKey(s.device_id, s.peer_id, s.profile), s);
   }
   return map;
 }
 
-function pairKey(a, b) {
-  return [a, b].sort().join("\u0000");
+function pairKey(a, b, profile) {
+  return [...[a, b].sort(), normalizeProfile(profile)].join("\u0000");
 }
 
 function renderSessionRow(session, stateMap) {
-  const state = stateMap.get(pairKey(session.source_id, session.target_id));
+  const profile = normalizeProfile(session.profile);
+  const state = stateMap.get(pairKey(session.source_id, session.target_id, profile));
   const path = state?.via || session.path || "";
   const nat = state?.nat_type || "";
   const conv = state?.conv_id ? String(state.conv_id) : "";
@@ -124,6 +126,7 @@ function renderSessionRow(session, stateMap) {
   return `<tr>
     <td>${session.id}</td>
     <td>${escapeHTML(session.source_id)} -> ${escapeHTML(session.target_id)}</td>
+    <td>${profileLabel(profile)}</td>
     <td>${escapeHTML(path)}</td>
     <td>${escapeHTML(nat)}</td>
     <td>${escapeHTML(status)}</td>
@@ -134,6 +137,14 @@ function renderSessionRow(session, stateMap) {
     <td>${session.relay_bytes}</td>
     <td>${session.last_seen}<br><small>${escapeHTML(lastError)}</small></td>
   </tr>`;
+}
+
+function normalizeProfile(profile) {
+  return profile === "bulk" ? "bulk" : "interactive";
+}
+
+function profileLabel(profile) {
+  return normalizeProfile(profile) === "bulk" ? "文件传输" : "即时操作";
 }
 
 $("#login-form").addEventListener("submit", async (e) => {

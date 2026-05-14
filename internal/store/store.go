@@ -34,6 +34,7 @@ type ForwardRule struct {
 	Name          string `json:"name"`
 	SourceID      string `json:"source_id"`
 	TargetID      string `json:"target_id"`
+	Profile       string `json:"profile"`
 	LocalPort     int    `json:"local_port"`
 	TargetHost    string `json:"target_host"`
 	TargetPort    int    `json:"target_port"`
@@ -51,6 +52,7 @@ type Session struct {
 	ID         int64  `json:"id"`
 	SourceID   string `json:"source_id"`
 	TargetID   string `json:"target_id"`
+	Profile    string `json:"profile"`
 	Path       string `json:"path"`
 	RelayBytes int64  `json:"relay_bytes"`
 	StartedAt  string `json:"started_at"`
@@ -69,6 +71,7 @@ type Metrics struct {
 type TunnelState struct {
 	DeviceID         string `json:"device_id"`
 	PeerID           string `json:"peer_id"`
+	Profile          string `json:"profile"`
 	State            string `json:"state"`
 	Via              string `json:"via"`
 	NATType          string `json:"nat_type"`
@@ -118,6 +121,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			name TEXT NOT NULL DEFAULT '',
 			source_id TEXT NOT NULL,
 			target_id TEXT NOT NULL,
+			profile TEXT NOT NULL DEFAULT 'interactive',
 			local_port INTEGER NOT NULL,
 			target_host TEXT NOT NULL,
 			target_port INTEGER NOT NULL,
@@ -129,6 +133,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id TEXT NOT NULL,
 			target_id TEXT NOT NULL,
+			profile TEXT NOT NULL DEFAULT 'interactive',
 			path TEXT NOT NULL,
 			relay_bytes INTEGER NOT NULL DEFAULT 0,
 			started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -144,6 +149,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS tunnel_states (
 			device_id TEXT NOT NULL,
 			peer_id TEXT NOT NULL,
+			profile TEXT NOT NULL DEFAULT 'interactive',
 			state TEXT NOT NULL DEFAULT '',
 			via TEXT NOT NULL DEFAULT '',
 			nat_type TEXT NOT NULL DEFAULT '',
@@ -155,9 +161,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			next_retry_at TEXT NOT NULL DEFAULT '',
 			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (device_id, peer_id)
+			PRIMARY KEY (device_id, peer_id, profile)
 		);`,
 		`ALTER TABLE devices ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;`,
+		`ALTER TABLE forward_rules ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
+		`ALTER TABLE sessions ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
+		`ALTER TABLE tunnel_states ADD COLUMN profile TEXT NOT NULL DEFAULT 'interactive';`,
 		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE tunnel_states ADD COLUMN rtt_ms INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE tunnel_states ADD COLUMN last_error TEXT NOT NULL DEFAULT '';`,
@@ -170,7 +179,62 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.migrateTunnelStateProfileKey(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Store) migrateTunnelStateProfileKey(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(tunnel_states)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	pkCols := map[string]int{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if pk > 0 {
+			pkCols[name] = pk
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if pkCols["device_id"] > 0 && pkCols["peer_id"] > 0 && pkCols["profile"] > 0 {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `
+		CREATE TABLE tunnel_states_new (
+			device_id TEXT NOT NULL,
+			peer_id TEXT NOT NULL,
+			profile TEXT NOT NULL DEFAULT 'interactive',
+			state TEXT NOT NULL DEFAULT '',
+			via TEXT NOT NULL DEFAULT '',
+			nat_type TEXT NOT NULL DEFAULT '',
+			public_addr TEXT NOT NULL DEFAULT '',
+			conv_id INTEGER NOT NULL DEFAULT 0,
+			rtt_ms INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0,
+			next_retry_at TEXT NOT NULL DEFAULT '',
+			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (device_id, peer_id, profile)
+		);
+		INSERT OR REPLACE INTO tunnel_states_new(device_id,peer_id,profile,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at)
+			SELECT device_id,peer_id,COALESCE(NULLIF(profile,''),'interactive'),state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at FROM tunnel_states;
+		DROP TABLE tunnel_states;
+		ALTER TABLE tunnel_states_new RENAME TO tunnel_states;
+	`)
+	return err
 }
 
 func (s *Store) PutMeta(ctx context.Context, key, value string) error {
@@ -279,7 +343,7 @@ func (s *Store) EnabledRuleReferenceCount(ctx context.Context, deviceID string) 
 }
 
 func (s *Store) ListRules(ctx context.Context) ([]ForwardRule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,source_id,target_id,local_port,target_host,target_port,enabled,created_at,updated_at FROM forward_rules ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,source_id,target_id,profile,local_port,target_host,target_port,enabled,created_at,updated_at FROM forward_rules ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +352,7 @@ func (s *Store) ListRules(ctx context.Context) ([]ForwardRule, error) {
 }
 
 func (s *Store) RulesForDevice(ctx context.Context, deviceID string) ([]ForwardRule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,source_id,target_id,local_port,target_host,target_port,enabled,created_at,updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,source_id,target_id,profile,local_port,target_host,target_port,enabled,created_at,updated_at
 		FROM forward_rules WHERE enabled=1 AND (source_id=? OR target_id=?) ORDER BY id`, deviceID, deviceID)
 	if err != nil {
 		return nil, err
@@ -298,8 +362,9 @@ func (s *Store) RulesForDevice(ctx context.Context, deviceID string) ([]ForwardR
 }
 
 func (s *Store) CreateRule(ctx context.Context, r ForwardRule) (ForwardRule, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO forward_rules(name,source_id,target_id,local_port,target_host,target_port,enabled)
-		VALUES(?,?,?,?,?,?,?)`, r.Name, r.SourceID, r.TargetID, r.LocalPort, r.TargetHost, r.TargetPort, boolInt(r.Enabled))
+	r.Profile = NormalizeProfile(r.Profile)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO forward_rules(name,source_id,target_id,profile,local_port,target_host,target_port,enabled)
+		VALUES(?,?,?,?,?,?,?,?)`, r.Name, r.SourceID, r.TargetID, r.Profile, r.LocalPort, r.TargetHost, r.TargetPort, boolInt(r.Enabled))
 	if err != nil {
 		return r, err
 	}
@@ -308,8 +373,9 @@ func (s *Store) CreateRule(ctx context.Context, r ForwardRule) (ForwardRule, err
 }
 
 func (s *Store) UpdateRule(ctx context.Context, id int64, r ForwardRule) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE forward_rules SET name=?,source_id=?,target_id=?,local_port=?,target_host=?,target_port=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		r.Name, r.SourceID, r.TargetID, r.LocalPort, r.TargetHost, r.TargetPort, boolInt(r.Enabled), id)
+	r.Profile = NormalizeProfile(r.Profile)
+	res, err := s.db.ExecContext(ctx, `UPDATE forward_rules SET name=?,source_id=?,target_id=?,profile=?,local_port=?,target_host=?,target_port=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		r.Name, r.SourceID, r.TargetID, r.Profile, r.LocalPort, r.TargetHost, r.TargetPort, boolInt(r.Enabled), id)
 	if err != nil {
 		return err
 	}
@@ -332,8 +398,8 @@ func (s *Store) DeleteRule(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Store) StartSession(ctx context.Context, sourceID, targetID, path string) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO sessions(source_id,target_id,path) VALUES(?,?,?)`, sourceID, targetID, path)
+func (s *Store) StartSession(ctx context.Context, sourceID, targetID, profile, path string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO sessions(source_id,target_id,profile,path) VALUES(?,?,?,?)`, sourceID, targetID, NormalizeProfile(profile), path)
 	if err != nil {
 		return 0, err
 	}
@@ -345,15 +411,15 @@ func (s *Store) TouchSession(ctx context.Context, id int64, relayBytes int64) er
 	return err
 }
 
-func (s *Store) UpdateSessionPathForPair(ctx context.Context, aID, bID, path string) error {
+func (s *Store) UpdateSessionPathForPair(ctx context.Context, aID, bID, profile, path string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions
 		SET path=?, last_seen=CURRENT_TIMESTAMP
 		WHERE id=(
 			SELECT id FROM sessions
-			WHERE ended_at='' AND ((source_id=? AND target_id=?) OR (source_id=? AND target_id=?))
+			WHERE ended_at='' AND profile=? AND ((source_id=? AND target_id=?) OR (source_id=? AND target_id=?))
 			ORDER BY id DESC
 			LIMIT 1
-		)`, path, aID, bID, bID, aID)
+		)`, path, NormalizeProfile(profile), aID, bID, bID, aID)
 	return err
 }
 
@@ -363,7 +429,7 @@ func (s *Store) EndIdleSessions(ctx context.Context, cutoff time.Time) error {
 }
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,source_id,target_id,path,relay_bytes,started_at,last_seen,ended_at FROM sessions ORDER BY id DESC LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,source_id,target_id,profile,path,relay_bytes,started_at,last_seen,ended_at FROM sessions ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -371,9 +437,10 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	var out []Session
 	for rows.Next() {
 		var x Session
-		if err := rows.Scan(&x.ID, &x.SourceID, &x.TargetID, &x.Path, &x.RelayBytes, &x.StartedAt, &x.LastSeen, &x.EndedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.SourceID, &x.TargetID, &x.Profile, &x.Path, &x.RelayBytes, &x.StartedAt, &x.LastSeen, &x.EndedAt); err != nil {
 			return nil, err
 		}
+		x.Profile = NormalizeProfile(x.Profile)
 		out = append(out, x)
 	}
 	return out, rows.Err()
@@ -402,22 +469,23 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 }
 
 func (s *Store) PutTunnelState(ctx context.Context, ts TunnelState) error {
+	ts.Profile = NormalizeProfile(ts.Profile)
 	lastTransitionAt := ts.LastTransitionAt
 	if lastTransitionAt == "" {
 		lastTransitionAt = time.Now().Format(time.RFC3339)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-		ON CONFLICT(device_id,peer_id) DO UPDATE SET state=excluded.state, via=excluded.via,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tunnel_states(device_id,peer_id,profile,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+		ON CONFLICT(device_id,peer_id,profile) DO UPDATE SET state=excluded.state, via=excluded.via,
 			nat_type=excluded.nat_type, public_addr=excluded.public_addr, conv_id=excluded.conv_id, rtt_ms=excluded.rtt_ms,
 			last_error=excluded.last_error, attempt=excluded.attempt, next_retry_at=excluded.next_retry_at,
 			last_transition_at=excluded.last_transition_at, updated_at=CURRENT_TIMESTAMP`,
-		ts.DeviceID, ts.PeerID, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs, ts.LastError, ts.Attempt, ts.NextRetryAt, lastTransitionAt)
+		ts.DeviceID, ts.PeerID, ts.Profile, ts.State, ts.Via, ts.NATType, ts.PublicAddr, ts.ConvID, ts.RTTMs, ts.LastError, ts.Attempt, ts.NextRetryAt, lastTransitionAt)
 	return err
 }
 
 func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,peer_id,profile,state,via,nat_type,public_addr,conv_id,rtt_ms,last_error,attempt,next_retry_at,last_transition_at,updated_at FROM tunnel_states ORDER BY updated_at DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -425,9 +493,10 @@ func (s *Store) ListTunnelStates(ctx context.Context) ([]TunnelState, error) {
 	var out []TunnelState
 	for rows.Next() {
 		var t TunnelState
-		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.LastError, &t.Attempt, &t.NextRetryAt, &t.LastTransitionAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.DeviceID, &t.PeerID, &t.Profile, &t.State, &t.Via, &t.NATType, &t.PublicAddr, &t.ConvID, &t.RTTMs, &t.LastError, &t.Attempt, &t.NextRetryAt, &t.LastTransitionAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
+		t.Profile = NormalizeProfile(t.Profile)
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -456,13 +525,36 @@ func scanRules(rows *sql.Rows) ([]ForwardRule, error) {
 	for rows.Next() {
 		var r ForwardRule
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.Name, &r.SourceID, &r.TargetID, &r.LocalPort, &r.TargetHost, &r.TargetPort, &enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.SourceID, &r.TargetID, &r.Profile, &r.LocalPort, &r.TargetHost, &r.TargetPort, &enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
+		r.Profile = NormalizeProfile(r.Profile)
 		r.Enabled = enabled != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+const (
+	ProfileInteractive = "interactive"
+	ProfileBulk        = "bulk"
+)
+
+func NormalizeProfile(profile string) string {
+	profile = strings.TrimSpace(strings.ToLower(profile))
+	if profile == "" {
+		return ProfileInteractive
+	}
+	return profile
+}
+
+func ValidProfile(profile string) bool {
+	switch NormalizeProfile(profile) {
+	case ProfileInteractive, ProfileBulk:
+		return true
+	default:
+		return false
+	}
 }
 
 func boolInt(v bool) int {
@@ -473,6 +565,10 @@ func boolInt(v bool) int {
 }
 
 func (r ForwardRule) Validate() error {
+	r.Profile = NormalizeProfile(r.Profile)
+	if !ValidProfile(r.Profile) {
+		return errors.New("profile must be interactive or bulk")
+	}
 	if r.SourceID == "" || r.TargetID == "" {
 		return errors.New("source_id and target_id are required")
 	}

@@ -38,6 +38,7 @@ type peer struct {
 	addr      *net.UDPAddr
 	upnpAddr  string
 	want      string
+	profile   string
 	lastSeen  time.Time
 	sessionID int64
 }
@@ -78,6 +79,7 @@ func (e *apiError) Error() string { return e.Message }
 
 type agentTunnelReport struct {
 	Peer             string `json:"peer"`
+	Profile          string `json:"profile"`
 	State            string `json:"state"`
 	Via              string `json:"via"`
 	NATType          string `json:"nat_type"`
@@ -345,7 +347,8 @@ func (a *app) writeControl(conn *net.UDPConn, dst *net.UDPAddr, msg *protocol.Me
 }
 
 func (a *app) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.Message) {
-	log.Printf("register: id=%s want=%s from=%s upnp=%q", msg.From, msg.Peer, src, msg.UpnpAddr)
+	profile := store.NormalizeProfile(msg.Profile)
+	log.Printf("register: id=%s want=%s profile=%s from=%s upnp=%q", msg.From, msg.Peer, profile, src, msg.UpnpAddr)
 	a.totalRegister.Add(1)
 	name := msg.Name
 	if name == "" {
@@ -360,54 +363,60 @@ func (a *app) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.
 		byWant = map[string]*peer{}
 		a.peers[msg.From] = byWant
 	}
-	if old, ok := byWant[msg.Peer]; ok && old.addr.String() != src.String() {
+	slot := peerSlotKey(msg.Peer, profile)
+	if old, ok := byWant[slot]; ok && old.addr.String() != src.String() {
 		// 同一 (from, want) 换 socket，旧路由作废
 		a.pairs.Delete(old.addr.String())
 	}
-	self := &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, want: msg.Peer, lastSeen: time.Now()}
-	byWant[msg.Peer] = self
+	self := &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, want: msg.Peer, profile: profile, lastSeen: time.Now()}
+	byWant[slot] = self
 
-	other, ok := a.lookupPeer(msg.Peer, msg.From)
+	other, ok := a.lookupPeer(msg.Peer, msg.From, profile)
 	if !ok {
-		log.Printf("  waiting for peer %s to register want=%s...", msg.Peer, msg.From)
+		log.Printf("  waiting for peer %s to register want=%s profile=%s...", msg.Peer, msg.From, profile)
 		return
 	}
 	a.sendPeer(conn, self, other)
 	a.sendPeer(conn, other, self)
-	sessionID := a.ensurePairSession(self.id, other.id, "pending")
+	sessionID := a.ensurePairSession(self.id, other.id, profile, "pending")
 	self.sessionID = sessionID
 	other.sessionID = sessionID
 	a.pairs.Store(self.addr.String(), pairRoute{dst: cloneUDP(other.addr), lastSeen: time.Now(), sessionID: sessionID})
 	a.pairs.Store(other.addr.String(), pairRoute{dst: cloneUDP(self.addr), lastSeen: time.Now(), sessionID: sessionID})
-	log.Printf("paired: %s(%s) <-> %s(%s)", self.id, self.addr, other.id, other.addr)
+	log.Printf("paired: %s(%s) <-> %s(%s) profile=%s", self.id, self.addr, other.id, other.addr, profile)
 	a.totalPaired.Add(1)
 }
 
 // lookupPeer 查 (from, want) 槽。调用方需持有 a.mu。
-func (a *app) lookupPeer(from, want string) (*peer, bool) {
+func (a *app) lookupPeer(from, want, profile string) (*peer, bool) {
 	byWant, ok := a.peers[from]
 	if !ok {
 		return nil, false
 	}
-	p, ok := byWant[want]
+	p, ok := byWant[peerSlotKey(want, profile)]
 	return p, ok
+}
+
+func peerSlotKey(want, profile string) string {
+	return want + "\x00" + store.NormalizeProfile(profile)
 }
 
 func (a *app) sendPeer(conn *net.UDPConn, to, about *peer) {
 	a.writeControl(conn, to.addr, &protocol.Message{
 		Type:     protocol.MsgPeerInfo,
 		Peer:     about.id,
+		Profile:  to.profile,
 		Addr:     about.addr.String(),
 		UpnpAddr: about.upnpAddr,
 	})
 }
 
-func (a *app) ensurePairSession(aID, bID, path string) int64 {
-	key := pairKey(aID, bID)
+func (a *app) ensurePairSession(aID, bID, profile, path string) int64 {
+	key := pairKey(aID, bID, profile)
 	if id, ok := a.pairByID[key]; ok {
 		return id
 	}
-	id, err := a.db.StartSession(rctx(), aID, bID, path)
+	id, err := a.db.StartSession(rctx(), aID, bID, profile, path)
 	if err != nil {
 		log.Printf("start session failed: %v", err)
 		return 0
@@ -914,6 +923,7 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID         string `json:"device_id"`
 		Peer             string `json:"peer"`
+		Profile          string `json:"profile"`
 		State            string `json:"state"`
 		Via              string `json:"via"`
 		NATType          string `json:"nat_type"`
@@ -931,6 +941,7 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
+	req.Profile = store.NormalizeProfile(req.Profile)
 	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -945,6 +956,7 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
 			DeviceID:         req.DeviceID,
 			PeerID:           req.Peer,
+			Profile:          req.Profile,
 			State:            req.State,
 			Via:              req.Via,
 			NATType:          req.NATType,
@@ -958,7 +970,7 @@ func (a *app) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err == nil && (req.State == "p2p" || req.State == "relay") && req.Via != "" {
-		err = a.db.UpdateSessionPathForPair(r.Context(), req.DeviceID, req.Peer, req.Via)
+		err = a.db.UpdateSessionPathForPair(r.Context(), req.DeviceID, req.Peer, req.Profile, req.Via)
 	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
 }
@@ -1251,6 +1263,7 @@ func decodeRule(r *http.Request) (store.ForwardRule, error) {
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 		return rule, err
 	}
+	rule.Profile = store.NormalizeProfile(rule.Profile)
 	return rule, nil
 }
 
@@ -1313,6 +1326,7 @@ func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 		if err := a.db.PutTunnelState(ctx, store.TunnelState{
 			DeviceID:         deviceID,
 			PeerID:           t.Peer,
+			Profile:          t.Profile,
 			State:            t.State,
 			Via:              t.Via,
 			NATType:          t.NATType,
@@ -1327,7 +1341,7 @@ func (a *app) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 			return err
 		}
 		if (t.State == "p2p" || t.State == "relay") && t.Via != "" {
-			if err := a.db.UpdateSessionPathForPair(ctx, deviceID, t.Peer, t.Via); err != nil {
+			if err := a.db.UpdateSessionPathForPair(ctx, deviceID, t.Peer, t.Profile, t.Via); err != nil {
 				return err
 			}
 		}
@@ -1374,7 +1388,7 @@ func (a *app) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 		}
 		ruleCount[r.SourceID]++
 		ruleCount[r.TargetID]++
-		if st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID)]; ok && (st.State == "p2p" || st.State == "relay") {
+		if st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID, r.Profile)]; ok && (st.State == "p2p" || st.State == "relay") {
 			healthy[r.SourceID] = true
 			healthy[r.TargetID] = true
 		}
@@ -1433,7 +1447,7 @@ func (a *app) enrichedRules(ctx context.Context) ([]store.ForwardRule, error) {
 			r.LastError = "device_disabled"
 			r.LastUpdatedAt = r.UpdatedAt
 		default:
-			st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID)]
+			st, ok := stateMap[pairStateKey(r.SourceID, r.TargetID, r.Profile)]
 			if !ok {
 				r.RuntimeState = "down"
 				r.LastError = "session_not_established"
@@ -1453,7 +1467,7 @@ func (a *app) enrichedRules(ctx context.Context) ([]store.ForwardRule, error) {
 func latestStateByPair(states []store.TunnelState) map[string]store.TunnelState {
 	out := map[string]store.TunnelState{}
 	for _, st := range states {
-		key := pairStateKey(st.DeviceID, st.PeerID)
+		key := pairStateKey(st.DeviceID, st.PeerID, st.Profile)
 		if _, ok := out[key]; !ok {
 			out[key] = st
 		}
@@ -1461,11 +1475,11 @@ func latestStateByPair(states []store.TunnelState) map[string]store.TunnelState 
 	return out
 }
 
-func pairStateKey(a, b string) string {
+func pairStateKey(a, b, profile string) string {
 	if a <= b {
-		return a + "\x00" + b
+		return a + "\x00" + b + "\x00" + store.NormalizeProfile(profile)
 	}
-	return b + "\x00" + a
+	return b + "\x00" + a + "\x00" + store.NormalizeProfile(profile)
 }
 
 func normalizeRuntimeState(state, via string) string {
@@ -1612,11 +1626,11 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func pairKey(a, b string) string {
+func pairKey(a, b, profile string) string {
 	if a < b {
-		return a + "\x00" + b
+		return a + "\x00" + b + "\x00" + store.NormalizeProfile(profile)
 	}
-	return b + "\x00" + a
+	return b + "\x00" + a + "\x00" + store.NormalizeProfile(profile)
 }
 
 func cloneUDP(a *net.UDPAddr) *net.UDPAddr {

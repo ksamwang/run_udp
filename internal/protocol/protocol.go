@@ -19,12 +19,13 @@ const (
 
 type Message struct {
 	Type     string `json:"t"`
-	From     string `json:"f,omitempty"` // 自己的 ID
-	Name     string `json:"n,omitempty"` // 设备显示名
-	Peer     string `json:"p,omitempty"` // 对端 ID
-	Addr     string `json:"a,omitempty"` // 公网地址 ip:port（NAT 观察到的）
-	UpnpAddr string `json:"u,omitempty"` // UPnP 主动映射出的公网地址 ip:port（可选）
-	Payload  string `json:"d,omitempty"` // 业务载荷
+	From     string `json:"f,omitempty"`  // 自己的 ID
+	Name     string `json:"n,omitempty"`  // 设备显示名
+	Peer     string `json:"p,omitempty"`  // 对端 ID
+	Profile  string `json:"pr,omitempty"` // 隧道业务 profile
+	Addr     string `json:"a,omitempty"`  // 公网地址 ip:port（NAT 观察到的）
+	UpnpAddr string `json:"u,omitempty"`  // UPnP 主动映射出的公网地址 ip:port（可选）
+	Payload  string `json:"d,omitempty"`  // 业务载荷
 }
 
 func Encode(m *Message) ([]byte, error) {

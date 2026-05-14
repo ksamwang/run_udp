@@ -30,6 +30,7 @@ type Rule struct {
 	LocalPort int
 	Target    string // host:port
 	Name      string // 日志用
+	Profile   string
 }
 
 // ParseRule 解析 "LOCAL:HOST:PORT" 格式的字符串，例如 "13389:127.0.0.1:3389"。
@@ -83,6 +84,7 @@ func acceptLocalTCP(ln net.Listener, sess *smux.Session, r Rule) {
 
 func handleIngressConn(tc net.Conn, sess *smux.Session, r Rule) {
 	defer tc.Close()
+	tuneTCPConn(tc, r.Profile)
 	stream, err := sess.OpenStream()
 	if err != nil {
 		log.Printf("[forward] %s open stream failed: %v", r.Name, err)
@@ -90,8 +92,8 @@ func handleIngressConn(tc net.Conn, sess *smux.Session, r Rule) {
 	}
 	defer stream.Close()
 
-	// 写首行请求目标
-	if _, err := fmt.Fprintf(stream, "%s\n", r.Target); err != nil {
+	// 写首行请求目标和 profile。
+	if _, err := fmt.Fprintf(stream, "%s\t%s\n", r.Profile, r.Target); err != nil {
 		log.Printf("[forward] %s write target failed: %v", r.Name, err)
 		return
 	}
@@ -140,7 +142,7 @@ func handleEgressStream(stream *smux.Stream) {
 		return
 	}
 	stream.SetReadDeadline(time.Time{})
-	target := strings.TrimRight(line, "\r\n")
+	profile, target := parseStreamHeader(strings.TrimRight(line, "\r\n"))
 
 	// dial 本地目标
 	tc, err := net.DialTimeout("tcp", target, 5*time.Second)
@@ -150,6 +152,7 @@ func handleEgressStream(stream *smux.Stream) {
 		return
 	}
 	defer tc.Close()
+	tuneTCPConn(tc, profile)
 
 	if _, err := stream.Write([]byte("OK\n")); err != nil {
 		log.Printf("[forward/egress] write OK to %s failed: %v", target, err)
@@ -170,19 +173,44 @@ func bridge(tc net.Conn, stream *smux.Stream, br *bufio.Reader) {
 		if br != nil && br.Buffered() > 0 {
 			io.Copy(tc, io.LimitReader(br, int64(br.Buffered())))
 		}
-		io.Copy(tc, stream)
+		copyWithBuffer(tc, stream)
 		if halfCloser, ok := tc.(interface{ CloseWrite() error }); ok {
 			halfCloser.CloseWrite()
 		}
 		done <- struct{}{}
 	}()
 	go func() {
-		io.Copy(stream, tc)
+		copyWithBuffer(stream, tc)
 		stream.Close()
 		done <- struct{}{}
 	}()
 	<-done
 	<-done
+}
+
+func copyWithBuffer(dst io.Writer, src io.Reader) {
+	buf := make([]byte, 256*1024)
+	_, _ = io.CopyBuffer(dst, src, buf)
+}
+
+func parseStreamHeader(line string) (string, string) {
+	profile, target, ok := strings.Cut(line, "\t")
+	if !ok {
+		return "", line
+	}
+	return profile, target
+}
+
+func tuneTCPConn(conn net.Conn, profile string) {
+	if profile != "bulk" {
+		return
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcp.SetReadBuffer(4 * 1024 * 1024)
+	_ = tcp.SetWriteBuffer(4 * 1024 * 1024)
 }
 
 // ErrNoRules 当命令行未配置转发规则且未显式允许空配置时返回

@@ -24,12 +24,15 @@ func TestFrameRoundTrip(t *testing.T) {
 }
 
 func TestConvIDStableAndOrdered(t *testing.T) {
-	a := ConvID("secret", "A", "B")
-	b := ConvID("secret", "B", "A")
+	a := ConvID("secret", "A", "B", "interactive")
+	b := ConvID("secret", "B", "A", "interactive")
 	if a == 0 || a != b {
 		t.Fatalf("conv id should be non-zero and order independent: %d %d", a, b)
 	}
-	if a == ConvID("other", "A", "B") {
+	if a == ConvID("other", "A", "B", "interactive") {
 		t.Fatal("conv id should depend on psk")
+	}
+	if a == ConvID("secret", "A", "B", "bulk") {
+		t.Fatal("conv id should depend on profile")
 	}
 }
