@@ -21,6 +21,9 @@ func main() {
 	psk := fs.String("psk", cfg.PSK, "deployment pre-shared key")
 	adminPassword := fs.String("admin-password", cfg.AdminPassword, "initial admin password")
 	adminHash := fs.String("admin-password-hash", cfg.AdminPasswordHash, "bcrypt admin password hash")
+	adminJWTSecret := fs.String("admin-jwt-secret", cfg.AdminJWTSecret, "admin JWT signing secret")
+	adminAccessTokenTTL := fs.Duration("admin-access-token-ttl", cfg.AdminAccessTokenTTL, "admin access token TTL")
+	adminRefreshTokenTTL := fs.Duration("admin-refresh-token-ttl", cfg.AdminRefreshTokenTTL, "admin refresh token TTL")
 	peerTTL := fs.Duration("peer-ttl", cfg.PeerTTL, "peer TTL")
 	pairTTL := fs.Duration("pair-ttl", cfg.PairTTL, "pair TTL")
 	relayIdle := fs.Duration("relay-idle-timeout", cfg.RelayIdleTimeout, "relay idle timeout")
@@ -49,6 +52,15 @@ func main() {
 	}
 	if flagSet(fs, "admin-password-hash") {
 		cfg.AdminPasswordHash = *adminHash
+	}
+	if flagSet(fs, "admin-jwt-secret") {
+		cfg.AdminJWTSecret = *adminJWTSecret
+	}
+	if flagSet(fs, "admin-access-token-ttl") {
+		cfg.AdminAccessTokenTTL = *adminAccessTokenTTL
+	}
+	if flagSet(fs, "admin-refresh-token-ttl") {
+		cfg.AdminRefreshTokenTTL = *adminRefreshTokenTTL
 	}
 	if flagSet(fs, "peer-ttl") {
 		cfg.PeerTTL = *peerTTL

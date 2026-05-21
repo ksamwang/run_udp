@@ -85,6 +85,18 @@ type TunnelState struct {
 	UpdatedAt        string `json:"updated_at"`
 }
 
+type AdminRefreshToken struct {
+	ID         int64  `json:"id"`
+	UserID     string `json:"user_id"`
+	TokenHash  string `json:"-"`
+	ExpiresAt  string `json:"expires_at"`
+	RevokedAt  string `json:"revoked_at,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	UserAgent  string `json:"user_agent,omitempty"`
+	IP         string `json:"ip,omitempty"`
+}
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -162,6 +174,17 @@ func (s *Store) migrate(ctx context.Context) error {
 			last_transition_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (device_id, peer_id, profile)
+		);`,
+		`CREATE TABLE IF NOT EXISTS admin_refresh_tokens (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			expires_at TEXT NOT NULL,
+			revoked_at TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_used_at TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT '',
+			ip TEXT NOT NULL DEFAULT ''
 		);`,
 		`ALTER TABLE devices ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;`,
 		`ALTER TABLE tunnel_states ADD COLUMN nat_type TEXT NOT NULL DEFAULT '';`,
@@ -459,6 +482,35 @@ func (s *Store) LocalPortConflict(ctx context.Context, sourceID string, localPor
 
 func (s *Store) Audit(ctx context.Context, kind, detail string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(kind,detail) VALUES(?,?)`, kind, detail)
+	return err
+}
+
+func (s *Store) CreateAdminRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent, ip string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_refresh_tokens(user_id,token_hash,expires_at,user_agent,ip) VALUES(?,?,?,?,?)`,
+		userID, tokenHash, expiresAt.Format(time.RFC3339), userAgent, ip)
+	return err
+}
+
+func (s *Store) GetAdminRefreshToken(ctx context.Context, tokenHash string) (AdminRefreshToken, error) {
+	var t AdminRefreshToken
+	err := s.db.QueryRowContext(ctx, `SELECT id,user_id,token_hash,expires_at,revoked_at,created_at,last_used_at,user_agent,ip
+		FROM admin_refresh_tokens WHERE token_hash=?`, tokenHash).
+		Scan(&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.RevokedAt, &t.CreatedAt, &t.LastUsedAt, &t.UserAgent, &t.IP)
+	return t, err
+}
+
+func (s *Store) TouchAdminRefreshToken(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET last_used_at=CURRENT_TIMESTAMP WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) RevokeAdminRefreshToken(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=? AND revoked_at=''`, tokenHash)
+	return err
+}
+
+func (s *Store) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET revoked_at=CURRENT_TIMESTAMP WHERE revoked_at='' AND expires_at < ?`, cutoff.Format(time.RFC3339))
 	return err
 }
 

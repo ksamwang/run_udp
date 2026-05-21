@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"udp_tunnel_demo/internal/config"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/store"
@@ -365,6 +367,47 @@ func TestHandleClientRelease(t *testing.T) {
 	}
 }
 
+func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
+	a := newTestApp(t)
+	pass := "secret-pass"
+	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutMeta(context.Background(), "admin_password_hash", string(hash)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"password": pass}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var loginResp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &loginResp); err != nil {
+		t.Fatal(err)
+	}
+	if loginResp.AccessToken == "" || loginResp.RefreshToken == "" {
+		t.Fatalf("missing tokens: %+v", loginResp)
+	}
+
+	rec = doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/me", nil, map[string]string{"Authorization": "Bearer " + loginResp.AccessToken})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/refresh", map[string]any{"refresh_token": loginResp.RefreshToken}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var refreshResp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &refreshResp); err != nil {
+		t.Fatal(err)
+	}
+	if refreshResp.AccessToken == "" || refreshResp.RefreshToken == "" || refreshResp.RefreshToken == loginResp.RefreshToken {
+		t.Fatalf("bad refresh response: %+v", refreshResp)
+	}
+}
+
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "server-test.db"))
@@ -407,6 +450,17 @@ func doAgentJSON(t *testing.T, h http.Handler, method, path string, body any) *h
 	t.Helper()
 	req := newJSONRequest(t, method, path, body)
 	req.Header.Set("X-UDP-Tunnel-PSK", "test-psk")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func doJSON(t *testing.T, h http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newJSONRequest(t, method, path, body)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

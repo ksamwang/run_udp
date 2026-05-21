@@ -4,6 +4,12 @@
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
   "admin_password": "change-me",
+  "admin_jwt_secret": "change-this-admin-jwt-secret",
+  "admin_access_token_ttl": "1h",
+  "admin_refresh_token_ttl": "720h",
+  "admin_allowed_origins": [
+    "http://localhost:5173"
+  ],
   "psk": "change-this-deployment-secret",
   "peer_ttl": "90s",
   "pair_ttl": "2m",

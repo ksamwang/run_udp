@@ -423,10 +423,14 @@ func (a *App) runHTTP() {
 	}
 }
 
-func (a *App) httpMux() *http.ServeMux {
+func (a *App) httpMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", a.handleHealth)
 	mux.HandleFunc("/peers", a.handlePeers)
+	mux.HandleFunc("/api/admin/auth/login", a.handleAdminLogin)
+	mux.HandleFunc("/api/admin/auth/refresh", a.handleAdminRefresh)
+	mux.HandleFunc("/api/admin/auth/logout", a.handleAdminLogout)
+	mux.HandleFunc("/api/admin/me", a.requireAdmin(a.handleAdminMe))
 	mux.HandleFunc("/api/login", a.handleLogin)
 	mux.HandleFunc("/api/logout", a.requireWeb(a.handleLogout))
 	mux.HandleFunc("/api/me", a.requireWeb(a.handleMe))
@@ -447,7 +451,7 @@ func (a *App) httpMux() *http.ServeMux {
 	mux.HandleFunc("/api/client/release", a.requireAgent(a.handleClientRelease))
 	mux.HandleFunc("/downloads/client/installer", a.handleClientInstaller)
 	mux.Handle("/", a.staticHandler())
-	return mux
+	return a.withCORS(mux)
 }
 
 func (a *App) staticHandler() http.Handler {
