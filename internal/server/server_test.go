@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bytes"
@@ -365,7 +365,7 @@ func TestHandleClientRelease(t *testing.T) {
 	}
 }
 
-func newTestApp(t *testing.T) *app {
+func newTestApp(t *testing.T) *App {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "server-test.db"))
 	if err != nil {
@@ -374,7 +374,7 @@ func newTestApp(t *testing.T) *app {
 	t.Cleanup(func() { _ = db.Close() })
 	cfg := config.DefaultServer()
 	cfg.PSK = "test-psk"
-	return &app{
+	return &App{
 		cfg:       cfg,
 		db:        db,
 		startTime: time.Now(),
@@ -384,7 +384,7 @@ func newTestApp(t *testing.T) *app {
 	}
 }
 
-func mustUpsertDevice(t *testing.T, a *app, ctx context.Context, id string, enabled bool) {
+func mustUpsertDevice(t *testing.T, a *App, ctx context.Context, id string, enabled bool) {
 	t.Helper()
 	if err := a.db.UpsertDevice(ctx, id, id, "", "", "", true); err != nil {
 		t.Fatal(err)
