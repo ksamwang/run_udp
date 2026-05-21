@@ -8,6 +8,14 @@
 
 UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvous / STUN / TURN、SQLite 控制面和 Web 管理页；客户端作为 Windows agent 常驻运行，从控制面拉取转发规则，优先 P2P 打洞，失败后自动走服务器中继。
 
+### 项目结构
+
+- `cmd/server`：服务端可执行程序入口，包含 UDP rendezvous、relay、HTTP API 和内嵌 Web 管理页
+- `cmd/client`：Windows 客户端可执行程序入口，包含 agent、托盘、服务、配置页和更新逻辑
+- `internal`：仓库内复用的业务模块，包括配置、协议、加密帧、KCP 隧道、TCP 转发、SQLite 存储和 UPnP
+- `installer`：Windows 客户端安装包脚本
+- `dist`：本地构建输出目录
+
 ### 部署说明
 
 #### 最小上线流程
@@ -218,6 +226,14 @@ build-all.bat
 ### Overview
 
 UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvous / STUN / TURN, an SQLite-backed control plane, and a Web UI. The Windows client runs as a resident agent, pulls forwarding rules from the control plane, prefers P2P hole punching, and falls back to server relay when needed.
+
+### Project Layout
+
+- `cmd/server`: server executable entrypoint with UDP rendezvous, relay, HTTP API, and embedded Web UI
+- `cmd/client`: Windows client executable entrypoint with agent, tray, service, settings page, and update logic
+- `internal`: repository-private reusable modules for config, protocol, secure frames, KCP tunneling, TCP forwarding, SQLite storage, and UPnP
+- `installer`: Windows client installer script
+- `dist`: local build output directory
 
 ### Deployment
 
