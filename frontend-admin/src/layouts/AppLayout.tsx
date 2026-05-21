@@ -6,10 +6,13 @@ const { Header, Sider, Content } = Layout
 
 type AppLayoutProps = {
   children: ReactNode
+  activePage: string
+  pageTitle: string
+  onPageChange: (page: string) => void
   onLogout: () => void
 }
 
-export function AppLayout({ children, onLogout }: AppLayoutProps) {
+export function AppLayout({ children, activePage, pageTitle, onPageChange, onLogout }: AppLayoutProps) {
   return (
     <Layout className="app-shell">
       <Sider width={232} className="app-sider">
@@ -19,7 +22,8 @@ export function AppLayout({ children, onLogout }: AppLayoutProps) {
         </div>
         <Menu
           mode="inline"
-          selectedKeys={['dashboard']}
+          selectedKeys={[activePage]}
+          onClick={({ key }) => onPageChange(key)}
           items={[
             { key: 'dashboard', icon: <DashboardOutlined />, label: '总览' },
             { key: 'devices', icon: <TeamOutlined />, label: '设备' },
@@ -31,7 +35,7 @@ export function AppLayout({ children, onLogout }: AppLayoutProps) {
       <Layout>
         <Header className="app-header">
           <Typography.Title level={4} className="page-title">
-            总览
+            {pageTitle}
           </Typography.Title>
           <Space>
             <Typography.Text type="secondary">admin</Typography.Text>

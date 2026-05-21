@@ -985,6 +985,13 @@ func (a *App) handleClientInstaller(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) requireWeb(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if token := bearerToken(r); token != "" {
+			claims, err := a.verifyAccessToken(token)
+			if err == nil && claims.Subject == adminUserID {
+				next(w, r.WithContext(context.WithValue(r.Context(), adminClaimsKey{}, claims)))
+				return
+			}
+		}
 		c, err := r.Cookie("udp_tunnel_session")
 		if err != nil || !a.validSession(c.Value) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

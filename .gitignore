@@ -10,6 +10,9 @@
 # 日志
 *.log
 
+# 本地运行数据库
+udp-tunnel.db*
+
 # IDE
 .vscode/
 .idea/

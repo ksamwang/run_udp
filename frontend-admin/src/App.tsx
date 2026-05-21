@@ -6,11 +6,21 @@ import { getMe } from './api/metrics'
 import { logout } from './api/client'
 import { AppLayout } from './layouts/AppLayout'
 import { DashboardPage } from './pages/DashboardPage'
+import { DevicesPage } from './pages/DevicesPage'
 import { LoginPage } from './pages/LoginPage'
+import { RulesPage } from './pages/RulesPage'
+
+const pageTitles: Record<string, string> = {
+  dashboard: '总览',
+  devices: '设备',
+  rules: '转发规则',
+  settings: '设置',
+}
 
 export default function App() {
   const queryClient = useQueryClient()
   const [authenticated, setAuthenticated] = useState(hasAuth())
+  const [activePage, setActivePage] = useState('dashboard')
   const me = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
@@ -44,13 +54,24 @@ export default function App() {
   return (
     <AntApp>
       <AppLayout
+        activePage={activePage}
+        pageTitle={pageTitles[activePage] || '总览'}
+        onPageChange={setActivePage}
         onLogout={async () => {
           await logout()
           queryClient.clear()
           setAuthenticated(false)
         }}
       >
-        <DashboardPage />
+        {activePage === 'dashboard' && <DashboardPage />}
+        {activePage === 'devices' && <DevicesPage />}
+        {activePage === 'rules' && <RulesPage />}
+        {activePage === 'settings' && (
+          <div className="page-stack">
+            <h2>设置</h2>
+            <p>设置页将在下一阶段接入。</p>
+          </div>
+        )}
       </AppLayout>
     </AntApp>
   )

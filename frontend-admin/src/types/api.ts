@@ -30,3 +30,36 @@ export type HealthResponse = {
   metrics: Metrics
   server_time: string
 }
+
+export type Device = {
+  id: string
+  name: string
+  addr: string
+  upnp_addr?: string
+  want?: string
+  online: boolean
+  enabled: boolean
+  last_seen: string
+  created_at: string
+  health_summary?: string
+  last_error?: string
+}
+
+export type ForwardRule = {
+  id: number
+  name: string
+  source_id: string
+  target_id: string
+  profile: string
+  local_port: number
+  target_host: string
+  target_port: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  runtime_state?: string
+  last_error?: string
+  last_updated_at?: string
+  attempt?: number
+  next_retry_at?: string
+}
