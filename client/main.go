@@ -316,6 +316,14 @@ func main() {
 	if st, err := queryWindowsServiceStatus(); err == nil {
 		appRuntime.SetServiceStatus(st)
 	}
+	if *serviceMode {
+		if err := runWindowsService(func(ctx context.Context) {
+			runServiceAgent(ctx, cfg, *configPath, *altPort)
+		}); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *updaterMode {
 		if err := runUpdaterHelper(*updatePackage); err != nil {
 			log.Fatal(err)
@@ -365,14 +373,6 @@ func main() {
 		return
 	}
 	natResult := autoDetectNAT(runtimeCfg, bootstrapAltPort)
-	if *serviceMode {
-		if err := runWindowsService(func(ctx context.Context) {
-			runAgentLoop(ctx, runtimeCfg, *configPath, natResult, bootstrapAltPort, newUpdateManager(runtimeCfg, *configPath, true))
-		}); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
 	if *checkUpdatesFlag {
 		if _, err := checkForUpdates(runtimeCfg, *configPath, false); err != nil {
 			log.Fatal(err)
@@ -391,6 +391,46 @@ func main() {
 		log.Printf("[%s] tunnel stopped: %v", runtimeCfg.DeviceID, err)
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func runServiceAgent(ctx context.Context, cfg config.Client, configPath string, altPort int) {
+	if needsBootstrapConfig(cfg, false, false) {
+		log.Printf("[%s] service config incomplete: server_http=%q psk_set=%v", cfg.DeviceID, cfg.ServerHTTP, cfg.PSK != "")
+		<-ctx.Done()
+		return
+	}
+
+	runtimeCfg := cfg
+	bootstrapAltPort := altPort
+	if cfg.ServerHTTP != "" {
+		if resp, err := agentBootstrap(cfg); err != nil {
+			if cfg.Server == "" {
+				log.Printf("[%s] bootstrap failed: %v", cfg.DeviceID, err)
+				<-ctx.Done()
+				return
+			}
+		} else {
+			merged, err := mergeBootstrap(cfg, resp)
+			if err != nil {
+				log.Printf("[%s] bad bootstrap config: %v", cfg.DeviceID, err)
+				<-ctx.Done()
+				return
+			}
+			runtimeCfg = merged
+			bootstrapAltPort = resp.STUNAltPort
+		}
+	}
+	if runtimeCfg.DeviceID != cfg.DeviceID {
+		log.Printf("[%s] bootstrap updated device_id -> %s", cfg.DeviceID, runtimeCfg.DeviceID)
+	}
+	if runtimeCfg.Server == "" {
+		log.Printf("[%s] runtime server is empty after bootstrap", runtimeCfg.DeviceID)
+		<-ctx.Done()
+		return
+	}
+
+	natResult := autoDetectNAT(runtimeCfg, bootstrapAltPort)
+	runAgentLoop(ctx, runtimeCfg, configPath, natResult, bootstrapAltPort, newUpdateManager(runtimeCfg, configPath, true))
 }
 
 func needsBootstrapConfig(cfg config.Client, probeMode bool, explicitPeer bool) bool {

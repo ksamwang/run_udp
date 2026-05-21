@@ -70,8 +70,18 @@ func installWindowsService(exePath, configPath string) error {
 	}
 	defer m.Disconnect()
 	if s, err := m.OpenService(windowsServiceName); err == nil {
-		s.Close()
-		return nil
+		defer s.Close()
+		cfg, err := s.Config()
+		if err != nil {
+			return err
+		}
+		cfg.DisplayName = windowsServiceName
+		cfg.StartType = mgr.StartAutomatic
+		cfg.BinaryPathName = serviceBinaryPath(exePath, configPath)
+		if err := s.UpdateConfig(cfg); err != nil {
+			return err
+		}
+		return setServiceRecovery(windowsServiceName)
 	}
 	s, err := m.CreateService(windowsServiceName, exePath, mgr.Config{
 		DisplayName: windowsServiceName,
@@ -85,6 +95,10 @@ func installWindowsService(exePath, configPath string) error {
 		return err
 	}
 	return nil
+}
+
+func serviceBinaryPath(exePath, configPath string) string {
+	return fmt.Sprintf("%q -service -config %q", exePath, configPath)
 }
 
 func uninstallWindowsService() error {
