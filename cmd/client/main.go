@@ -285,6 +285,11 @@ func main() {
 			if err := ensureTrayStartup(exePath, configAbs); err != nil {
 				log.Fatal(err)
 			}
+			if isServiceInteractive() {
+				if err := spawnTrayHelper(exePath, configAbs); err != nil {
+					log.Printf("start tray helper failed: %v", err)
+				}
+			}
 			return
 		case *uninstallService:
 			_ = removeTrayStartup()
@@ -295,6 +300,11 @@ func main() {
 		case *startServiceFlag:
 			if err := startWindowsService(); err != nil {
 				log.Fatal(err)
+			}
+			if isServiceInteractive() {
+				if err := spawnTrayHelper(exePath, configAbs); err != nil {
+					log.Printf("start tray helper failed: %v", err)
+				}
 			}
 			return
 		case *stopServiceFlag:
@@ -313,7 +323,7 @@ func main() {
 		log.Fatal(err)
 	}
 	logPath := setupLogging(cfg.DeviceID)
-	logStartup(cfg, *configPath, logPath, *agent, *probe)
+	logStartup(cfg, *configPath, logPath, clientMode(cfg, *agent, *probe, *trayMode, *serviceMode))
 	if st, err := queryWindowsServiceStatus(); err == nil {
 		appRuntime.SetServiceStatus(st)
 	}

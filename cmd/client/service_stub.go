@@ -18,6 +18,7 @@ func stopWindowsService() error                              { return errors.New
 func restartWindowsService() error                           { return errors.New("windows only") }
 func queryWindowsServiceStatus() (string, error)             { return "unsupported", nil }
 func ensureTrayStartup(exePath, configPath string) error     { return nil }
+func spawnTrayHelper(exePath, configPath string) error       { return nil }
 func removeTrayStartup() error                               { return nil }
 func openLogs() error                                        { return errors.New("windows only") }
 func isServiceInteractive() bool                             { return true }

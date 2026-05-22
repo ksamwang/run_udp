@@ -200,6 +200,12 @@ func ensureTrayStartup(exePath, configPath string) error {
 	return k.SetStringValue(windowsRunKeyName, cmd)
 }
 
+func spawnTrayHelper(exePath, configPath string) error {
+	cmd := exec.Command(exePath, "-tray", "-config", configPath)
+	cmd.Dir = filepath.Dir(exePath)
+	return cmd.Start()
+}
+
 func removeTrayStartup() error {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
 	if err != nil {

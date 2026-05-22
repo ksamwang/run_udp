@@ -187,6 +187,20 @@ func TestShouldRunBootstrapTrayOnlyForInteractiveAgent(t *testing.T) {
 	}
 }
 
+func TestClientModeDistinguishesTrayAndService(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	if got := clientMode(cfg, false, false, true, false); got != "tray" {
+		t.Fatalf("tray mode=%q", got)
+	}
+	if got := clientMode(cfg, false, false, false, true); got != "service" {
+		t.Fatalf("service mode=%q", got)
+	}
+	if got := clientMode(cfg, false, false, false, false); got != "agent" {
+		t.Fatalf("implicit agent mode=%q", got)
+	}
+}
+
 func TestMergeBootstrapAppliesServerPSK(t *testing.T) {
 	local := config.DefaultClient()
 	local.ServerHTTP = "http://old.example.com"

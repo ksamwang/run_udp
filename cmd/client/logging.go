@@ -41,13 +41,9 @@ func setupLogging(deviceID string) string {
 	return logPath
 }
 
-func logStartup(cfg config.Client, configPath, logPath string, agent, probe bool) {
-	mode := "demo"
-	switch {
-	case probe:
-		mode = "probe"
-	case agent || (cfg.ServerHTTP != "" && cfg.PeerID == ""):
-		mode = "agent"
+func logStartup(cfg config.Client, configPath, logPath, mode string) {
+	if mode == "" {
+		mode = "demo"
 	}
 	log.Printf("[%s] ====== udp-tunnel client startup ======", cfg.DeviceID)
 	log.Printf("[%s] mode=%s config=%s log=%s", cfg.DeviceID, mode, configPath, logPath)
@@ -62,6 +58,21 @@ func logStartup(cfg config.Client, configPath, logPath string, agent, probe bool
 	if len(cfg.Forwards) > 0 {
 		log.Printf("[%s] cmdline forwards=%v", cfg.DeviceID, cfg.Forwards)
 	}
+}
+
+func clientMode(cfg config.Client, agent, probe, tray, service bool) string {
+	mode := "demo"
+	switch {
+	case service:
+		mode = "service"
+	case tray:
+		mode = "tray"
+	case probe:
+		mode = "probe"
+	case agent || (cfg.ServerHTTP != "" && cfg.PeerID == ""):
+		mode = "agent"
+	}
+	return mode
 }
 
 // rulesSignature 返回一份稳定的、可比较的规则摘要，用来检测控制面规则是否变化。
