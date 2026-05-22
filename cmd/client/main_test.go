@@ -155,3 +155,19 @@ func TestClientConfigUIPostClearsServerManagedFields(t *testing.T) {
 		t.Fatalf("server-managed fields should be cleared before save: %+v", saved)
 	}
 }
+
+func TestStableDeviceIDFromMachineUUID(t *testing.T) {
+	uuid := "4C4C4544-0038-3510-8050-B9C04F4E3332"
+	first := stableDeviceID(uuid)
+	second := stableDeviceID(uuid)
+	other := stableDeviceID("4C4C4544-0038-3510-8050-B9C04F4E3333")
+	if first == "" || first != second {
+		t.Fatalf("device id should be stable, first=%q second=%q", first, second)
+	}
+	if first == other {
+		t.Fatalf("different UUIDs should produce different ids: %q", first)
+	}
+	if len(first) != len("dev-")+16 || first[:4] != "dev-" {
+		t.Fatalf("unexpected id format: %q", first)
+	}
+}

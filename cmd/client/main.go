@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -1394,11 +1394,20 @@ func ensureLocalIdentity(cfg *config.Client, configPath string) error {
 }
 
 func generateDeviceID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "dev-" + strings.ToLower(strings.ReplaceAll(time.Now().UTC().Format("20060102150405"), " ", ""))
+	if id := stableDeviceID(machineUUID()); id != "" {
+		return id
 	}
-	return "dev-" + strings.ToLower(hex.EncodeToString(b[:]))
+	return stableDeviceID(defaultDeviceName())
+}
+
+func stableDeviceID(seed string) string {
+	seed = strings.ToLower(strings.TrimSpace(seed))
+	if seed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(seed))
+	encoded := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:])
+	return "dev-" + strings.ToLower(encoded[:16])
 }
 
 func agentBootstrap(cfg config.Client) (bootstrapResponse, error) {
