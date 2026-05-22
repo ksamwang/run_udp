@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"udp_tunnel_demo/internal/lan"
@@ -23,6 +27,13 @@ func main() {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	configPath := fs.String("config", "lan.json", "LAN client config file")
 	serverHTTP := fs.String("server-http", "", "control plane HTTP URL")
+	serviceMode := fs.Bool("service", false, "run as Windows service")
+	trayMode := fs.Bool("tray", false, "run tray helper")
+	installService := fs.Bool("install-service", false, "install Windows service")
+	uninstallService := fs.Bool("uninstall-service", false, "uninstall Windows service")
+	startServiceFlag := fs.Bool("start-service", false, "start Windows service")
+	stopServiceFlag := fs.Bool("stop-service", false, "stop Windows service")
+	restartServiceFlag := fs.Bool("restart-service", false, "restart Windows service")
 	wintunPOC := fs.Bool("wintun-poc", false, "create/configure Wintun adapter and wait briefly")
 	wintunIP := fs.String("wintun-ip", "172.16.10.250", "Wintun PoC IPv4 address")
 	wintunCIDR := fs.String("wintun-cidr", "172.16.10.0/24", "Wintun PoC IPv4 route CIDR")
@@ -34,21 +45,72 @@ func main() {
 		return
 	}
 
-	log.Printf("%s is a placeholder entrypoint for the virtual LAN product line", lan.ServiceName)
-	log.Printf("service=%s tray=%q", lan.ServiceName, lan.TrayName)
-	log.Printf("config=%s server_http=%s version=%s commit=%s build_time=%s", *configPath, *serverHTTP, Version, Commit, BuildTime)
-	log.Printf("device_id=%s", lan.DeviceID())
-	identity, err := lan.LoadOrCreateIdentity(*configPath)
-	if err != nil {
-		log.Fatalf("LAN identity failed: %v", err)
+	configAbs := resolveConfigPath(*configPath)
+	if *installService || *uninstallService || *startServiceFlag || *stopServiceFlag || *restartServiceFlag {
+		exePath := currentExePath()
+		switch {
+		case *installService:
+			must(installWindowsService(exePath, configAbs))
+			must(ensureTrayStartup(exePath, configAbs))
+		case *uninstallService:
+			_ = stopWindowsService()
+			must(uninstallWindowsService())
+			must(removeTrayStartup())
+		case *startServiceFlag:
+			must(startWindowsService())
+		case *stopServiceFlag:
+			must(stopWindowsService())
+		case *restartServiceFlag:
+			must(restartWindowsService())
+		}
+		return
 	}
-	log.Printf("lan_identity_algorithm=%s public_key=%s", identity.Algorithm, identity.PublicKey)
-	if *wintunPOC {
-		if err := runWintunPOC(*wintunIP, *wintunCIDR, *wintunMTU); err != nil {
-			log.Fatalf("Wintun PoC failed: %v", err)
+
+	logPath := setupLogging()
+	if *trayMode {
+		logStartup(configAbs, *serverHTTP, logPath, "tray")
+		runTray(lan.DeviceID(), *serverHTTP, "", trayActions{
+			OpenLogs: openLogs,
+			Restart:  func() error { return spawnServiceCommand("-restart-service") },
+		}, func() {})
+		return
+	}
+
+	run := func(ctx context.Context) {
+		logStartup(configAbs, *serverHTTP, logPath, modeName(*serviceMode))
+		if err := runLAN(ctx, configAbs, *serverHTTP, *wintunPOC, *wintunIP, *wintunCIDR, *wintunMTU); err != nil {
+			log.Printf("LAN runtime stopped: %v", err)
 		}
 	}
-	log.Printf("virtual LAN runtime is not implemented yet; see task.md")
+	if *serviceMode {
+		must(runWindowsService(run))
+		return
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	run(ctx)
+}
+
+func runLAN(ctx context.Context, configPath, serverHTTP string, wintunPOC bool, wintunIP, wintunCIDR string, wintunMTU int) error {
+	log.Printf("%s runtime starting", lan.ServiceName)
+	log.Printf("service=%s tray=%q", lan.ServiceName, lan.TrayName)
+	log.Printf("config=%s server_http=%s version=%s commit=%s build_time=%s", configPath, serverHTTP, Version, Commit, BuildTime)
+	log.Printf("device_id=%s", lan.DeviceID())
+	identity, err := lan.LoadOrCreateIdentity(configPath)
+	if err != nil {
+		return fmt.Errorf("LAN identity failed: %w", err)
+	}
+	log.Printf("lan_identity_algorithm=%s public_key=%s", identity.Algorithm, identity.PublicKey)
+	if wintunPOC {
+		if err := runWintunPOC(wintunIP, wintunCIDR, wintunMTU); err != nil {
+			return fmt.Errorf("Wintun PoC failed: %w", err)
+		}
+	}
+	log.Printf("virtual LAN runtime is not implemented yet; service remains alive for installer/runtime validation")
+	<-ctx.Done()
+	log.Printf("LAN runtime shutdown requested")
+	return nil
 }
 
 func runWintunPOC(ip, cidr string, mtu int) error {
@@ -84,4 +146,71 @@ func runWintunPOC(ip, cidr string, mtu int) error {
 	log.Printf("Wintun PoC ready: adapter=%q ip=%s cidr=%s mtu=%d", wintun.DefaultAdapterName, ip, cidr, mtu)
 	time.Sleep(3 * time.Second)
 	return wintun.Cleanup(wintun.Config{Name: wintun.DefaultAdapterName, CIDR: cidr})
+}
+
+func setupLogging() string {
+	dir, err := exeDir()
+	if err != nil {
+		dir = "."
+	}
+	logPath := filepath.Join(dir, "UDPTunnelLAN.log")
+	prevPath := logPath + ".1"
+	if _, err := os.Stat(logPath); err == nil {
+		_ = os.Remove(prevPath)
+		_ = os.Rename(logPath, prevPath)
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("open log file failed: %v", err)
+		return logPath
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	setRuntimeLogPath(logPath)
+	return logPath
+}
+
+func logStartup(configPath, serverHTTP, logPath, mode string) {
+	log.Printf("====== %s startup ======", lan.ServiceName)
+	log.Printf("mode=%s os=%s/%s config=%s log=%s", mode, runtime.GOOS, runtime.GOARCH, configPath, logPath)
+	log.Printf("server_http=%q version=%s commit=%s build_time=%s", serverHTTP, Version, Commit, BuildTime)
+}
+
+func modeName(service bool) string {
+	if service {
+		return "service"
+	}
+	return "interactive"
+}
+
+func resolveConfigPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	if dir, err := exeDir(); err == nil {
+		return filepath.Join(dir, path)
+	}
+	return path
+}
+
+func currentExePath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return os.Args[0]
+	}
+	return exe
+}
+
+func exeDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(exe), nil
+}
+
+func must(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
 }

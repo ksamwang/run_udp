@@ -59,8 +59,11 @@ copy /Y lan.json.example "%DIST%\lan.json.example" >nul
 
 copy /Y .env.example "%DIST%\.env.example" >nul
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
-  echo === Building installer ^(Inno Setup^) ===
+  echo === Building client installer ^(Inno Setup^) ===
   "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=%VERSION% /DMySourceDir="%DIST%" installer\client.iss
+  if errorlevel 1 goto :fail
+  echo === Building LAN installer ^(Inno Setup^) ===
+  "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=%VERSION% /DMySourceDir="%DIST%" installer\lan.iss
   if errorlevel 1 goto :fail
 ) else (
   echo WARN: Inno Setup compiler not found, skipping installer build
@@ -77,6 +80,9 @@ if exist "installer\Output\udp-tunnel-client-%VERSION%-setup.exe" (
   "notes":"",^
   "minimum_supported_version":""^
 }
+)
+if exist "installer\Output\udp-tunnel-lan-%VERSION%-setup.exe" (
+  copy /Y "installer\Output\udp-tunnel-lan-%VERSION%-setup.exe" "%DIST%\udp-tunnel-lan-%VERSION%-setup.exe" >nul
 )
 
 echo.

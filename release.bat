@@ -76,6 +76,7 @@ if errorlevel 1 exit /b 1
 
 set ASSETS="%FRONTEND_ZIP%" "%SERVER_ZIP%" "%CLIENT_ZIP%" "%LAN_ZIP%"
 if exist "%DIST%\udp-tunnel-client-%VERSION%-setup.exe" set ASSETS=%ASSETS% "%DIST%\udp-tunnel-client-%VERSION%-setup.exe"
+if exist "%DIST%\udp-tunnel-lan-%VERSION%-setup.exe" set ASSETS=%ASSETS% "%DIST%\udp-tunnel-lan-%VERSION%-setup.exe"
 if exist "%DIST%\latest.json" set ASSETS=%ASSETS% "%DIST%\latest.json"
 
 echo === Creating git tag %TAG% ===
