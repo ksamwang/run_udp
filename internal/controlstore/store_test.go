@@ -21,8 +21,9 @@ func TestMySQLStoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	t.Cleanup(func() { cleanupMySQL(t, s.(*MySQLStore)) })
 	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { cleanupMySQL(t, s.(*MySQLStore)) })
+	cleanupMySQL(t, s.(*MySQLStore))
 
 	if err := exerciseStore(ctx, s); err != nil {
 		t.Fatal(err)
