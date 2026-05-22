@@ -187,9 +187,12 @@ client.exe -config client.json -agent
 
 客户端启动后可从 Windows 托盘打开：
 
-- `Open Control Plane`：打开管理后台入口
-- `Client Settings`：打开本机引导配置页，只维护 `server_http`、`device_name`、`psk`
-- `Exit`：退出客户端
+- `打开管理后台`：打开 Web 管理后台
+- `客户端配置`：打开本机引导配置页，只维护 `server_http`、`device_name`、`psk`
+- `打开日志目录`：打开客户端日志目录
+- `重启服务`：重启 Windows 服务
+- `检查更新`：立即检查客户端更新
+- `退出托盘`：退出托盘助手
 
 #### 调试模式
 
@@ -447,9 +450,12 @@ Then connect from the source device to:
 
 Once started, the Windows tray provides:
 
-- `Open Control Plane`
-- `Client Settings`: opens the local bootstrap settings page for `server_http`, `device_name`, and `psk`
-- `Exit`
+- `打开管理后台`: opens the Web admin console
+- `客户端配置`: opens the local bootstrap settings page for `server_http`, `device_name`, and `psk`
+- `打开日志目录`: opens the client log directory
+- `重启服务`: restarts the Windows service
+- `检查更新`: checks for client updates
+- `退出托盘`: exits the tray helper
 
 #### Debug mode
 

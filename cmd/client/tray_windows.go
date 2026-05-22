@@ -20,22 +20,22 @@ func runTray(deviceID, controlURL, configURL string, actions trayActions, quit f
 	systray.Run(func() {
 		systray.SetIcon(trayIconICO())
 		systray.SetTitle("UDP Tunnel")
-		systray.SetTooltip("UDP Tunnel agent: " + deviceID)
-		label := "Device: " + deviceID
+		systray.SetTooltip("UDP Tunnel 客户端：" + deviceID)
+		label := "设备：" + deviceID
 		if actions.RuntimeStatus != nil {
 			label += " [" + actions.RuntimeStatus() + "]"
 		}
-		status := systray.AddMenuItem(label, "Current device")
+		status := systray.AddMenuItem(label, "当前设备")
 		status.Disable()
-		version := systray.AddMenuItem("Version: "+Version, "Current client version")
+		version := systray.AddMenuItem("版本："+Version, "当前客户端版本")
 		version.Disable()
-		open := systray.AddMenuItem("Open Control Plane", "Open web management")
-		config := systray.AddMenuItem("Client Settings", "Open local client settings")
-		logs := systray.AddMenuItem("Open Logs", "Open log directory")
-		restart := systray.AddMenuItem("Restart Service", "Restart Windows service")
-		updates := systray.AddMenuItem("Check for Updates", "Check for updates now")
+		open := systray.AddMenuItem("打开管理后台", "打开 Web 管理后台")
+		config := systray.AddMenuItem("客户端配置", "打开本机引导配置页")
+		logs := systray.AddMenuItem("打开日志目录", "打开客户端日志目录")
+		restart := systray.AddMenuItem("重启服务", "重启 Windows 服务")
+		updates := systray.AddMenuItem("检查更新", "立即检查客户端更新")
 		systray.AddSeparator()
-		exit := systray.AddMenuItem("Exit Tray", "Exit tray helper")
+		exit := systray.AddMenuItem("退出托盘", "退出托盘助手")
 		go func() {
 			for {
 				select {
