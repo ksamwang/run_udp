@@ -63,6 +63,29 @@ func TestHandleForwardsValidationErrors(t *testing.T) {
 	}
 }
 
+func TestCORSAllowsAnyOriginAndHeaders(t *testing.T) {
+	a := newTestApp(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/api/admin/auth/login", nil)
+	req.Header.Set("Origin", "https://admin.tunnel.wanglv.top")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,x-custom-header")
+	a.httpMux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("allow origin=%q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "*" {
+		t.Fatalf("allow headers=%q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatal("allow methods should be set")
+	}
+}
+
 func TestHandleForwardsLocalPortConflict(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

@@ -31,6 +31,8 @@ func (a *App) ginCORS() gin.HandlerFunc {
 
 func setCORSHeaders(h http.Header) {
 	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-UDP-Tunnel-PSK")
+	h.Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "*")
+	h.Set("Access-Control-Expose-Headers", "*")
+	h.Set("Access-Control-Max-Age", "86400")
 }
