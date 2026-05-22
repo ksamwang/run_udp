@@ -153,6 +153,21 @@ func (a *App) handleAdminLANACLRule(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		states, err := a.db.ListVirtualPeerStates(r.Context(), networkID)
+		writeJSONOrError(w, states, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
 func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID     string   `json:"device_id"`

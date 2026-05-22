@@ -1,4 +1,4 @@
-import { DashboardOutlined, HistoryOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined } from '@ant-design/icons'
+import { ApartmentOutlined, DashboardOutlined, HistoryOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined } from '@ant-design/icons'
 import { Button, Layout, Menu, Space, Typography } from 'antd'
 import type { ReactNode } from 'react'
 import type { AdminUser } from '../types/api'
@@ -32,6 +32,7 @@ export function AppLayout({ children, activePage, pageTitle, user, lockedToSetti
             { key: 'devices', icon: <TeamOutlined />, label: '设备', disabled: Boolean(lockedToSettings) },
             { key: 'rules', icon: <SwapOutlined />, label: '转发规则', disabled: Boolean(lockedToSettings) },
             { key: 'sessions', icon: <HistoryOutlined />, label: '会话', disabled: Boolean(lockedToSettings) },
+            { key: 'lan', icon: <ApartmentOutlined />, label: '虚拟局域网', disabled: Boolean(lockedToSettings) },
             { key: 'settings', icon: <SettingOutlined />, label: '设置' },
           ]}
         />

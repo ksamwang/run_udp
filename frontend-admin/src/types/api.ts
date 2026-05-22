@@ -133,3 +133,61 @@ export type Settings = {
   client_release_file: string
   restart_only_fields?: string[]
 }
+
+export type VirtualNetwork = {
+  id: number
+  name: string
+  cidr: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type VirtualAddress = {
+  device_id: string
+  network_id: number
+  virtual_ip: string
+  hostname: string
+  dns_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type VirtualACLRule = {
+  id: number
+  network_id: number
+  source_device_id: string
+  source_group_id: string
+  target_device_id: string
+  target_group_id: string
+  protocol: string
+  port_start: number
+  port_end: number
+  action: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type VirtualACLRulePayload = Omit<VirtualACLRule, 'id' | 'created_at' | 'updated_at'>
+
+export type VirtualPeerState = {
+  device_id: string
+  peer_id: string
+  network_id: number
+  state: string
+  path: string
+  adapter_state: string
+  route_conflict: string
+  selected_cidr: string
+  mtu: number
+  mss: number
+  rtt_ms: number
+  tx_bytes: number
+  rx_bytes: number
+  drop_reason: string
+  last_error: string
+  last_handshake_at: string
+  last_transition_at: string
+  updated_at: string
+}

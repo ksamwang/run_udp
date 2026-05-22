@@ -234,6 +234,17 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("status status=%d body=%s", statusRec.Code, statusRec.Body.String())
 	}
+	statesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/peer-states?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if statesRec.Code != http.StatusOK {
+		t.Fatalf("admin lan states status=%d body=%s", statesRec.Code, statesRec.Body.String())
+	}
+	var adminStates []store.VirtualPeerState
+	if err := json.Unmarshal(statesRec.Body.Bytes(), &adminStates); err != nil {
+		t.Fatal(err)
+	}
+	if len(adminStates) != 1 || adminStates[0].DeviceID != "dev-a" || adminStates[0].PeerID != "dev-b" {
+		t.Fatalf("bad admin lan states: %+v", adminStates)
+	}
 	states, err := a.db.ListVirtualPeerStates(ctx, network.ID)
 	if err != nil {
 		t.Fatal(err)

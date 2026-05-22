@@ -116,6 +116,37 @@ body {
   grid-column: 1 / -1;
 }
 
+.lan-alert {
+  margin-bottom: 16px;
+}
+
+.lan-form,
+.lan-address-form,
+.lan-acl-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 0 16px;
+  margin-bottom: 20px;
+}
+
+.lan-address-form,
+.lan-acl-form {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.lan-section-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.full-width {
+  width: 100%;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     display: block;
@@ -175,5 +206,16 @@ body {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .lan-form,
+  .lan-address-form,
+  .lan-acl-form {
+    grid-template-columns: 1fr;
+  }
+
+  .lan-section-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
