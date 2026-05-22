@@ -36,6 +36,12 @@ func exerciseStore(ctx context.Context, s Store) error {
 	if got, err := s.GetMeta(ctx, "codex_test_meta"); err != nil || got != "hash" {
 		return failf("meta got=%q err=%v", got, err)
 	}
+	if err := s.PutSystemSetting(ctx, "codex_test_setting", "90s"); err != nil {
+		return err
+	}
+	if got, err := s.GetSystemSetting(ctx, "codex_test_setting"); err != nil || got != "90s" {
+		return failf("system setting got=%q err=%v", got, err)
+	}
 	if err := s.UpsertDevice(ctx, "codex-test-A", "office-pc", "1.1.1.1:1", "2.2.2.2:2", "codex-test-B", true); err != nil {
 		return err
 	}
@@ -165,6 +171,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		"DELETE FROM sessions WHERE source_id LIKE ? OR target_id LIKE ?",
 		"DELETE FROM forward_rules WHERE source_id LIKE ? OR target_id LIKE ? OR name LIKE ?",
 		"DELETE FROM devices WHERE id LIKE ?",
+		"DELETE FROM system_settings WHERE `key` = ?",
 		"DELETE FROM meta WHERE `key` = ?",
 	}
 	args := [][]any{
@@ -174,6 +181,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		{"codex-test-%", "codex-test-%"},
 		{"codex-test-%", "codex-test-%", "codex-test-%"},
 		{"codex-test-%"},
+		{"codex_test_setting"},
 		{"codex_test_meta"},
 	}
 	for i, stmt := range statements {

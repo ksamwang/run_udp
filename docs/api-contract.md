@@ -157,11 +157,11 @@
 
 ### `GET /api/admin/settings`
 
-返回服务端当前可编辑配置和只读配置。
+返回服务端当前可编辑配置和只读启动配置。运行期隧道策略、客户端默认配置、客户端发布信息来自 MySQL `system_settings` 表。
 
 ### `PATCH /api/admin/settings`
 
-更新可运行时生效的配置项。监听地址、数据库路径、PSK 等仍属于重启生效配置。
+更新可运行时生效的数据库配置项，并立即写入 MySQL `system_settings` 表。监听地址、数据库连接、PSK、JWT 等仍属于 `.env` 启动配置。
 
 ### `POST /api/admin/password`
 
@@ -215,5 +215,7 @@ CONTROL_DATABASE_DRIVER=mysql
 CONTROL_DATABASE_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
 CONTROL_DATABASE_AUTO_MIGRATE=true
 ```
+
+运行期隧道策略、客户端默认配置、客户端发布信息存储在 `system_settings` 表，服务启动时会按代码默认值补齐缺失键，管理后台设置页通过 `PATCH /api/admin/settings` 持久化更新。
 
 后续替换存储实现时，应以本文档接口行为和现有 store 测试为回归基线。

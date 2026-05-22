@@ -24,11 +24,6 @@ func main() {
 	adminJWTSecret := fs.String("admin-jwt-secret", cfg.AdminJWTSecret, "admin JWT signing secret")
 	adminAccessTokenTTL := fs.Duration("admin-access-token-ttl", cfg.AdminAccessTokenTTL, "admin access token TTL")
 	adminRefreshTokenTTL := fs.Duration("admin-refresh-token-ttl", cfg.AdminRefreshTokenTTL, "admin refresh token TTL")
-	peerTTL := fs.Duration("peer-ttl", cfg.PeerTTL, "peer TTL")
-	pairTTL := fs.Duration("pair-ttl", cfg.PairTTL, "pair TTL")
-	relayIdle := fs.Duration("relay-idle-timeout", cfg.RelayIdleTimeout, "relay idle timeout")
-	allowRelay := fs.Bool("allow-relay", cfg.AllowRelay, "allow TURN relay forwarding")
-	allowLegacy := fs.Bool("allow-legacy", cfg.AllowLegacy, "allow legacy plaintext JSON UDP protocol")
 	fs.Parse(os.Args[1:])
 
 	if err := config.LoadServerEnv(*envPath, &cfg); err != nil {
@@ -63,21 +58,6 @@ func main() {
 	}
 	if flagSet(fs, "admin-refresh-token-ttl") {
 		cfg.AdminRefreshTokenTTL = *adminRefreshTokenTTL
-	}
-	if flagSet(fs, "peer-ttl") {
-		cfg.PeerTTL = *peerTTL
-	}
-	if flagSet(fs, "pair-ttl") {
-		cfg.PairTTL = *pairTTL
-	}
-	if flagSet(fs, "relay-idle-timeout") {
-		cfg.RelayIdleTimeout = *relayIdle
-	}
-	if flagSet(fs, "allow-relay") {
-		cfg.AllowRelay = *allowRelay
-	}
-	if flagSet(fs, "allow-legacy") {
-		cfg.AllowLegacy = *allowLegacy
 	}
 
 	app, err := serverapp.New(cfg)

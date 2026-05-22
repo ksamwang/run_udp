@@ -49,6 +49,19 @@ func (s *fakeStore) GetMeta(ctx context.Context, key string) (string, error) {
 	return s.meta[key], nil
 }
 
+func (s *fakeStore) PutSystemSetting(ctx context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.meta["system_"+key] = value
+	return nil
+}
+
+func (s *fakeStore) GetSystemSetting(ctx context.Context, key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.meta["system_"+key], nil
+}
+
 func (s *fakeStore) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, want string, online bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

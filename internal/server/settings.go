@@ -1,152 +1,156 @@
 package server
 
 import (
+	"context"
 	"strconv"
 	"time"
 )
 
+const (
+	settingPeerTTL                       = "peer_ttl"
+	settingPairTTL                       = "pair_ttl"
+	settingRelayIdleTimeout              = "relay_idle_timeout"
+	settingAllowRelay                    = "allow_relay"
+	settingAllowLegacy                   = "allow_legacy"
+	settingClientNoUPnP                  = "client_no_upnp"
+	settingClientUPnPTimeout             = "client_upnp_timeout"
+	settingClientLogLevel                = "client_log_level"
+	settingClientTrayEnabled             = "client_tray_enabled"
+	settingClientPunchTimeout            = "client_punch_timeout"
+	settingClientForceRelay              = "client_force_relay"
+	settingClientAllowLegacy             = "client_allow_legacy"
+	settingClientReleaseVersion          = "client_release_version"
+	settingClientReleaseURL              = "client_release_url"
+	settingClientReleaseSHA256           = "client_release_sha256"
+	settingClientReleasePublishedAt      = "client_release_published_at"
+	settingClientReleaseNotes            = "client_release_notes"
+	settingClientReleaseMinimumSupported = "client_release_minimum_supported_version"
+	settingClientReleaseFile             = "client_release_file"
+)
+
 func (a *App) applyStoredSettings() error {
 	ctx := rctx()
+	if err := a.ensureDefaultSettings(ctx); err != nil {
+		return err
+	}
+
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
-	if v, err := a.db.GetMeta(ctx, "setting_peer_ttl"); err != nil {
-		return err
-	} else if v != "" {
-		d, err := time.ParseDuration(v)
+	return a.applySystemSettingsLocked(ctx)
+}
+
+func (a *App) ensureDefaultSettings(ctx context.Context) error {
+	a.cfgMu.RLock()
+	defaults := map[string]string{
+		settingPeerTTL:                       a.cfg.PeerTTL.String(),
+		settingPairTTL:                       a.cfg.PairTTL.String(),
+		settingRelayIdleTimeout:              a.cfg.RelayIdleTimeout.String(),
+		settingAllowRelay:                    strconv.FormatBool(a.cfg.AllowRelay),
+		settingAllowLegacy:                   strconv.FormatBool(a.cfg.AllowLegacy),
+		settingClientNoUPnP:                  strconv.FormatBool(a.cfg.ClientNoUPnP),
+		settingClientUPnPTimeout:             a.cfg.ClientUPnPTimeout.String(),
+		settingClientLogLevel:                a.cfg.ClientLogLevel,
+		settingClientTrayEnabled:             strconv.FormatBool(a.cfg.ClientTrayEnabled),
+		settingClientPunchTimeout:            a.cfg.ClientPunchTimeout.String(),
+		settingClientForceRelay:              strconv.FormatBool(a.cfg.ClientForceRelay),
+		settingClientAllowLegacy:             strconv.FormatBool(a.cfg.ClientAllowLegacy),
+		settingClientReleaseVersion:          a.cfg.ClientReleaseVersion,
+		settingClientReleaseURL:              a.cfg.ClientReleaseURL,
+		settingClientReleaseSHA256:           a.cfg.ClientReleaseSHA256,
+		settingClientReleasePublishedAt:      a.cfg.ClientReleasePublishedAt,
+		settingClientReleaseNotes:            a.cfg.ClientReleaseNotes,
+		settingClientReleaseMinimumSupported: a.cfg.ClientReleaseMinimumSupported,
+		settingClientReleaseFile:             a.cfg.ClientReleaseFile,
+	}
+	a.cfgMu.RUnlock()
+
+	for key, value := range defaults {
+		existing, err := a.db.GetSystemSetting(ctx, key)
 		if err != nil {
 			return err
 		}
-		a.cfg.PeerTTL = d
+		if existing == "" {
+			legacy, err := a.db.GetMeta(ctx, "setting_"+key)
+			if err != nil {
+				return err
+			}
+			if legacy != "" {
+				value = legacy
+			}
+			if err := a.db.PutSystemSetting(ctx, key, value); err != nil {
+				return err
+			}
+		}
 	}
-	if v, err := a.db.GetMeta(ctx, "setting_pair_ttl"); err != nil {
-		return err
-	} else if v != "" {
-		d, err := time.ParseDuration(v)
+	return nil
+}
+
+func (a *App) applySystemSettingsLocked(ctx context.Context) error {
+	for _, item := range []struct {
+		key string
+		dst *time.Duration
+	}{
+		{settingPeerTTL, &a.cfg.PeerTTL},
+		{settingPairTTL, &a.cfg.PairTTL},
+		{settingRelayIdleTimeout, &a.cfg.RelayIdleTimeout},
+		{settingClientUPnPTimeout, &a.cfg.ClientUPnPTimeout},
+		{settingClientPunchTimeout, &a.cfg.ClientPunchTimeout},
+	} {
+		value, err := a.db.GetSystemSetting(ctx, item.key)
 		if err != nil {
 			return err
 		}
-		a.cfg.PairTTL = d
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_relay_idle_timeout"); err != nil {
-		return err
-	} else if v != "" {
-		d, err := time.ParseDuration(v)
+		if value == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(value)
 		if err != nil {
 			return err
 		}
-		a.cfg.RelayIdleTimeout = d
+		*item.dst = parsed
 	}
-	if v, err := a.db.GetMeta(ctx, "setting_allow_relay"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
+	for _, item := range []struct {
+		key string
+		dst *bool
+	}{
+		{settingAllowRelay, &a.cfg.AllowRelay},
+		{settingAllowLegacy, &a.cfg.AllowLegacy},
+		{settingClientNoUPnP, &a.cfg.ClientNoUPnP},
+		{settingClientTrayEnabled, &a.cfg.ClientTrayEnabled},
+		{settingClientForceRelay, &a.cfg.ClientForceRelay},
+		{settingClientAllowLegacy, &a.cfg.ClientAllowLegacy},
+	} {
+		value, err := a.db.GetSystemSetting(ctx, item.key)
 		if err != nil {
 			return err
 		}
-		a.cfg.AllowRelay = b
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_allow_legacy"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
 		if err != nil {
 			return err
 		}
-		a.cfg.AllowLegacy = b
+		*item.dst = parsed
 	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_no_upnp"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
+	for _, item := range []struct {
+		key string
+		dst *string
+	}{
+		{settingClientLogLevel, &a.cfg.ClientLogLevel},
+		{settingClientReleaseVersion, &a.cfg.ClientReleaseVersion},
+		{settingClientReleaseURL, &a.cfg.ClientReleaseURL},
+		{settingClientReleaseSHA256, &a.cfg.ClientReleaseSHA256},
+		{settingClientReleasePublishedAt, &a.cfg.ClientReleasePublishedAt},
+		{settingClientReleaseNotes, &a.cfg.ClientReleaseNotes},
+		{settingClientReleaseMinimumSupported, &a.cfg.ClientReleaseMinimumSupported},
+		{settingClientReleaseFile, &a.cfg.ClientReleaseFile},
+	} {
+		value, err := a.db.GetSystemSetting(ctx, item.key)
 		if err != nil {
 			return err
 		}
-		a.cfg.ClientNoUPnP = b
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_upnp_timeout"); err != nil {
-		return err
-	} else if v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return err
-		}
-		a.cfg.ClientUPnPTimeout = d
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_log_level"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientLogLevel = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_tray_enabled"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return err
-		}
-		a.cfg.ClientTrayEnabled = b
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_punch_timeout"); err != nil {
-		return err
-	} else if v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return err
-		}
-		a.cfg.ClientPunchTimeout = d
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_force_relay"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return err
-		}
-		a.cfg.ClientForceRelay = b
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_allow_legacy"); err != nil {
-		return err
-	} else if v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return err
-		}
-		a.cfg.ClientAllowLegacy = b
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_version"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseVersion = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_url"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseURL = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_sha256"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseSHA256 = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_published_at"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleasePublishedAt = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_notes"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseNotes = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_minimum_supported_version"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseMinimumSupported = v
-	}
-	if v, err := a.db.GetMeta(ctx, "setting_client_release_file"); err != nil {
-		return err
-	} else if v != "" {
-		a.cfg.ClientReleaseFile = v
+		*item.dst = value
 	}
 	return nil
 }

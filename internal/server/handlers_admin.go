@@ -259,25 +259,33 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		a.cfg.ClientReleaseMinimumSupported = req.ClientReleaseMinimumSupported
 		a.cfg.ClientReleaseFile = req.ClientReleaseFile
 		a.cfgMu.Unlock()
-		_ = a.db.PutMeta(r.Context(), "setting_peer_ttl", peerTTL.String())
-		_ = a.db.PutMeta(r.Context(), "setting_pair_ttl", pairTTL.String())
-		_ = a.db.PutMeta(r.Context(), "setting_relay_idle_timeout", relayIdle.String())
-		_ = a.db.PutMeta(r.Context(), "setting_allow_relay", strconv.FormatBool(req.AllowRelay))
-		_ = a.db.PutMeta(r.Context(), "setting_allow_legacy", strconv.FormatBool(req.AllowLegacy))
-		_ = a.db.PutMeta(r.Context(), "setting_client_no_upnp", strconv.FormatBool(req.ClientNoUPnP))
-		_ = a.db.PutMeta(r.Context(), "setting_client_upnp_timeout", clientUPnPTimeout.String())
-		_ = a.db.PutMeta(r.Context(), "setting_client_log_level", req.ClientLogLevel)
-		_ = a.db.PutMeta(r.Context(), "setting_client_tray_enabled", strconv.FormatBool(req.ClientTrayEnabled))
-		_ = a.db.PutMeta(r.Context(), "setting_client_punch_timeout", clientPunchTimeout.String())
-		_ = a.db.PutMeta(r.Context(), "setting_client_force_relay", strconv.FormatBool(req.ClientForceRelay))
-		_ = a.db.PutMeta(r.Context(), "setting_client_allow_legacy", strconv.FormatBool(req.ClientAllowLegacy))
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_version", req.ClientReleaseVersion)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_url", req.ClientReleaseURL)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_sha256", req.ClientReleaseSHA256)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_published_at", req.ClientReleasePublishedAt)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_notes", req.ClientReleaseNotes)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_minimum_supported_version", req.ClientReleaseMinimumSupported)
-		_ = a.db.PutMeta(r.Context(), "setting_client_release_file", req.ClientReleaseFile)
+		settings := map[string]string{
+			settingPeerTTL:                       peerTTL.String(),
+			settingPairTTL:                       pairTTL.String(),
+			settingRelayIdleTimeout:              relayIdle.String(),
+			settingAllowRelay:                    strconv.FormatBool(req.AllowRelay),
+			settingAllowLegacy:                   strconv.FormatBool(req.AllowLegacy),
+			settingClientNoUPnP:                  strconv.FormatBool(req.ClientNoUPnP),
+			settingClientUPnPTimeout:             clientUPnPTimeout.String(),
+			settingClientLogLevel:                req.ClientLogLevel,
+			settingClientTrayEnabled:             strconv.FormatBool(req.ClientTrayEnabled),
+			settingClientPunchTimeout:            clientPunchTimeout.String(),
+			settingClientForceRelay:              strconv.FormatBool(req.ClientForceRelay),
+			settingClientAllowLegacy:             strconv.FormatBool(req.ClientAllowLegacy),
+			settingClientReleaseVersion:          req.ClientReleaseVersion,
+			settingClientReleaseURL:              req.ClientReleaseURL,
+			settingClientReleaseSHA256:           req.ClientReleaseSHA256,
+			settingClientReleasePublishedAt:      req.ClientReleasePublishedAt,
+			settingClientReleaseNotes:            req.ClientReleaseNotes,
+			settingClientReleaseMinimumSupported: req.ClientReleaseMinimumSupported,
+			settingClientReleaseFile:             req.ClientReleaseFile,
+		}
+		for key, value := range settings {
+			if err := a.db.PutSystemSetting(r.Context(), key, value); err != nil {
+				writeJSONOrError(w, nil, err)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

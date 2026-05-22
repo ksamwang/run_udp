@@ -118,6 +118,8 @@ PSK=change-this-deployment-secret
 
 访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 MySQL 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
 
+`.env` 只保存服务启动前必须知道的端口、数据库连接、管理员初始密码、JWT 密钥和 PSK。隧道策略、客户端默认参数、客户端发布信息会存储在 MySQL `system_settings` 表，并通过管理后台设置页维护。
+
 服务端 HTTP API 已切换到 Gin。控制库为 MySQL 5.5，`internal/controlstore` 按 MySQL 5.5 兼容方式配置 Gorm 连接和模型。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
 #### 3. 部署客户端
@@ -145,7 +147,7 @@ copy client.json.example client.json
 - `psk`：必须与服务端一致
 
 客户端首次启动会自动生成稳定 `device_id`。  
-运行期的 UDP 地址、打洞、UPnP、relay 默认项会通过 `POST /api/agent/bootstrap` 由服务端统一下发。  
+运行期的 UDP 地址、打洞、UPnP、relay 默认项会从 MySQL 配置读取，并通过 `POST /api/agent/bootstrap` 由服务端统一下发。
 客户端启动时会自动做一次 NAT 探测；如果判定为 `Symmetric NAT`，本进程会直接优先走 relay。
 
 启动客户端：
@@ -367,6 +369,8 @@ Open these ports:
 
 Open the deployed React admin console and log in with `admin_password`.
 
+`.env` only stores values required before the service can start: listen addresses, database connection, initial admin password, JWT secret, and PSK. Tunnel policy, client defaults, and client release metadata are stored in the MySQL `system_settings` table and managed from the admin settings page.
+
 The server HTTP API now runs on Gin. The control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and models. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
 
 #### 3. Deploy the client
@@ -394,7 +398,7 @@ Notes:
 - `psk`: must match the server
 
 On first start, the client generates a stable `device_id`.  
-Runtime settings such as UDP rendezvous address, punching, UPnP, and relay defaults are delivered by the server through `POST /api/agent/bootstrap`.  
+Runtime settings such as UDP rendezvous address, punching, UPnP, and relay defaults are read from MySQL settings and delivered by the server through `POST /api/agent/bootstrap`.
 The client also performs automatic NAT probing at startup; if it detects a symmetric NAT, it will prefer relay immediately.
 
 Start the client:

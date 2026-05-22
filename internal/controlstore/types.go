@@ -11,6 +11,8 @@ type Store interface {
 	Close() error
 	PutMeta(ctx context.Context, key, value string) error
 	GetMeta(ctx context.Context, key string) (string, error)
+	PutSystemSetting(ctx context.Context, key, value string) error
+	GetSystemSetting(ctx context.Context, key string) (string, error)
 	UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, want string, online bool) error
 	MarkOfflineBefore(ctx context.Context, cutoff time.Time) error
 	ListDevices(ctx context.Context) ([]store.Device, error)

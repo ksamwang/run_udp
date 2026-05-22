@@ -36,6 +36,14 @@ type Meta struct {
 
 func (Meta) TableName() string { return "meta" }
 
+type SystemSetting struct {
+	Key       string `gorm:"primaryKey;size:191;column:key"`
+	Value     string `gorm:"type:text;not null;column:value"`
+	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (SystemSetting) TableName() string { return "system_settings" }
+
 type Device struct {
 	ID        string `gorm:"primaryKey;size:191;column:id"`
 	Name      string `gorm:"size:255;not null;default:'';column:name"`
@@ -159,6 +167,7 @@ func (s *MySQLStore) AutoMigrate() error {
 	}
 	return s.db.AutoMigrate(
 		&Meta{},
+		&SystemSetting{},
 		&Device{},
 		&ForwardRule{},
 		&Session{},
@@ -193,6 +202,23 @@ func (s *MySQLStore) GetMeta(ctx context.Context, key string) (string, error) {
 		return "", nil
 	}
 	return m.Value, err
+}
+
+func (s *MySQLStore) PutSystemSetting(ctx context.Context, key, value string) error {
+	now := nowString()
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.Assignments(map[string]any{"value": value, "updated_at": now}),
+	}).Create(&SystemSetting{Key: key, Value: value, UpdatedAt: now}).Error
+}
+
+func (s *MySQLStore) GetSystemSetting(ctx context.Context, key string) (string, error) {
+	var setting SystemSetting
+	err := s.db.WithContext(ctx).First(&setting, "`key` = ?", key).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return setting.Value, err
 }
 
 func (s *MySQLStore) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, want string, online bool) error {

@@ -497,25 +497,12 @@ func applyServerEnv(values map[string]string, s *Server) error {
 	setString("ADMIN_PASSWORD_HASH", &s.AdminPasswordHash)
 	setString("ADMIN_JWT_SECRET", &s.AdminJWTSecret)
 	setString("PSK", &s.PSK)
-	setString("CLIENT_LOG_LEVEL", &s.ClientLogLevel)
-	setString("CLIENT_RELEASE_VERSION", &s.ClientReleaseVersion)
-	setString("CLIENT_RELEASE_URL", &s.ClientReleaseURL)
-	setString("CLIENT_RELEASE_SHA256", &s.ClientReleaseSHA256)
-	setString("CLIENT_RELEASE_PUBLISHED_AT", &s.ClientReleasePublishedAt)
-	setString("CLIENT_RELEASE_NOTES", &s.ClientReleaseNotes)
-	setString("CLIENT_RELEASE_MINIMUM_SUPPORTED_VERSION", &s.ClientReleaseMinimumSupported)
-	setString("CLIENT_RELEASE_FILE", &s.ClientReleaseFile)
 	for _, item := range []struct {
 		key string
 		dst *time.Duration
 	}{
 		{"ADMIN_ACCESS_TOKEN_TTL", &s.AdminAccessTokenTTL},
 		{"ADMIN_REFRESH_TOKEN_TTL", &s.AdminRefreshTokenTTL},
-		{"PEER_TTL", &s.PeerTTL},
-		{"PAIR_TTL", &s.PairTTL},
-		{"RELAY_IDLE_TIMEOUT", &s.RelayIdleTimeout},
-		{"CLIENT_UPNP_TIMEOUT", &s.ClientUPnPTimeout},
-		{"CLIENT_PUNCH_TIMEOUT", &s.ClientPunchTimeout},
 	} {
 		if err := setDuration(item.key, item.dst); err != nil {
 			return err
@@ -526,12 +513,6 @@ func applyServerEnv(values map[string]string, s *Server) error {
 		dst *bool
 	}{
 		{"CONTROL_DATABASE_AUTO_MIGRATE", &s.ControlDatabaseAutoMigrate},
-		{"ALLOW_RELAY", &s.AllowRelay},
-		{"ALLOW_LEGACY", &s.AllowLegacy},
-		{"CLIENT_NO_UPNP", &s.ClientNoUPnP},
-		{"CLIENT_TRAY_ENABLED", &s.ClientTrayEnabled},
-		{"CLIENT_FORCE_RELAY", &s.ClientForceRelay},
-		{"CLIENT_ALLOW_LEGACY", &s.ClientAllowLegacy},
 	} {
 		if err := setBool(item.key, item.dst); err != nil {
 			return err

@@ -367,6 +367,96 @@ func TestHandleClientRelease(t *testing.T) {
 	}
 }
 
+func TestApplyStoredSettingsUsesSystemSettings(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.db.PutSystemSetting(ctx, settingPeerTTL, "45s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutSystemSetting(ctx, settingAllowRelay, "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutSystemSetting(ctx, settingClientLogLevel, "debug"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.applyStoredSettings(); err != nil {
+		t.Fatal(err)
+	}
+
+	if a.cfg.PeerTTL != 45*time.Second || a.cfg.AllowRelay || a.cfg.ClientLogLevel != "debug" {
+		t.Fatalf("settings not applied from database: %+v", a.cfg)
+	}
+	if got, err := a.db.GetSystemSetting(ctx, settingPairTTL); err != nil || got != config.DefaultServer().PairTTL.String() {
+		t.Fatalf("default setting not persisted: got=%q err=%v", got, err)
+	}
+}
+
+func TestApplyStoredSettingsMigratesLegacyMeta(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.db.PutMeta(ctx, "setting_peer_ttl", "55s"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.applyStoredSettings(); err != nil {
+		t.Fatal(err)
+	}
+
+	if a.cfg.PeerTTL != 55*time.Second {
+		t.Fatalf("legacy meta setting was not applied: %+v", a.cfg)
+	}
+	got, err := a.db.GetSystemSetting(ctx, settingPeerTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "55s" {
+		t.Fatalf("legacy setting was not migrated, got %q", got)
+	}
+}
+
+func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
+	a := newTestApp(t)
+	rec := doAdminJSON(t, a, http.MethodPatch, "/api/admin/settings", map[string]any{
+		"peer_ttl":                                 "45s",
+		"pair_ttl":                                 "1m",
+		"relay_idle_timeout":                       "2m",
+		"allow_relay":                              false,
+		"allow_legacy":                             false,
+		"client_no_upnp":                           true,
+		"client_upnp_timeout":                      "2s",
+		"client_log_level":                         "debug",
+		"client_tray_enabled":                      false,
+		"client_punch_timeout":                     "12s",
+		"client_force_relay":                       true,
+		"client_allow_legacy":                      false,
+		"client_release_version":                   "1.2.3",
+		"client_release_url":                       "https://example.com/client.exe",
+		"client_release_sha256":                    "abc123",
+		"client_release_published_at":              "2026-05-22T12:00:00Z",
+		"client_release_notes":                     "release notes",
+		"client_release_minimum_supported_version": "1.0.0",
+		"client_release_file":                      "client.exe",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := a.db.GetSystemSetting(context.Background(), settingClientLogLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "debug" {
+		t.Fatalf("expected setting in system settings table, got %q", got)
+	}
+	legacy, err := a.db.GetMeta(context.Background(), "setting_client_log_level")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy != "" {
+		t.Fatalf("settings should not be persisted to meta, got %q", legacy)
+	}
+}
+
 func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 	a := newTestApp(t)
 	pass := "secret-pass"
