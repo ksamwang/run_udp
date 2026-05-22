@@ -36,6 +36,18 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '修改密码失败'),
   })
+  async function submitPassword() {
+    const values = passwordForm.getFieldsValue()
+    if (!values.current_password || !values.new_password || !values.confirm_password) {
+      await passwordForm.validateFields()
+      return
+    }
+    if (values.new_password !== values.confirm_password) {
+      message.error('两次输入的密码不一致')
+      return
+    }
+    passwordMutation.mutate({ current_password: values.current_password, new_password: values.new_password })
+  }
 
   useEffect(() => {
     if (settings.data) {
@@ -131,7 +143,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           <Form
             form={passwordForm}
             layout="vertical"
-            onFinish={(values) => passwordMutation.mutate({ current_password: values.current_password, new_password: values.new_password })}
+            onFinish={() => submitPassword()}
           >
             <div className="settings-grid">
               <Form.Item name="current_password" label="当前密码" rules={[{ required: true }]}><Input.Password /></Form.Item>
@@ -139,22 +151,13 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
               <Form.Item
                 name="confirm_password"
                 label="确认新密码"
-                dependencies={['new_password']}
-                rules={[
-                  { required: true },
-                  ({ getFieldValue }) => ({
-                    validator(_, value) {
-                      if (!value || getFieldValue('new_password') === value) return Promise.resolve()
-                      return Promise.reject(new Error('两次输入的密码不一致'))
-                    },
-                  }),
-                ]}
+                rules={[{ required: true, message: '请确认新密码' }]}
               >
                 <Input.Password />
               </Form.Item>
             </div>
             <Space>
-              <Button type="primary" htmlType="submit" loading={passwordMutation.isPending}>修改密码</Button>
+              <Button type="primary" onClick={() => submitPassword()} loading={passwordMutation.isPending}>修改密码</Button>
             </Space>
           </Form>
         </Card>

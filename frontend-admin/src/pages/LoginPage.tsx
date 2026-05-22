@@ -8,6 +8,7 @@ type LoginPageProps = {
 }
 
 export function LoginPage({ onLoggedIn }: LoginPageProps) {
+  const [form] = Form.useForm<{ username: string; password: string }>()
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -18,7 +19,9 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
       await login(values.username, values.password)
       onLoggedIn()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      form.setFieldValue('password', '')
+      const message = err instanceof Error ? err.message : '登录失败'
+      setError(message === 'unauthorized' ? '账号或密码错误' : message)
     } finally {
       setLoading(false)
     }
@@ -35,7 +38,7 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
         </div>
         <Card className="login-card" title="管理员登录">
           {error && <Alert type="error" message={error} showIcon className="form-alert" />}
-          <Form layout="vertical" initialValues={{ username: 'admin' }} onFinish={submit}>
+          <Form form={form} layout="vertical" initialValues={{ username: 'admin' }} onFinish={submit}>
             <Form.Item name="username" label="管理员账号" rules={[{ required: true, message: '请输入管理员账号' }]}>
               <Input prefix={<UserOutlined />} autoFocus />
             </Form.Item>
