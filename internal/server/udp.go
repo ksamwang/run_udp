@@ -146,7 +146,7 @@ func (a *App) writeControl(conn *net.UDPConn, dst *net.UDPAddr, msg *protocol.Me
 }
 
 func (a *App) handleRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.Message) {
-	profile := store.NormalizeProfile(msg.Profile)
+	profile := normalizeRegisterProfile(msg.Profile)
 	log.Printf("register: id=%s want=%s profile=%s from=%s upnp=%q", msg.From, msg.Peer, profile, src, msg.UpnpAddr)
 	a.totalRegister.Add(1)
 	name := msg.Name
@@ -194,7 +194,14 @@ func (a *App) lookupPeer(from, want, profile string) (*peer, bool) {
 }
 
 func peerSlotKey(want, profile string) string {
-	return want + "\x00" + store.NormalizeProfile(profile)
+	return want + "\x00" + normalizeRegisterProfile(profile)
+}
+
+func normalizeRegisterProfile(profile string) string {
+	if store.NormalizeProfile(profile) == store.ProfileLANPacket {
+		return store.ProfileLANPacket
+	}
+	return store.NormalizeProfile(profile)
 }
 
 func (a *App) sendPeer(conn *net.UDPConn, to, about *peer) {

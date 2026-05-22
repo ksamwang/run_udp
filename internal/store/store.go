@@ -178,6 +178,7 @@ type VirtualPeerState struct {
 const (
 	ProfileInteractive = "interactive"
 	ProfileBulk        = "bulk"
+	ProfileLANPacket   = "lan-packet"
 )
 
 func NormalizeProfile(profile string) string {

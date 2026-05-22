@@ -363,6 +363,26 @@ func TestRegisterPairsSameDevicesByProfile(t *testing.T) {
 	}
 }
 
+func TestRegisterSupportsLANPacketProfile(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 13001}, &protocol.Message{From: "dev-a", Peer: "dev-b", Profile: store.ProfileLANPacket})
+	a.handleRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 13002}, &protocol.Message{From: "dev-b", Peer: "dev-a", Profile: store.ProfileLANPacket})
+	if _, ok := a.peers["dev-a"][peerSlotKey("dev-b", store.ProfileLANPacket)]; !ok {
+		t.Fatalf("missing lan packet peer slot: %+v", a.peers)
+	}
+	if _, ok := a.pairByID[pairKey("dev-a", "dev-b", store.ProfileLANPacket)]; !ok {
+		t.Fatalf("missing lan packet pair session: %+v", a.pairByID)
+	}
+}
+
 func TestHandleDeviceDeleteBlockedByEnabledRule(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

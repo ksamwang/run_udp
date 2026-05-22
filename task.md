@@ -276,15 +276,20 @@ internal/
 
 ## 阶段 6：P2P/Relay Packet Link
 
-- [ ] 复用当前 NAT 探测和 rendezvous。
-- [ ] 为 LAN 数据面设计 packet mode。
-- [ ] P2P 可用时直连。
-- [ ] P2P 不可用时走 relay。
-- [ ] 支持 peer session keepalive。
-- [ ] 网络变化时重建 peer link。
-- [ ] 增加每设备最大 peer session 数限制。
-- [ ] 增加 peer session idle timeout 和资源清理。
-- [ ] 增加 relay 流量统计和限流预留点。
+- [x] 复用当前 NAT 探测和 rendezvous。
+- [x] 为 LAN 数据面设计 packet mode。
+- [x] P2P 可用时直连。
+- [x] P2P 不可用时走 relay。
+- [x] 支持 peer session keepalive。
+- [x] 网络变化时重建 peer link。
+- [x] 增加每设备最大 peer session 数限制。
+- [x] 增加 peer session idle timeout 和资源清理。
+- [x] 增加 relay 流量统计和限流预留点。
+
+实现说明：
+
+- LAN 数据面使用 `lan-packet` profile 复用现有 rendezvous 和 UDP relay 通道。
+- 当前完成 packet link 会话管理与单元测试，真实 P2P/relay 端到端访问需在阶段 7 接入 Wintun runtime 后验证。
 
 验收：
 
