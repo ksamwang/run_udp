@@ -172,6 +172,21 @@ func TestNeedsBootstrapConfigDoesNotRequireLocalPSK(t *testing.T) {
 	}
 }
 
+func TestShouldRunBootstrapTrayOnlyForInteractiveAgent(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.TrayEnabled = true
+	if !shouldRunBootstrapTray(true, cfg) {
+		t.Fatal("interactive agent with tray enabled should show bootstrap tray")
+	}
+	if shouldRunBootstrapTray(false, cfg) {
+		t.Fatal("non-agent mode should not show bootstrap tray")
+	}
+	cfg.TrayEnabled = false
+	if shouldRunBootstrapTray(true, cfg) {
+		t.Fatal("tray disabled should not show bootstrap tray")
+	}
+}
+
 func TestMergeBootstrapAppliesServerPSK(t *testing.T) {
 	local := config.DefaultClient()
 	local.ServerHTTP = "http://old.example.com"

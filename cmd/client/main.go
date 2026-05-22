@@ -346,12 +346,20 @@ func main() {
 		if resp, err := agentBootstrap(cfg); err != nil {
 			if cfg.Server == "" {
 				log.Printf("[%s] bootstrap failed: %v", cfg.DeviceID, err)
+				if shouldRunBootstrapTray(*agent, cfg) {
+					runBootstrapTrayMode(&cfg, *configPath)
+					return
+				}
 				runBootstrapConfigMode(&cfg, *configPath)
 				return
 			}
 		} else {
 			if merged, err := mergeBootstrap(cfg, resp); err != nil {
 				log.Printf("[%s] bad bootstrap config: %v", cfg.DeviceID, err)
+				if shouldRunBootstrapTray(*agent, cfg) {
+					runBootstrapTrayMode(&cfg, *configPath)
+					return
+				}
 				runBootstrapConfigMode(&cfg, *configPath)
 				return
 			} else {
@@ -366,6 +374,10 @@ func main() {
 
 	if runtimeCfg.Server == "" {
 		log.Printf("[%s] runtime server is empty after bootstrap", runtimeCfg.DeviceID)
+		if shouldRunBootstrapTray(*agent, cfg) {
+			runBootstrapTrayMode(&cfg, *configPath)
+			return
+		}
 		runBootstrapConfigMode(&cfg, *configPath)
 		return
 	}
@@ -447,6 +459,10 @@ func needsBootstrapConfig(cfg config.Client, probeMode bool, explicitPeer bool) 
 	return strings.TrimSpace(cfg.ServerHTTP) == ""
 }
 
+func shouldRunBootstrapTray(agentMode bool, cfg config.Client) bool {
+	return agentMode && cfg.TrayEnabled
+}
+
 func runBootstrapConfigMode(cfg *config.Client, configPath string) {
 	configURL := startClientConfigServer(cfg, configPath, clientConfigHooks{
 		OnSaved: restartSelf,
@@ -460,6 +476,26 @@ func runBootstrapConfigMode(cfg *config.Client, configPath string) {
 	}
 	log.Printf("[%s] missing local bootstrap config: server_http=%q", cfg.DeviceID, cfg.ServerHTTP)
 	waitForSignal(cfg.DeviceID)
+}
+
+func runBootstrapTrayMode(cfg *config.Client, configPath string) {
+	configURL := startClientConfigServer(cfg, configPath, clientConfigHooks{
+		OnSaved: restartSelf,
+		Runtime: currentRuntimeInfo,
+	})
+	if configURL != "" {
+		log.Printf("[%s] bootstrap unavailable; tray settings page is available: %s", cfg.DeviceID, configURL)
+		openBrowser(configURL)
+	} else {
+		log.Printf("[%s] bootstrap unavailable; local settings page could not start", cfg.DeviceID)
+	}
+	runTray(cfg.DeviceID, cfg.ServerHTTP, configURL, trayActions{
+		OpenLogs:     openLogs,
+		CheckUpdates: func() error { return fmt.Errorf("bootstrap unavailable") },
+		RuntimeStatus: func() string {
+			return currentRuntimeInfo().ServiceStatus
+		},
+	}, func() { os.Exit(0) })
 }
 
 func waitForSignal(deviceID string) {
