@@ -16,7 +16,9 @@ udp-tunnel.db*
 .env
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea/
 *.iml
 
