@@ -269,6 +269,16 @@ func main() {
 	if len(forwards) > 0 {
 		cfg.Forwards = forwards
 	}
+	if *trayMode {
+		_ = ensureRuntimeIdentity(&cfg)
+		logPath := setupLogging(cfg.DeviceID)
+		logStartup(cfg, *configPath, logPath, clientMode(cfg, *agent, *probe, *trayMode, *serviceMode))
+		if st, err := queryWindowsServiceStatus(); err == nil {
+			appRuntime.SetServiceStatus(st)
+		}
+		runTrayProcess(cfg, *configPath)
+		return
+	}
 	if *installService || *uninstallService || *startServiceFlag || *stopServiceFlag || *restartServiceFlag {
 		exePath := currentExePath()
 		configAbs := *configPath
@@ -339,10 +349,6 @@ func main() {
 		if err := runUpdaterHelper(*updatePackage); err != nil {
 			log.Fatal(err)
 		}
-		return
-	}
-	if *trayMode {
-		runTrayProcess(cfg, *configPath)
 		return
 	}
 	if needsBootstrapConfig(cfg, *probe, len(forwards) > 0 || flagSet(fs, "peer")) {
@@ -1433,12 +1439,7 @@ func drainWakeReason(ch <-chan string) (string, bool) {
 
 func ensureLocalIdentity(cfg *config.Client, configPath string) error {
 	changed := false
-	if strings.TrimSpace(cfg.DeviceName) == "" {
-		cfg.DeviceName = defaultDeviceName()
-		changed = true
-	}
-	if cfg.PeerID == "" {
-		cfg.DeviceID = generateDeviceID()
+	if ensureRuntimeIdentity(cfg) {
 		changed = true
 	}
 	if changed && configPath != "" && cfg.ServerHTTP != "" {
@@ -1447,6 +1448,19 @@ func ensureLocalIdentity(cfg *config.Client, configPath string) error {
 		}
 	}
 	return nil
+}
+
+func ensureRuntimeIdentity(cfg *config.Client) bool {
+	changed := false
+	if strings.TrimSpace(cfg.DeviceName) == "" {
+		cfg.DeviceName = defaultDeviceName()
+		changed = true
+	}
+	if cfg.PeerID == "" {
+		cfg.DeviceID = generateDeviceID()
+		changed = true
+	}
+	return changed
 }
 
 func generateDeviceID() string {

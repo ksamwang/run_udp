@@ -201,6 +201,18 @@ func TestClientModeDistinguishesTrayAndService(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeIdentityDoesNotRequireConfigWrite(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.DeviceID = ""
+	cfg.DeviceName = ""
+	if !ensureRuntimeIdentity(&cfg) {
+		t.Fatal("expected runtime identity to be generated")
+	}
+	if cfg.DeviceID == "" || cfg.DeviceName == "" {
+		t.Fatalf("runtime identity missing: %+v", cfg)
+	}
+}
+
 func TestMergeBootstrapAppliesServerPSK(t *testing.T) {
 	local := config.DefaultClient()
 	local.ServerHTTP = "http://old.example.com"
