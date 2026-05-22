@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"udp_tunnel_demo/internal/config"
 	"udp_tunnel_demo/internal/store"
 )
 
@@ -74,5 +79,79 @@ func TestSmuxConfigProfiles(t *testing.T) {
 	}
 	if bulk.MaxStreamBuffer != 16*1024*1024 || bulk.MaxReceiveBuffer != 64*1024*1024 {
 		t.Fatalf("unexpected bulk config: %+v", bulk)
+	}
+}
+
+func TestClientConfigUIOnlyExposesBootstrapFields(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.Server = "1.2.3.4:7000"
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	cfg.DeviceID = "dev-1234"
+	cfg.DeviceName = "office-pc"
+	cfg.PSK = "secret"
+	cfg.NoUPnP = true
+	cfg.LogLevel = "debug"
+	cfg.TrayEnabled = true
+	cfg.PunchTimeout = 10 * time.Second
+	state := &clientConfigState{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	state.handleConfig(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"server", "no_upnp", "log_level", "tray_enabled", "punch_timeout", "force_relay", "forwards"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("runtime field %s should not be exposed: %+v", key, got)
+		}
+	}
+	if got["server_http"] != cfg.ServerHTTP || got["device_id"] != cfg.DeviceID || got["device_name"] != cfg.DeviceName || got["psk"] != cfg.PSK {
+		t.Fatalf("bootstrap fields missing: %+v", got)
+	}
+}
+
+func TestClientConfigUIPostClearsServerManagedFields(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.Server = "1.2.3.4:7000"
+	cfg.ServerHTTP = "http://old.example.com"
+	cfg.DeviceID = "dev-1234"
+	cfg.DeviceName = "office-pc"
+	cfg.PSK = "old-secret"
+	cfg.PeerID = "peer"
+	cfg.NoUPnP = true
+	cfg.UPnPTimeout = 3 * time.Second
+	cfg.LogLevel = "debug"
+	cfg.TrayEnabled = true
+	cfg.PunchTimeout = 9 * time.Second
+	cfg.ForceRelay = true
+	cfg.AllowLegacy = true
+	cfg.Forwards = []string{"13389:127.0.0.1:3389"}
+	var saved config.Client
+	state := &clientConfigState{
+		cfg: cfg,
+		hooks: clientConfigHooks{
+			SaveConfig: func(c config.Client) (bool, error) {
+				saved = c
+				return false, nil
+			},
+		},
+	}
+	body := bytes.NewBufferString(`{"server_http":"http://new.example.com","device_name":"","psk":"new-secret","no_upnp":true,"log_level":"debug"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/config", body)
+	req.Header.Set("Content-Type", "application/json")
+	state.handleConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if saved.ServerHTTP != "http://new.example.com" || saved.PSK != "new-secret" || saved.DeviceName == "" {
+		t.Fatalf("bootstrap fields not saved: %+v", saved)
+	}
+	if saved.Server != "" || saved.PeerID != "" || saved.NoUPnP || saved.UPnPTimeout != 0 || saved.LogLevel != "" || saved.TrayEnabled || saved.PunchTimeout != 0 || saved.ForceRelay || saved.AllowLegacy || len(saved.Forwards) != 0 {
+		t.Fatalf("server-managed fields should be cleared before save: %+v", saved)
 	}
 }

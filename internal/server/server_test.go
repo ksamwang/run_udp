@@ -839,6 +839,24 @@ func TestErrorResponsesUseJSONContract(t *testing.T) {
 			code:   "unauthorized",
 		},
 		{
+			name:   "admin login unauthorized",
+			rec:    doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": "admin", "password": "wrong"}, nil),
+			status: http.StatusUnauthorized,
+			code:   "unauthorized",
+		},
+		{
+			name:   "admin refresh bad json",
+			rec:    doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/refresh", map[string]any{}, nil),
+			status: http.StatusBadRequest,
+			code:   "bad_json",
+		},
+		{
+			name:   "admin me unauthorized",
+			rec:    doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/me", nil, nil),
+			status: http.StatusUnauthorized,
+			code:   "unauthorized",
+		},
+		{
 			name:   "bad settings duration",
 			rec:    doAdminJSON(t, a, http.MethodPatch, "/api/admin/settings", map[string]any{"peer_ttl": "bad"}),
 			status: http.StatusBadRequest,

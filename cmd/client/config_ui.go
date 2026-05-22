@@ -50,6 +50,13 @@ type clientConfigState struct {
 	hooks clientConfigHooks
 }
 
+type clientLocalConfigView struct {
+	ServerHTTP string `json:"server_http"`
+	DeviceID   string `json:"device_id,omitempty"`
+	DeviceName string `json:"device_name"`
+	PSK        string `json:"psk"`
+}
+
 func (s *clientConfigState) handlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, clientConfigHTML)
@@ -60,13 +67,14 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		writeClientJSON(w, s.cfg)
+		writeClientJSON(w, clientLocalConfigView{
+			ServerHTTP: s.cfg.ServerHTTP,
+			DeviceID:   s.cfg.DeviceID,
+			DeviceName: s.cfg.DeviceName,
+			PSK:        s.cfg.PSK,
+		})
 	case http.MethodPost:
-		var req struct {
-			ServerHTTP string `json:"server_http"`
-			DeviceName string `json:"device_name"`
-			PSK        string `json:"psk"`
-		}
+		var req clientLocalConfigView
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
@@ -78,6 +86,7 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 			s.cfg.DeviceName = defaultDeviceName()
 		}
 		s.cfg.PSK = req.PSK
+		s.clearServerManagedConfig()
 		elevated := false
 		var err error
 		if s.hooks.SaveConfig != nil {
@@ -106,6 +115,19 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *clientConfigState) clearServerManagedConfig() {
+	s.cfg.Server = ""
+	s.cfg.PeerID = ""
+	s.cfg.NoUPnP = false
+	s.cfg.UPnPTimeout = 0
+	s.cfg.LogLevel = ""
+	s.cfg.TrayEnabled = false
+	s.cfg.PunchTimeout = 0
+	s.cfg.ForceRelay = false
+	s.cfg.AllowLegacy = false
+	s.cfg.Forwards = nil
 }
 
 func (s *clientConfigState) handleRuntime(w http.ResponseWriter, r *http.Request) {

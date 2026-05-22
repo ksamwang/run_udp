@@ -31,7 +31,7 @@ type tokenResponse struct {
 
 func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 		return
 	}
 	var req struct {
@@ -39,7 +39,7 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	username := strings.TrimSpace(req.Username)
@@ -48,7 +48,7 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := a.db.GetAdminUserByUsername(r.Context(), username)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	resp, err := a.issueAdminTokenPair(r.Context(), r, user)
@@ -57,33 +57,33 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleAdminRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 		return
 	}
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.RefreshToken) == "" {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	hash := hashRefreshToken(req.RefreshToken)
 	stored, err := a.db.GetAdminRefreshToken(r.Context(), hash)
 	if err != nil || stored.RevokedAt != "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	exp, err := time.Parse(time.RFC3339, stored.ExpiresAt)
 	if err != nil || time.Now().After(exp) {
 		_ = a.db.RevokeAdminRefreshToken(r.Context(), hash)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	_ = a.db.TouchAdminRefreshToken(r.Context(), stored.ID)
 	_ = a.db.RevokeAdminRefreshToken(r.Context(), hash)
 	user, err := a.db.GetAdminUserByID(r.Context(), stored.UserID)
 	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	resp, err := a.issueAdminTokenPair(r.Context(), r, user)
@@ -92,7 +92,7 @@ func (a *App) handleAdminRefresh(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 		return
 	}
 	var req struct {
@@ -109,21 +109,21 @@ func (a *App) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
 		if token == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 			return
 		}
 		claims, err := a.verifyAccessToken(token)
 		if err != nil || claims.Subject == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 			return
 		}
 		user, err := a.db.GetAdminUserByID(r.Context(), claims.Subject)
 		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 			return
 		}
 		if user.PasswordVersion != claims.PasswordVersion {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), adminClaimsKey{}, claims)))
@@ -300,7 +300,7 @@ func (a *App) handleAdminMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user.PasswordVersion != claims.PasswordVersion {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": adminUser(user)})
