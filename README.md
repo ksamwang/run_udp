@@ -60,7 +60,7 @@ npm run dev
 默认 Vite 开发服务器监听 `http://localhost:5173`，并把 `/api`、`/health` 代理到 `http://127.0.0.1:7001`。如果生产环境前端和 API 分离部署，请设置：
 
 ```text
-VITE_API_BASE_URL=http://<server>:7001
+VITE_API_BASE_URL=https://api.tunnel.wanglv.top
 ```
 
 服务端 CORS 当前直接放行全部来源，前端和 API 分离部署时无需额外配置来源白名单。
@@ -321,7 +321,7 @@ npm run dev
 The Vite dev server listens on `http://localhost:5173` and proxies `/api` and `/health` to `http://127.0.0.1:7001`. For separated production deployment, set:
 
 ```text
-VITE_API_BASE_URL=http://<server>:7001
+VITE_API_BASE_URL=https://api.tunnel.wanglv.top
 ```
 
 The server currently allows all CORS origins, so separated frontend/API deployments do not need an origin allowlist.
