@@ -24,7 +24,8 @@
     {
       "label": "frontend-admin: dev",
       "type": "shell",
-      "command": "npm run dev -- --host 127.0.0.1",
+      "command": "npm",
+      "args": ["run", "dev"],
       "options": {
         "cwd": "${workspaceFolder}/frontend-admin"
       },
@@ -37,7 +38,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",
-          "endsPattern": ".*(ready in|Local:.*http://(127\\.0\\.0\\.1|localhost):5173).*"
+          "endsPattern": ".*(VITE v.* ready in|Local:.*http://(0\\.0\\.0\\.0|127\\.0\\.0\\.1|localhost):5173).*"
         }
       }
     }

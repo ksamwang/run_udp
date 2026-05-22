@@ -14,7 +14,7 @@
       "name": "Chrome: 调试管理后台",
       "type": "chrome",
       "request": "launch",
-      "url": "http://127.0.0.1:5173",
+      "url": "http://localhost:5173",
       "webRoot": "${workspaceFolder}/frontend-admin/src",
       "preLaunchTask": "frontend-admin: dev"
     }
