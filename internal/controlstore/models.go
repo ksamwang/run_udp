@@ -107,6 +107,7 @@ type AdminUser struct {
 	Name                string `gorm:"size:255;not null;default:'';column:name"`
 	Role                string `gorm:"size:64;not null;default:'admin';column:role"`
 	ForcePasswordChange bool   `gorm:"not null;default:true;column:force_password_change"`
+	PasswordVersion     int64  `gorm:"not null;default:1;column:password_version"`
 	PasswordHash        string `gorm:"size:191;not null;column:password_hash"`
 	CreatedAt           string `gorm:"size:64;not null;column:created_at"`
 	UpdatedAt           string `gorm:"size:64;not null;column:updated_at"`

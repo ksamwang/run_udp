@@ -388,6 +388,7 @@ func (s *MySQLStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) 
 			"name":                  user.Name,
 			"role":                  user.Role,
 			"force_password_change": user.ForcePasswordChange,
+			"password_version":      user.PasswordVersion,
 			"password_hash":         user.PasswordHash,
 			"updated_at":            user.UpdatedAt,
 		}),
@@ -397,6 +398,7 @@ func (s *MySQLStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) 
 		Name:                user.Name,
 		Role:                user.Role,
 		ForcePasswordChange: user.ForcePasswordChange,
+		PasswordVersion:     user.PasswordVersion,
 		PasswordHash:        user.PasswordHash,
 		CreatedAt:           user.CreatedAt,
 		UpdatedAt:           user.UpdatedAt,
@@ -423,7 +425,7 @@ func (s *MySQLStore) GetAdminUserByID(ctx context.Context, id string) (store.Adm
 
 func (s *MySQLStore) UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error {
 	tx := s.db.WithContext(ctx).Model(&AdminUser{}).Where("id = ?", userID).
-		Updates(map[string]any{"password_hash": passwordHash, "updated_at": nowString()})
+		Updates(map[string]any{"password_hash": passwordHash, "password_version": gorm.Expr("password_version + 1"), "updated_at": nowString()})
 	if tx.Error != nil {
 		return tx.Error
 	}
@@ -551,6 +553,7 @@ func (u AdminUser) toStore() store.AdminUser {
 		Name:                u.Name,
 		Role:                u.Role,
 		ForcePasswordChange: u.ForcePasswordChange,
+		PasswordVersion:     u.PasswordVersion,
 		PasswordHash:        u.PasswordHash,
 		CreatedAt:           u.CreatedAt,
 		UpdatedAt:           u.UpdatedAt,

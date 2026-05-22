@@ -25,6 +25,7 @@ type tokenResponse struct {
 	RefreshToken        string         `json:"refresh_token,omitempty"`
 	RefreshExpiresAt    string         `json:"refresh_expires_at,omitempty"`
 	ForcePasswordChange bool           `json:"force_password_change,omitempty"`
+	PasswordVersion     int64          `json:"password_version,omitempty"`
 	User                map[string]any `json:"user"`
 }
 
@@ -116,6 +117,15 @@ func (a *App) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		user, err := a.db.GetAdminUserByID(r.Context(), claims.Subject)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if user.PasswordVersion != claims.PasswordVersion {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), adminClaimsKey{}, claims)))
 	}
 }
@@ -132,10 +142,11 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request, user sto
 	accessExp := time.Now().Add(accessTTL)
 	refreshExp := time.Now().Add(refreshTTL)
 	access, err := a.signAccessToken(adminClaims{
-		Subject: user.ID,
-		Role:    user.Role,
-		Issued:  time.Now().Unix(),
-		Expires: accessExp.Unix(),
+		Subject:         user.ID,
+		Role:            user.Role,
+		PasswordVersion: user.PasswordVersion,
+		Issued:          time.Now().Unix(),
+		Expires:         accessExp.Unix(),
 	})
 	if err != nil {
 		return tokenResponse{}, err
@@ -153,15 +164,17 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request, user sto
 		RefreshToken:        refresh,
 		RefreshExpiresAt:    refreshExp.Format(time.RFC3339),
 		ForcePasswordChange: user.ForcePasswordChange,
+		PasswordVersion:     user.PasswordVersion,
 		User:                adminUser(user),
 	}, nil
 }
 
 type adminClaims struct {
-	Subject string `json:"sub"`
-	Role    string `json:"role"`
-	Issued  int64  `json:"iat"`
-	Expires int64  `json:"exp"`
+	Subject         string `json:"sub"`
+	Role            string `json:"role"`
+	PasswordVersion int64  `json:"pv"`
+	Issued          int64  `json:"iat"`
+	Expires         int64  `json:"exp"`
 }
 
 type adminClaimsKey struct{}
@@ -284,6 +297,10 @@ func (a *App) handleAdminMe(w http.ResponseWriter, r *http.Request) {
 	user, err := a.db.GetAdminUserByID(r.Context(), claims.Subject)
 	if err != nil {
 		writeJSONOrError(w, nil, err)
+		return
+	}
+	if user.PasswordVersion != claims.PasswordVersion {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": adminUser(user)})

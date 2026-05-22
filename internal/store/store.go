@@ -94,6 +94,7 @@ type AdminUser struct {
 	Name                string `json:"name"`
 	Role                string `json:"role"`
 	ForcePasswordChange bool   `json:"force_password_change"`
+	PasswordVersion     int64  `json:"password_version"`
 	PasswordHash        string `json:"-"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`

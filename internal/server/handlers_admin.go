@@ -314,6 +314,10 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
+	if claims.PasswordVersion != 0 && user.PasswordVersion != claims.PasswordVersion {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)) != nil {
 		http.Error(w, "current password is wrong", http.StatusUnauthorized)
 		return

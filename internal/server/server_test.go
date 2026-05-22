@@ -547,8 +547,16 @@ func TestChangePasswordClearsForceFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
-		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordHash: string(hash),
+		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordVersion: 1, PasswordHash: string(hash),
 	}); err != nil {
+		t.Fatal(err)
+	}
+	loginRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": "admin", "password": pass}, nil)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	var loginResp tokenResponse
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginResp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -566,6 +574,11 @@ func TestChangePasswordClearsForceFlag(t *testing.T) {
 	if user.ForcePasswordChange {
 		t.Fatalf("force flag not cleared: %+v", user)
 	}
+
+	rec = doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/me", nil, map[string]string{"Authorization": "Bearer " + loginResp.AccessToken})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("old access token should be invalidated after password change, got=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestChangePasswordRevokesExistingRefreshTokens(t *testing.T) {
@@ -576,7 +589,7 @@ func TestChangePasswordRevokesExistingRefreshTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
-		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordHash: string(hash),
+		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordVersion: 1, PasswordHash: string(hash),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -680,16 +693,17 @@ func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.
 			t.Fatal(err)
 		}
 		if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
-			ID: defaultAdminUsername, Username: defaultAdminUsername, Name: "Administrator", Role: "admin", PasswordHash: string(hash),
+			ID: defaultAdminUsername, Username: defaultAdminUsername, Name: "Administrator", Role: "admin", PasswordVersion: 1, PasswordHash: string(hash),
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	token, err := a.signAccessToken(adminClaims{
-		Subject: defaultAdminUsername,
-		Role:    "admin",
-		Issued:  time.Now().Unix(),
-		Expires: time.Now().Add(time.Hour).Unix(),
+		Subject:         defaultAdminUsername,
+		Role:            "admin",
+		PasswordVersion: 1,
+		Issued:          time.Now().Unix(),
+		Expires:         time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -386,6 +386,7 @@ func (s *fakeStore) UpdateAdminPassword(ctx context.Context, userID, passwordHas
 		return sql.ErrNoRows
 	}
 	user.PasswordHash = passwordHash
+	user.PasswordVersion++
 	user.UpdatedAt = nowTestString()
 	s.adminUsers[userID] = user
 	return nil

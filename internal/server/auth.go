@@ -38,6 +38,7 @@ func (a *App) ensureAdminUser() error {
 			Name:                "Administrator",
 			Role:                "admin",
 			ForcePasswordChange: true,
+			PasswordVersion:     1,
 			PasswordHash:        legacy,
 		}); err != nil {
 			return err
@@ -54,6 +55,7 @@ func (a *App) ensureAdminUser() error {
 		Name:                "Administrator",
 		Role:                "admin",
 		ForcePasswordChange: true,
+		PasswordVersion:     1,
 		PasswordHash:        string(hash),
 	})
 }
