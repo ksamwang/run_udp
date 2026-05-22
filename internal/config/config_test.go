@@ -26,26 +26,9 @@ func TestLoadClientConfigDurations(t *testing.T) {
 }
 
 func TestLoadMissingConfigIsAllowed(t *testing.T) {
-	cfg := DefaultServer()
+	cfg := DefaultClient()
 	if err := LoadJSON(filepath.Join(t.TempDir(), "missing.json"), &cfg); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestServerAllowRelayDefaultsToTrueWhenOmitted(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"psk":"secret","allow_legacy":true}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := DefaultServer()
-	if err := LoadJSON(path, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.AllowRelay {
-		t.Fatal("allow_relay should remain true when omitted")
-	}
-	if !cfg.AllowLegacy {
-		t.Fatal("allow_legacy should be loaded")
 	}
 }
 

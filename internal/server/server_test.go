@@ -498,6 +498,18 @@ func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 	}
 }
 
+func TestEnsureAdminPasswordCreatesDefaultAdmin(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.ensureAdminPassword(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"password": defaultAdminPassword}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminConsoleAPISmoke(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

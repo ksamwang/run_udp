@@ -22,7 +22,7 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 #### 最小上线流程
 
 1. 在一台公网可达的 Linux 机器上部署服务端，开放 `7000/udp`、`7002/udp`、`7001/tcp`
-2. 配置好 `.env`，至少确认 `PSK`、`ADMIN_PASSWORD` 和 `CONTROL_DATABASE_DSN`
+2. 配置好 `.env`，至少确认 `PSK`、`ADMIN_JWT_SECRET` 和 `CONTROL_DATABASE_DSN`
 3. 启动服务端并确认 `http://<server>:7001/health` 正常
 4. 在每台 Windows 客户端旁放置 `client.exe` 和最小 `client.json`
 5. 在 `client.json` 中填写 `server_http` 和 `psk`
@@ -97,7 +97,6 @@ UDP_LISTEN=:7000
 STUN_ALT_LISTEN=:7002
 HTTP_LISTEN=:7001
 CONTROL_DATABASE_DSN=udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
-ADMIN_PASSWORD=change-me
 ADMIN_JWT_SECRET=change-this-admin-jwt-secret
 PSK=change-this-deployment-secret
 ```
@@ -116,9 +115,9 @@ PSK=change-this-deployment-secret
 | 7002 | UDP | NAT 探测备用 STUN |
 | 7001 | TCP | Web 控制面和 API |
 
-访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 MySQL 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
+访问已部署的 React 管理后台，首次初始化账号为 `admin`，密码为 `admin`。登录后请立即在设置页修改管理员密码。
 
-`.env` 只保存服务启动前必须知道的端口、数据库连接、管理员初始密码、JWT 密钥和 PSK。隧道策略、客户端默认参数、客户端发布信息会存储在 MySQL `system_settings` 表，并通过管理后台设置页维护。
+`.env` 只保存服务启动前必须知道的端口、数据库连接、JWT 密钥和 PSK。数据库固定为 MySQL，Gorm 会在启动时自动建表。隧道策略、客户端默认参数、客户端发布信息会存储在 MySQL `system_settings` 表，并通过管理后台设置页维护。
 
 服务端 HTTP API 已切换到 Gin。控制库为 MySQL 5.5，`internal/controlstore` 按 MySQL 5.5 兼容方式配置 Gorm 连接和模型。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
@@ -273,7 +272,7 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 #### Quick Start Checklist
 
 1. Deploy the server on a publicly reachable Linux host and open `7000/udp`, `7002/udp`, and `7001/tcp`
-2. Configure `.env`, at minimum setting `PSK`, `ADMIN_PASSWORD`, and `CONTROL_DATABASE_DSN`
+2. Configure `.env`, at minimum setting `PSK`, `ADMIN_JWT_SECRET`, and `CONTROL_DATABASE_DSN`
 3. Start the server and verify `http://<server>:7001/health` is healthy
 4. Place `client.exe` and a minimal `client.json` on each Windows client
 5. Fill in `server_http` and `psk` in `client.json`
@@ -348,7 +347,6 @@ UDP_LISTEN=:7000
 STUN_ALT_LISTEN=:7002
 HTTP_LISTEN=:7001
 CONTROL_DATABASE_DSN=udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
-ADMIN_PASSWORD=change-me
 ADMIN_JWT_SECRET=change-this-admin-jwt-secret
 PSK=change-this-deployment-secret
 ```
@@ -367,9 +365,9 @@ Open these ports:
 | 7002 | UDP | Alternate STUN port for NAT probing |
 | 7001 | TCP | HTTP API |
 
-Open the deployed React admin console and log in with `admin_password`.
+Open the deployed React admin console and log in with the initial account `admin` and password `admin`. Change the admin password from the settings page immediately after login.
 
-`.env` only stores values required before the service can start: listen addresses, database connection, initial admin password, JWT secret, and PSK. Tunnel policy, client defaults, and client release metadata are stored in the MySQL `system_settings` table and managed from the admin settings page.
+`.env` only stores values required before the service can start: listen addresses, database connection, JWT secret, and PSK. The database is fixed to MySQL, and Gorm auto-migrates tables on startup. Tunnel policy, client defaults, and client release metadata are stored in the MySQL `system_settings` table and managed from the admin settings page.
 
 The server HTTP API now runs on Gin. The control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and models. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
 

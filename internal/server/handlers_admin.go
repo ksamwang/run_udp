@@ -153,7 +153,6 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"udp_listen":                               a.cfg.UDPListen,
 			"stun_alt_listen":                          a.cfg.StunAltListen,
 			"http_listen":                              a.cfg.HTTPListen,
-			"control_database_driver":                  a.cfg.ControlDatabaseDriver,
 			"control_database_configured":              a.cfg.ControlDatabaseDSN != "",
 			"psk_configured":                           a.cfg.PSK != "",
 			"peer_ttl":                                 a.cfg.PeerTTL.String(),

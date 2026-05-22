@@ -208,12 +208,10 @@
 
 ## Storage Direction
 
-控制库为 MySQL 5.5，`internal/controlstore` 提供 Gorm + MySQL 5.5 兼容模型和完整读写实现，配置项如下：
+控制库固定为 MySQL 5.5，`internal/controlstore` 提供独立 Gorm 模型和完整读写实现。服务启动时会自动执行 Gorm AutoMigrate，启动配置只需要提供 DSN：
 
 ```dotenv
-CONTROL_DATABASE_DRIVER=mysql
 CONTROL_DATABASE_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
-CONTROL_DATABASE_AUTO_MIGRATE=true
 ```
 
 运行期隧道策略、客户端默认配置、客户端发布信息存储在 `system_settings` 表，服务启动时会按代码默认值补齐缺失键，管理后台设置页通过 `PATCH /api/admin/settings` 持久化更新。

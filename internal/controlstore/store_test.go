@@ -16,7 +16,7 @@ func TestMySQLStoreIntegration(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set UDP_TUNNEL_MYSQL_DSN to run MySQL integration test")
 	}
-	s, err := Open(Config{Driver: DriverMySQL, DSN: dsn, AutoMigrate: true})
+	s, err := Open(Config{DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}

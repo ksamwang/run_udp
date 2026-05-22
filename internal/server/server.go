@@ -88,9 +88,7 @@ type clientReleaseResponse struct {
 
 func New(cfg config.Server) (*App, error) {
 	db, err := controlstore.Open(controlstore.Config{
-		Driver:      cfg.ControlDatabaseDriver,
-		DSN:         cfg.ControlDatabaseDSN,
-		AutoMigrate: cfg.ControlDatabaseAutoMigrate,
+		DSN: cfg.ControlDatabaseDSN,
 	})
 	if err != nil {
 		return nil, err

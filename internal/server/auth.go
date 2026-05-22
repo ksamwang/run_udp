@@ -2,11 +2,12 @@ package server
 
 import (
 	"crypto/subtle"
-	"log"
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+const defaultAdminPassword = "admin"
 
 func (a *App) requireAgent(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -19,21 +20,12 @@ func (a *App) requireAgent(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (a *App) ensureAdminPassword() error {
-	hash := a.cfg.AdminPasswordHash
-	if hash == "" {
-		if existing, _ := a.db.GetMeta(rctx(), "admin_password_hash"); existing != "" {
-			return nil
-		}
-		pass := a.cfg.AdminPassword
-		if pass == "" {
-			pass = "admin"
-			log.Printf("WARN admin password defaulting to %q; change it in .env or with -admin-password", pass)
-		}
-		b, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
-		hash = string(b)
+	if existing, _ := a.db.GetMeta(rctx(), "admin_password_hash"); existing != "" {
+		return nil
 	}
-	return a.db.PutMeta(rctx(), "admin_password_hash", hash)
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return a.db.PutMeta(rctx(), "admin_password_hash", string(hash))
 }
