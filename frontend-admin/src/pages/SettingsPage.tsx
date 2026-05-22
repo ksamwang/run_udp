@@ -61,6 +61,27 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
     }
     passwordMutation.mutate({ current_password: values.current_password, new_password: values.new_password })
   }
+  function submitSettings() {
+    const values = form.getFieldsValue(true) as SettingsForm
+    const durationError = validateDurationValues(values)
+    if (durationError) {
+      message.error(durationError)
+      return
+    }
+    const payload = formToSettings(values)
+    const riskyTouched = payload.allow_legacy || payload.client_force_relay || payload.client_allow_legacy
+    if (riskyTouched) {
+      confirm({
+        title: '确认保存高风险设置',
+        content: '这些选项会放宽安全边界或改变连接策略，请确认你了解影响。',
+        okText: '继续保存',
+        cancelText: '取消',
+        onOk: () => saveMutation.mutate(payload),
+      })
+      return
+    }
+    saveMutation.mutate(payload)
+  }
 
   useEffect(() => {
     if (settings.data) {
@@ -185,7 +206,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           <Typography.Title level={3}>设置</Typography.Title>
           <Typography.Text type="secondary">管理隧道策略、客户端默认参数和发布信息。</Typography.Text>
         </div>
-        <Button type="primary" icon={<SaveOutlined />} loading={saveMutation.isPending} onClick={() => form.submit()}>
+        <Button type="primary" icon={<SaveOutlined />} loading={saveMutation.isPending} onClick={submitSettings}>
           保存设置
         </Button>
       </div>
@@ -202,26 +223,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           message="当前账号是默认管理员，首次登录后需要先修改密码。"
         />
       ) : null}
-      <Form form={form} layout="vertical" onFinish={(values) => {
-        const durationError = validateDurationValues(values)
-        if (durationError) {
-          message.error(durationError)
-          return
-        }
-        const payload = formToSettings(values)
-        const riskyTouched = payload.allow_legacy || payload.client_force_relay || payload.client_allow_legacy
-        if (riskyTouched) {
-          confirm({
-            title: '确认保存高风险设置',
-            content: '这些选项会放宽安全边界或改变连接策略，请确认你了解影响。',
-            okText: '继续保存',
-            cancelText: '取消',
-            onOk: () => saveMutation.mutate(payload),
-          })
-          return
-        }
-        saveMutation.mutate(payload)
-      }}>
+      <Form form={form} layout="vertical">
         <Tabs items={tabs} />
       </Form>
     </div>
