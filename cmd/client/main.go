@@ -1407,7 +1407,7 @@ func stableDeviceID(seed string) string {
 	}
 	sum := sha256.Sum256([]byte(seed))
 	encoded := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:])
-	return "dev-" + strings.ToLower(encoded[:16])
+	return "DEV-" + encoded[:16]
 }
 
 func agentBootstrap(cfg config.Client) (bootstrapResponse, error) {

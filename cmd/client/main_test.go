@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +168,7 @@ func TestStableDeviceIDFromMachineUUID(t *testing.T) {
 	if first == other {
 		t.Fatalf("different UUIDs should produce different ids: %q", first)
 	}
-	if len(first) != len("dev-")+16 || first[:4] != "dev-" {
+	if len(first) != len("DEV-")+16 || first[:4] != "DEV-" || first != strings.ToUpper(first) {
 		t.Fatalf("unexpected id format: %q", first)
 	}
 }

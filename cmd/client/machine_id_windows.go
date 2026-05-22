@@ -5,10 +5,13 @@ package main
 import (
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 func machineUUID() string {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID").Output()
+	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
