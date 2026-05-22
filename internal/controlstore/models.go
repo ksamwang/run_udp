@@ -185,6 +185,11 @@ type VirtualPeerState struct {
 	NetworkID        int64  `gorm:"primaryKey;column:network_id"`
 	State            string `gorm:"size:32;not null;default:'';column:state"`
 	Path             string `gorm:"size:32;not null;default:'';column:path"`
+	AdapterState     string `gorm:"size:32;not null;default:'';column:adapter_state"`
+	RouteConflict    string `gorm:"type:text;not null;column:route_conflict"`
+	SelectedCIDR     string `gorm:"size:64;not null;default:'';column:selected_cidr"`
+	MTU              int    `gorm:"not null;default:0;column:mtu"`
+	MSS              int    `gorm:"not null;default:0;column:mss"`
 	RTTMs            int    `gorm:"not null;default:0;column:rtt_ms"`
 	TxBytes          int64  `gorm:"not null;default:0;column:tx_bytes"`
 	RxBytes          int64  `gorm:"not null;default:0;column:rx_bytes"`

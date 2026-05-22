@@ -3,11 +3,14 @@
 package wintun
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net"
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"udp_tunnel_demo/internal/vnet"
 
 	wintunlib "golang.zx2c4.com/wintun"
 )
@@ -111,4 +114,42 @@ func runNetsh(args ...string) error {
 func isDuplicateRouteError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "object already exists") || strings.Contains(msg, "已存在")
+}
+
+func listRoutes() ([]vnet.Route, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+		"Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,InterfaceAlias | ConvertTo-Csv -NoTypeInformation")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list routes: %w", err)
+	}
+	r := csv.NewReader(strings.NewReader(string(out)))
+	rows, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse routes: %w", err)
+	}
+	routes := make([]vnet.Route, 0, len(rows))
+	for i, row := range rows {
+		if i == 0 || len(row) < 2 {
+			continue
+		}
+		routes = append(routes, vnet.Route{CIDR: row[0], Interface: row[1]})
+	}
+	return routes, nil
+}
+
+func cleanup(cfg Config) error {
+	cfg = normalizeConfig(cfg)
+	if strings.TrimSpace(cfg.CIDR) != "" {
+		if err := runNetsh("interface", "ipv4", "delete", "route", cfg.CIDR, cfg.Name); err != nil && !isMissingRouteError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func isMissingRouteError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "element not found") || strings.Contains(msg, "找不到") || strings.Contains(msg, "不存在")
 }

@@ -160,6 +160,11 @@ type VirtualPeerState struct {
 	NetworkID        int64  `json:"network_id"`
 	State            string `json:"state"`
 	Path             string `json:"path"`
+	AdapterState     string `json:"adapter_state"`
+	RouteConflict    string `json:"route_conflict"`
+	SelectedCIDR     string `json:"selected_cidr"`
+	MTU              int    `json:"mtu"`
+	MSS              int    `json:"mss"`
 	RTTMs            int    `json:"rtt_ms"`
 	TxBytes          int64  `json:"tx_bytes"`
 	RxBytes          int64  `json:"rx_bytes"`

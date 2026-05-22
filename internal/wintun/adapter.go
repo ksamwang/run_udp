@@ -3,6 +3,8 @@ package wintun
 import (
 	"errors"
 	"net"
+
+	"udp_tunnel_demo/internal/vnet"
 )
 
 const (
@@ -23,8 +25,35 @@ type Adapter struct {
 	impl adapterImpl
 }
 
+type SystemState struct {
+	Routes       []vnet.Route  `json:"routes"`
+	Conflict     vnet.Conflict `json:"conflict"`
+	SelectedCIDR string        `json:"selected_cidr"`
+	MSS          int           `json:"mss"`
+}
+
 func OpenOrCreate(cfg Config) (*Adapter, error) {
 	return openOrCreate(cfg)
+}
+
+func InspectSystem(preferredCIDR string, mtu int) (SystemState, error) {
+	routes, err := listRoutes()
+	if err != nil {
+		return SystemState{}, err
+	}
+	conflict, err := vnet.DetectConflict(preferredCIDR, routes)
+	if err != nil {
+		return SystemState{}, err
+	}
+	selected, err := vnet.NextAvailableCIDR(preferredCIDR, routes)
+	if err != nil {
+		return SystemState{}, err
+	}
+	return SystemState{Routes: routes, Conflict: conflict, SelectedCIDR: selected, MSS: vnet.MSSForMTU(mtu)}, nil
+}
+
+func Cleanup(cfg Config) error {
+	return cleanup(cfg)
 }
 
 func (a *Adapter) Close() error {

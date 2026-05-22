@@ -52,6 +52,17 @@ func main() {
 }
 
 func runWintunPOC(ip, cidr string, mtu int) error {
+	state, err := wintun.InspectSystem(cidr, mtu)
+	if err != nil {
+		return err
+	}
+	if state.Conflict.Conflicts {
+		log.Printf("route conflict detected: requested=%s existing=%s interface=%s selected=%s",
+			cidr, state.Conflict.Existing.CIDR, state.Conflict.Existing.Interface, state.SelectedCIDR)
+		cidr = state.SelectedCIDR
+	} else {
+		log.Printf("route conflict check passed: cidr=%s mss=%d", cidr, state.MSS)
+	}
 	adapter, err := wintun.OpenOrCreate(wintun.Config{
 		Name: wintun.DefaultAdapterName,
 		IP:   net.ParseIP(ip),
@@ -72,5 +83,5 @@ func runWintunPOC(ip, cidr string, mtu int) error {
 	}
 	log.Printf("Wintun PoC ready: adapter=%q ip=%s cidr=%s mtu=%d", wintun.DefaultAdapterName, ip, cidr, mtu)
 	time.Sleep(3 * time.Second)
-	return nil
+	return wintun.Cleanup(wintun.Config{Name: wintun.DefaultAdapterName, CIDR: cidr})
 }

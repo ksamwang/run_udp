@@ -304,7 +304,9 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	}
 	if err := s.PutVirtualPeerState(ctx, store.VirtualPeerState{
 		DeviceID: "codex-test-A", PeerID: "codex-test-B", NetworkID: defaultNetwork.ID,
-		State: "connected", Path: "p2p", RTTMs: 10, TxBytes: 100, RxBytes: 200, LastHandshakeAt: "2026-05-23T01:00:00Z",
+		State: "connected", Path: "p2p", AdapterState: "up", RouteConflict: "172.16.10.0/24 overlaps vpn",
+		SelectedCIDR: "172.16.11.0/24", MTU: 1280, MSS: 1200, RTTMs: 10, TxBytes: 100, RxBytes: 200,
+		LastHandshakeAt: "2026-05-23T01:00:00Z",
 	}); err != nil {
 		return err
 	}
@@ -312,7 +314,8 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	if err != nil {
 		return err
 	}
-	if len(peerStates) != 1 || peerStates[0].Path != "p2p" || peerStates[0].TxBytes != 100 {
+	if len(peerStates) != 1 || peerStates[0].Path != "p2p" || peerStates[0].TxBytes != 100 ||
+		peerStates[0].AdapterState != "up" || peerStates[0].SelectedCIDR != "172.16.11.0/24" || peerStates[0].MSS != 1200 {
 		return failf("bad virtual peer states: %+v", peerStates)
 	}
 	if err := s.DeleteVirtualACLRule(ctx, acl.ID); err != nil {
