@@ -40,8 +40,9 @@ build-all.bat
 
 - `dist/server`：Linux amd64 服务端
 - `dist/client.exe`：Windows amd64 客户端
+- `dist/frontend-admin`：独立管理后台静态文件
 
-管理后台单独构建：
+`build-all.bat` 会同时构建管理后台。也可以单独构建：
 
 ```bat
 cd frontend-admin
@@ -63,6 +64,23 @@ VITE_API_BASE_URL=http://<server>:7001
 ```
 
 同时在 `server.json` 的 `admin_allowed_origins` 中加入管理后台地址。
+
+生产部署时，`dist/frontend-admin` 是纯静态站点，可以由 Nginx、对象存储或任意静态文件服务托管。前端和 API 分离部署时，服务端只暴露 API 和 UDP 服务；旧的内嵌 Web 管理页暂时保留用于兼容，确认 React 管理后台稳定后再删除。
+
+最小 Nginx 示例：
+
+```nginx
+server {
+  listen 80;
+  server_name admin.example.com;
+  root /opt/udp-tunnel/frontend-admin;
+  index index.html;
+
+  location / {
+    try_files $uri /index.html;
+  }
+}
+```
 
 #### 2. 部署服务端
 
@@ -283,8 +301,9 @@ Build outputs:
 
 - `dist/server`: Linux amd64 server
 - `dist/client.exe`: Windows amd64 client
+- `dist/frontend-admin`: standalone admin console static files
 
-Build the admin console separately:
+`build-all.bat` builds the admin console as well. You can also build it separately:
 
 ```bat
 cd frontend-admin
@@ -306,6 +325,23 @@ VITE_API_BASE_URL=http://<server>:7001
 ```
 
 Also add the admin console origin to `admin_allowed_origins` in `server.json`.
+
+For production, `dist/frontend-admin` is a plain static site and can be served by Nginx, object storage, or any static file server. With separated frontend/API deployment, the Go server only serves APIs and UDP services. The legacy embedded Web UI is kept temporarily for compatibility and can be removed after the React admin console is verified stable.
+
+Minimal Nginx example:
+
+```nginx
+server {
+  listen 80;
+  server_name admin.example.com;
+  root /opt/udp-tunnel/frontend-admin;
+  index index.html;
+
+  location / {
+    try_files $uri /index.html;
+  }
+}
+```
 
 #### 2. Deploy the server
 
