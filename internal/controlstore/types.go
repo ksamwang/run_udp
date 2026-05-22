@@ -39,6 +39,7 @@ type Store interface {
 	GetAdminUserByUsername(ctx context.Context, username string) (store.AdminUser, error)
 	GetAdminUserByID(ctx context.Context, id string) (store.AdminUser, error)
 	UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error
+	ClearAdminPasswordChangeRequired(ctx context.Context, userID string) error
 	CreateAdminRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent, ip string) error
 	GetAdminRefreshToken(ctx context.Context, tokenHash string) (store.AdminRefreshToken, error)
 	TouchAdminRefreshToken(ctx context.Context, id int64) error

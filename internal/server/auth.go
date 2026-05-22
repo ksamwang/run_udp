@@ -33,11 +33,12 @@ func (a *App) ensureAdminUser() error {
 	}
 	if legacy, _ := a.db.GetMeta(ctx, "admin_password_hash"); legacy != "" {
 		if err := a.db.UpsertAdminUser(ctx, store.AdminUser{
-			ID:           defaultAdminUsername,
-			Username:     defaultAdminUsername,
-			Name:         "Administrator",
-			Role:         "admin",
-			PasswordHash: legacy,
+			ID:                  defaultAdminUsername,
+			Username:            defaultAdminUsername,
+			Name:                "Administrator",
+			Role:                "admin",
+			ForcePasswordChange: true,
+			PasswordHash:        legacy,
 		}); err != nil {
 			return err
 		}
@@ -48,10 +49,11 @@ func (a *App) ensureAdminUser() error {
 		return err
 	}
 	return a.db.UpsertAdminUser(ctx, store.AdminUser{
-		ID:           defaultAdminUsername,
-		Username:     defaultAdminUsername,
-		Name:         "Administrator",
-		Role:         "admin",
-		PasswordHash: string(hash),
+		ID:                  defaultAdminUsername,
+		Username:            defaultAdminUsername,
+		Name:                "Administrator",
+		Role:                "admin",
+		ForcePasswordChange: true,
+		PasswordHash:        string(hash),
 	})
 }

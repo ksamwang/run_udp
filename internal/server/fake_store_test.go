@@ -391,6 +391,19 @@ func (s *fakeStore) UpdateAdminPassword(ctx context.Context, userID, passwordHas
 	return nil
 }
 
+func (s *fakeStore) ClearAdminPasswordChangeRequired(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.adminUsers[userID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	user.ForcePasswordChange = false
+	user.UpdatedAt = nowTestString()
+	s.adminUsers[userID] = user
+	return nil
+}
+
 func (s *fakeStore) CreateAdminRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent, ip string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

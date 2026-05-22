@@ -10,11 +10,12 @@ type AppLayoutProps = {
   activePage: string
   pageTitle: string
   user?: AdminUser
+  lockedToSettings?: boolean
   onPageChange: (page: string) => void
   onLogout: () => void
 }
 
-export function AppLayout({ children, activePage, pageTitle, user, onPageChange, onLogout }: AppLayoutProps) {
+export function AppLayout({ children, activePage, pageTitle, user, lockedToSettings, onPageChange, onLogout }: AppLayoutProps) {
   return (
     <Layout className="app-shell">
       <Sider width={232} className="app-sider">
@@ -27,10 +28,10 @@ export function AppLayout({ children, activePage, pageTitle, user, onPageChange,
           selectedKeys={[activePage]}
           onClick={({ key }) => onPageChange(key)}
           items={[
-            { key: 'dashboard', icon: <DashboardOutlined />, label: '总览' },
-            { key: 'devices', icon: <TeamOutlined />, label: '设备' },
-            { key: 'rules', icon: <SwapOutlined />, label: '转发规则' },
-            { key: 'sessions', icon: <HistoryOutlined />, label: '会话' },
+            { key: 'dashboard', icon: <DashboardOutlined />, label: '总览', disabled: Boolean(lockedToSettings) },
+            { key: 'devices', icon: <TeamOutlined />, label: '设备', disabled: Boolean(lockedToSettings) },
+            { key: 'rules', icon: <SwapOutlined />, label: '转发规则', disabled: Boolean(lockedToSettings) },
+            { key: 'sessions', icon: <HistoryOutlined />, label: '会话', disabled: Boolean(lockedToSettings) },
             { key: 'settings', icon: <SettingOutlined />, label: '设置' },
           ]}
         />

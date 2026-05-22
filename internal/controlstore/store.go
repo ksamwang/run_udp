@@ -384,20 +384,22 @@ func (s *MySQLStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) 
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "id"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"username":      user.Username,
-			"name":          user.Name,
-			"role":          user.Role,
-			"password_hash": user.PasswordHash,
-			"updated_at":    user.UpdatedAt,
+			"username":              user.Username,
+			"name":                  user.Name,
+			"role":                  user.Role,
+			"force_password_change": user.ForcePasswordChange,
+			"password_hash":         user.PasswordHash,
+			"updated_at":            user.UpdatedAt,
 		}),
 	}).Create(&AdminUser{
-		ID:           user.ID,
-		Username:     user.Username,
-		Name:         user.Name,
-		Role:         user.Role,
-		PasswordHash: user.PasswordHash,
-		CreatedAt:    user.CreatedAt,
-		UpdatedAt:    user.UpdatedAt,
+		ID:                  user.ID,
+		Username:            user.Username,
+		Name:                user.Name,
+		Role:                user.Role,
+		ForcePasswordChange: user.ForcePasswordChange,
+		PasswordHash:        user.PasswordHash,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
 	}).Error
 }
 
@@ -422,6 +424,18 @@ func (s *MySQLStore) GetAdminUserByID(ctx context.Context, id string) (store.Adm
 func (s *MySQLStore) UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error {
 	tx := s.db.WithContext(ctx).Model(&AdminUser{}).Where("id = ?", userID).
 		Updates(map[string]any{"password_hash": passwordHash, "updated_at": nowString()})
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) ClearAdminPasswordChangeRequired(ctx context.Context, userID string) error {
+	tx := s.db.WithContext(ctx).Model(&AdminUser{}).Where("id = ?", userID).
+		Updates(map[string]any{"force_password_change": false, "updated_at": nowString()})
 	if tx.Error != nil {
 		return tx.Error
 	}
@@ -526,13 +540,14 @@ func (t AdminRefreshToken) toStore() store.AdminRefreshToken {
 
 func (u AdminUser) toStore() store.AdminUser {
 	return store.AdminUser{
-		ID:           u.ID,
-		Username:     u.Username,
-		Name:         u.Name,
-		Role:         u.Role,
-		PasswordHash: u.PasswordHash,
-		CreatedAt:    u.CreatedAt,
-		UpdatedAt:    u.UpdatedAt,
+		ID:                  u.ID,
+		Username:            u.Username,
+		Name:                u.Name,
+		Role:                u.Role,
+		ForcePasswordChange: u.ForcePasswordChange,
+		PasswordHash:        u.PasswordHash,
+		CreatedAt:           u.CreatedAt,
+		UpdatedAt:           u.UpdatedAt,
 	}
 }
 

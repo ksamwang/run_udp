@@ -510,6 +510,13 @@ func TestEnsureAdminPasswordCreatesDefaultAdmin(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var loginResp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &loginResp); err != nil {
+		t.Fatal(err)
+	}
+	if !loginResp.ForcePasswordChange {
+		t.Fatalf("expected default admin to require password change: %+v", loginResp)
+	}
 }
 
 func TestEnsureAdminUserMigratesLegacyPasswordHash(t *testing.T) {
@@ -529,6 +536,35 @@ func TestEnsureAdminUserMigratesLegacyPasswordHash(t *testing.T) {
 	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": defaultAdminUsername, "password": pass}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChangePasswordClearsForceFlag(t *testing.T) {
+	a := newTestApp(t)
+	pass := "secret-pass"
+	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
+		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordHash: string(hash),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/password", map[string]any{
+		"current_password": pass,
+		"new_password":     "new-secret-pass",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change password status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	user, err := a.db.GetAdminUserByID(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.ForcePasswordChange {
+		t.Fatalf("force flag not cleared: %+v", user)
 	}
 }
 

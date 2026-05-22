@@ -42,6 +42,7 @@ function AdminApp() {
     enabled: authenticated,
     retry: false,
   })
+  const forcePasswordChange = Boolean(me.data?.user.force_password_change)
 
   if (!authenticated) {
     return (
@@ -66,12 +67,17 @@ function AdminApp() {
     return null
   }
 
+  if (forcePasswordChange && activePage !== 'settings') {
+    return <Navigate to="/settings" replace />
+  }
+
   return (
     <AntApp>
       <AppLayout
         activePage={activePage}
         pageTitle={pageTitles[activePage] || '总览'}
         user={me.data?.user}
+        lockedToSettings={forcePasswordChange}
         onPageChange={(page) => navigate(pathFromPage(page))}
         onLogout={async () => {
           await logout()
@@ -86,7 +92,7 @@ function AdminApp() {
             <Route path="/devices" element={<DevicesPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<SettingsPage forcePasswordChange={forcePasswordChange} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Suspense>

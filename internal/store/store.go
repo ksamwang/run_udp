@@ -89,13 +89,14 @@ type AdminRefreshToken struct {
 }
 
 type AdminUser struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	Name         string `json:"name"`
-	Role         string `json:"role"`
-	PasswordHash string `json:"-"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID                  string `json:"id"`
+	Username            string `json:"username"`
+	Name                string `json:"name"`
+	Role                string `json:"role"`
+	ForcePasswordChange bool   `json:"force_password_change"`
+	PasswordHash        string `json:"-"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 const (

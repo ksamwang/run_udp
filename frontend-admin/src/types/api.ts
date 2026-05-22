@@ -3,6 +3,7 @@ export type AdminUser = {
   username: string
   name: string
   role: string
+  force_password_change?: boolean
 }
 
 export type AuthResponse = {

@@ -20,11 +20,12 @@ import (
 )
 
 type tokenResponse struct {
-	AccessToken      string         `json:"access_token"`
-	AccessExpiresAt  string         `json:"access_expires_at"`
-	RefreshToken     string         `json:"refresh_token,omitempty"`
-	RefreshExpiresAt string         `json:"refresh_expires_at,omitempty"`
-	User             map[string]any `json:"user"`
+	AccessToken         string         `json:"access_token"`
+	AccessExpiresAt     string         `json:"access_expires_at"`
+	RefreshToken        string         `json:"refresh_token,omitempty"`
+	RefreshExpiresAt    string         `json:"refresh_expires_at,omitempty"`
+	ForcePasswordChange bool           `json:"force_password_change,omitempty"`
+	User                map[string]any `json:"user"`
 }
 
 func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -147,11 +148,12 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request, user sto
 		return tokenResponse{}, err
 	}
 	return tokenResponse{
-		AccessToken:      access,
-		AccessExpiresAt:  accessExp.Format(time.RFC3339),
-		RefreshToken:     refresh,
-		RefreshExpiresAt: refreshExp.Format(time.RFC3339),
-		User:             adminUser(user),
+		AccessToken:         access,
+		AccessExpiresAt:     accessExp.Format(time.RFC3339),
+		RefreshToken:        refresh,
+		RefreshExpiresAt:    refreshExp.Format(time.RFC3339),
+		ForcePasswordChange: user.ForcePasswordChange,
+		User:                adminUser(user),
 	}, nil
 }
 
@@ -254,7 +256,13 @@ func adminUser(user store.AdminUser) map[string]any {
 	if name == "" {
 		name = user.Username
 	}
-	return map[string]any{"id": user.ID, "username": user.Username, "name": name, "role": user.Role}
+	return map[string]any{
+		"id":                    user.ID,
+		"username":              user.Username,
+		"name":                  name,
+		"role":                  user.Role,
+		"force_password_change": user.ForcePasswordChange,
+	}
 }
 
 func requestIP(r *http.Request) string {
