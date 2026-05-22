@@ -36,6 +36,18 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 build-all.bat
 ```
 
+发布 GitHub Release：
+
+```bat
+release.bat 1.0.0
+```
+
+脚本会要求工作区干净，调用 `build-all.bat` 构建产物，创建 `v1.0.0` tag，并通过 GitHub CLI 上传 Release 资产。可选传入 release notes 文件：
+
+```bat
+release.bat 1.0.0 CHANGELOG.md
+```
+
 构建产物：
 
 - `dist/server`：Linux amd64 服务端
@@ -295,6 +307,18 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 
 ```bat
 build-all.bat
+```
+
+Publish a GitHub Release:
+
+```bat
+release.bat 1.0.0
+```
+
+The script requires a clean working tree, runs `build-all.bat`, creates the `v1.0.0` tag, and uploads release assets through GitHub CLI. You can optionally pass a release notes file:
+
+```bat
+release.bat 1.0.0 CHANGELOG.md
 ```
 
 Build outputs:
