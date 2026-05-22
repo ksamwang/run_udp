@@ -202,16 +202,23 @@ internal/
 
 ## 阶段 4：Wintun PoC
 
-- [ ] 研究 Wintun 分发方式。
-- [ ] 明确 Wintun DLL/驱动打包方式、版本、许可证、校验。
-- [ ] 明确创建虚拟网卡、设置 IP、设置路由所需的管理员权限模型。
-- [ ] 明确 LAN Service 和托盘之间的职责边界：Service 负责虚拟网卡和数据面，托盘只做状态展示和控制入口。
-- [ ] `internal/wintun` 封装创建/打开适配器。
-- [ ] 设置虚拟 IP。
-- [ ] 设置 MTU，初始建议 `1280`。
-- [ ] 添加 `172.16.10.0/24` 路由。
-- [ ] 从 TUN 读取 IPv4 包。
-- [ ] 向 TUN 写入 IPv4 包。
+- [x] 研究 Wintun 分发方式。
+- [x] 明确 Wintun DLL/驱动打包方式、版本、许可证、校验。
+- [x] 明确创建虚拟网卡、设置 IP、设置路由所需的管理员权限模型。
+- [x] 明确 LAN Service 和托盘之间的职责边界：Service 负责虚拟网卡和数据面，托盘只做状态展示和控制入口。
+- [x] `internal/wintun` 封装创建/打开适配器。
+- [x] 设置虚拟 IP。
+- [x] 设置 MTU，初始建议 `1280`。
+- [x] 添加 `172.16.10.0/24` 路由。
+- [x] 从 TUN 读取 IPv4 包。
+- [x] 向 TUN 写入 IPv4 包。
+
+说明：
+
+- PoC 使用官方 `golang.zx2c4.com/wintun` Go 模块，避免手写 DLL 调用。
+- Windows 网络配置 PoC 使用隐藏窗口 `netsh` 设置 IPv4、MTU 和路由。
+- 创建虚拟网卡、设置 IP/MTU/路由需要管理员权限；后续正式运行时由 Windows Service 执行，托盘只做 UI/控制入口。
+- `UDPTunnelLAN -wintun-poc` 可创建/打开 `UDP Tunnel LAN` 适配器并配置 `172.16.10.0/24` PoC 路由。
 
 验收：
 
