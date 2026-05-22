@@ -17,7 +17,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",
-          "endsPattern": ".*rendezvous server \\(HTTP\\) listening.*"
+          "endsPattern": ".*rendezvous server.*listening.*"
         }
       }
     },
@@ -37,7 +37,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",
-          "endsPattern": ".*Local:.*http://127\\.0\\.0\\.1:5173"
+          "endsPattern": ".*(ready in|Local:.*http://(127\\.0\\.0\\.1|localhost):5173).*"
         }
       }
     }
