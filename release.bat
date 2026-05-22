@@ -3,8 +3,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
   echo Usage: release.bat ^<version^> [release-notes-file]
-  echo Example: release.bat 1.0.0
-  echo Example: release.bat v1.0.0 CHANGELOG.md
+  echo PowerShell example: .\release.bat 1.0.0
+  echo PowerShell example: .\release.bat v1.0.0 CHANGELOG.md
   exit /b 1
 )
 
