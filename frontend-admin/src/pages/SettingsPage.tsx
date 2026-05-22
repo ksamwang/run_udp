@@ -1,5 +1,5 @@
 import { ExclamationCircleOutlined, SaveOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Form, Input, Modal, message, Select, Space, Switch, Tabs, Typography } from 'antd'
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, message, Select, Space, Switch, Tabs, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo } from 'react'
 import { changePassword, getSettings, updateSettings } from '../api/settings'
@@ -11,8 +11,21 @@ type SettingsPageProps = {
   forcePasswordChange?: boolean
 }
 
+type DurationUnit = 's' | 'm' | 'h'
+type DurationInputValue = {
+  amount?: number
+  unit?: DurationUnit
+}
+type SettingsForm = Omit<Settings, 'peer_ttl' | 'pair_ttl' | 'relay_idle_timeout' | 'client_upnp_timeout' | 'client_punch_timeout'> & {
+  peer_ttl: DurationInputValue
+  pair_ttl: DurationInputValue
+  relay_idle_timeout: DurationInputValue
+  client_upnp_timeout: DurationInputValue
+  client_punch_timeout: DurationInputValue
+}
+
 export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
-  const [form] = Form.useForm<Settings>()
+  const [form] = Form.useForm<SettingsForm>()
   const [passwordForm] = Form.useForm<{ current_password: string; new_password: string; confirm_password: string }>()
   const queryClient = useQueryClient()
   const settings = useQuery({
@@ -51,7 +64,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
 
   useEffect(() => {
     if (settings.data) {
-      form.setFieldsValue(settings.data)
+      form.setFieldsValue(settingsToForm(settings.data))
     }
   }, [form, settings.data])
 
@@ -62,9 +75,9 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       children: (
         <Card>
           <div className="settings-grid">
-            <Form.Item name="peer_ttl" label="Peer TTL" rules={[{ required: true }]}><Input /></Form.Item>
-            <Form.Item name="pair_ttl" label="Pair TTL" rules={[{ required: true }]}><Input /></Form.Item>
-            <Form.Item name="relay_idle_timeout" label="Relay Idle Timeout" rules={[{ required: true }]}><Input /></Form.Item>
+            <DurationField name="peer_ttl" label="Peer TTL" minSeconds={10} />
+            <DurationField name="pair_ttl" label="Pair TTL" minSeconds={10} />
+            <DurationField name="relay_idle_timeout" label="Relay Idle Timeout" minSeconds={10} />
             <Form.Item
               name="allow_relay"
               label="允许 Relay"
@@ -92,8 +105,8 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         <Card>
           <div className="settings-grid">
             <Form.Item name="client_no_upnp" label="禁用 UPnP" valuePropName="checked"><Switch /></Form.Item>
-            <Form.Item name="client_upnp_timeout" label="UPnP Timeout" rules={[{ required: true }]}><Input /></Form.Item>
-            <Form.Item name="client_punch_timeout" label="Punch Timeout" rules={[{ required: true }]}><Input /></Form.Item>
+            <DurationField name="client_upnp_timeout" label="UPnP Timeout" minSeconds={1} />
+            <DurationField name="client_punch_timeout" label="Punch Timeout" minSeconds={1} />
             <Form.Item
               name="client_force_relay"
               label="强制 Relay"
@@ -190,21 +203,149 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         />
       ) : null}
       <Form form={form} layout="vertical" onFinish={(values) => {
-        const riskyTouched = values.allow_legacy || values.client_force_relay || values.client_allow_legacy
+        const durationError = validateDurationValues(values)
+        if (durationError) {
+          message.error(durationError)
+          return
+        }
+        const payload = formToSettings(values)
+        const riskyTouched = payload.allow_legacy || payload.client_force_relay || payload.client_allow_legacy
         if (riskyTouched) {
           confirm({
             title: '确认保存高风险设置',
             content: '这些选项会放宽安全边界或改变连接策略，请确认你了解影响。',
             okText: '继续保存',
             cancelText: '取消',
-            onOk: () => saveMutation.mutate(values),
+            onOk: () => saveMutation.mutate(payload),
           })
           return
         }
-        saveMutation.mutate(values)
+        saveMutation.mutate(payload)
       }}>
         <Tabs items={tabs} />
       </Form>
     </div>
   )
+}
+
+function DurationField({ name, label, minSeconds }: { name: keyof SettingsForm; label: string; minSeconds: number }) {
+  const unitOptions = [
+    { value: 's', label: '秒' },
+    { value: 'm', label: '分钟' },
+    { value: 'h', label: '小时' },
+  ]
+  return (
+    <Form.Item
+      label={label}
+      required
+      shouldUpdate={(prev, cur) => prev[name] !== cur[name]}
+    >
+      {({ getFieldValue, setFieldValue }) => {
+        const value = (getFieldValue(name) || {}) as DurationInputValue
+        const seconds = toSeconds(value)
+        const invalid = seconds < minSeconds
+        const help = invalid ? `不能小于 ${formatMinSeconds(minSeconds)}` : undefined
+        return (
+          <>
+            <Space.Compact block>
+              <InputNumber
+                min={1}
+                precision={0}
+                value={value.amount}
+                status={invalid ? 'error' : undefined}
+                onChange={(amount) => setFieldValue(name, { ...value, amount: amount || undefined })}
+                style={{ width: '65%' }}
+              />
+              <Select
+                value={value.unit || 's'}
+                options={unitOptions}
+                status={invalid ? 'error' : undefined}
+                onChange={(unit) => setFieldValue(name, { ...value, unit })}
+                style={{ width: '35%' }}
+              />
+            </Space.Compact>
+            {help ? <Typography.Text type="danger">{help}</Typography.Text> : null}
+          </>
+        )
+      }}
+    </Form.Item>
+  )
+}
+
+function settingsToForm(settings: Settings): SettingsForm {
+  return {
+    ...settings,
+    peer_ttl: parseDuration(settings.peer_ttl),
+    pair_ttl: parseDuration(settings.pair_ttl),
+    relay_idle_timeout: parseDuration(settings.relay_idle_timeout),
+    client_upnp_timeout: parseDuration(settings.client_upnp_timeout),
+    client_punch_timeout: parseDuration(settings.client_punch_timeout),
+  }
+}
+
+function formToSettings(values: SettingsForm): Settings {
+  return {
+    ...values,
+    peer_ttl: formatDuration(values.peer_ttl),
+    pair_ttl: formatDuration(values.pair_ttl),
+    relay_idle_timeout: formatDuration(values.relay_idle_timeout),
+    client_upnp_timeout: formatDuration(values.client_upnp_timeout),
+    client_punch_timeout: formatDuration(values.client_punch_timeout),
+  }
+}
+
+function validateDurationValues(values: SettingsForm): string {
+  const checks: Array<[keyof SettingsForm, string, number]> = [
+    ['peer_ttl', 'Peer TTL', 10],
+    ['pair_ttl', 'Pair TTL', 10],
+    ['relay_idle_timeout', 'Relay Idle Timeout', 10],
+    ['client_upnp_timeout', 'UPnP Timeout', 1],
+    ['client_punch_timeout', 'Punch Timeout', 1],
+  ]
+  for (const [key, label, minSeconds] of checks) {
+    const seconds = toSeconds(values[key] as DurationInputValue)
+    if (seconds < minSeconds) {
+      return `${label} 不能小于 ${formatMinSeconds(minSeconds)}`
+    }
+  }
+  return ''
+}
+
+function parseDuration(value: string): DurationInputValue {
+  const match = /^(\d+)(s|m|h)(\d+s)?$/.exec(value || '')
+  if (!match) {
+    return { amount: 1, unit: 's' }
+  }
+  const amount = Number(match[1])
+  const unit = match[2] as DurationUnit
+  if (!match[3]) {
+    return { amount, unit }
+  }
+  const seconds = toSeconds({ amount, unit }) + Number(match[3].slice(0, -1))
+  if (seconds % 3600 === 0) return { amount: seconds / 3600, unit: 'h' }
+  if (seconds % 60 === 0) return { amount: seconds / 60, unit: 'm' }
+  return { amount: seconds, unit: 's' }
+}
+
+function formatMinSeconds(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`
+  if (seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${seconds} 秒`
+}
+
+function formatDuration(value: DurationInputValue): string {
+  const amount = Math.max(1, Math.floor(value.amount || 1))
+  return `${amount}${value.unit || 's'}`
+}
+
+function toSeconds(value: DurationInputValue): number {
+  const amount = value.amount || 0
+  switch (value.unit || 's') {
+    case 'h':
+      return amount * 3600
+    case 'm':
+      return amount * 60
+    default:
+      return amount
+  }
 }
