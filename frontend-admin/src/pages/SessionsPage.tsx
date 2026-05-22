@@ -27,14 +27,14 @@ export function SessionsPage() {
           dataSource={sessions.data || []}
           columns={[
             { title: 'ID', dataIndex: 'id', width: 80 },
-            { title: 'Source', dataIndex: 'source_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
-            { title: 'Target', dataIndex: 'target_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+            { title: '来源设备', dataIndex: 'source_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+            { title: '目标设备', dataIndex: 'target_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
             { title: 'Profile', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{v || 'interactive'}</Tag> },
-            { title: 'Path', dataIndex: 'path', render: (v) => <Tag color={v === 'relay' ? 'blue' : v === 'p2p' ? 'green' : undefined}>{v || 'pending'}</Tag> },
-            { title: 'Relay Bytes', dataIndex: 'relay_bytes' },
-            { title: 'Started', dataIndex: 'started_at', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
-            { title: 'Last Seen', dataIndex: 'last_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
-            { title: 'Ended', dataIndex: 'ended_at', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : <Tag color="green">活跃</Tag> },
+            { title: '路径', dataIndex: 'path', render: (v) => <Tag color={v === 'relay' ? 'blue' : v === 'p2p' ? 'green' : undefined}>{v || 'pending'}</Tag> },
+            { title: 'Relay 流量', dataIndex: 'relay_bytes' },
+            { title: '开始时间', dataIndex: 'started_at', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '最近活跃', dataIndex: 'last_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '结束时间', dataIndex: 'ended_at', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : <Tag color="green">活跃</Tag> },
           ]}
           scroll={{ x: 1100 }}
         />
