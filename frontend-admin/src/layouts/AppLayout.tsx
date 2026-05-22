@@ -1,6 +1,7 @@
 import { DashboardOutlined, HistoryOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined } from '@ant-design/icons'
 import { Button, Layout, Menu, Space, Typography } from 'antd'
 import type { ReactNode } from 'react'
+import type { AdminUser } from '../types/api'
 
 const { Header, Sider, Content } = Layout
 
@@ -8,11 +9,12 @@ type AppLayoutProps = {
   children: ReactNode
   activePage: string
   pageTitle: string
+  user?: AdminUser
   onPageChange: (page: string) => void
   onLogout: () => void
 }
 
-export function AppLayout({ children, activePage, pageTitle, onPageChange, onLogout }: AppLayoutProps) {
+export function AppLayout({ children, activePage, pageTitle, user, onPageChange, onLogout }: AppLayoutProps) {
   return (
     <Layout className="app-shell">
       <Sider width={232} className="app-sider">
@@ -39,7 +41,7 @@ export function AppLayout({ children, activePage, pageTitle, onPageChange, onLog
             {pageTitle}
           </Typography.Title>
           <Space>
-            <Typography.Text type="secondary">admin</Typography.Text>
+            <Typography.Text type="secondary">{user?.name || user?.username || 'admin'}</Typography.Text>
             <Button icon={<LogoutOutlined />} onClick={onLogout}>
               退出
             </Button>

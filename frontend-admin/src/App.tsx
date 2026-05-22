@@ -71,6 +71,7 @@ function AdminApp() {
       <AppLayout
         activePage={activePage}
         pageTitle={pageTitles[activePage] || '总览'}
+        user={me.data?.user}
         onPageChange={(page) => navigate(pathFromPage(page))}
         onLogout={async () => {
           await logout()
