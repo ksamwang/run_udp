@@ -48,6 +48,15 @@ set CGO_ENABLED=0
 go build -trimpath -ldflags "%LDFLAGS% -H=windowsgui -s -w" -o "%DIST%\client.exe" .\cmd\client
 if errorlevel 1 goto :fail
 copy /Y client.json.example "%DIST%\client.json.example" >nul
+
+echo === Building UDPTunnelLAN (windows/amd64) ===
+set GOOS=windows
+set GOARCH=amd64
+set CGO_ENABLED=0
+go build -trimpath -ldflags "%LDFLAGS% -H=windowsgui -s -w" -o "%DIST%\UDPTunnelLAN.exe" .\cmd\UDPTunnelLAN
+if errorlevel 1 goto :fail
+copy /Y lan.json.example "%DIST%\lan.json.example" >nul
+
 copy /Y .env.example "%DIST%\.env.example" >nul
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
   echo === Building installer ^(Inno Setup^) ===

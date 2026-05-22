@@ -75,11 +75,11 @@ internal/
 ## 阶段 0：产品线骨架
 
 - [x] 新增 `cmd/UDPTunnelLAN` 最小入口。
-- [ ] `build-all.bat` 构建 `UDPTunnelLAN.exe`。
-- [ ] `release.bat` 上传 `UDPTunnelLAN.exe` 或独立 zip。
-- [ ] 增加 `lan.json.example`，只包含本地最小引导配置。
-- [ ] 明确 Windows 服务名：`UDPTunnelLAN`。
-- [ ] 明确托盘名：`UDP Tunnel LAN`。
+- [x] `build-all.bat` 构建 `UDPTunnelLAN.exe`。
+- [x] `release.bat` 上传 `UDPTunnelLAN.exe` 或独立 zip。
+- [x] 增加 `lan.json.example`，只包含本地最小引导配置。
+- [x] 明确 Windows 服务名：`UDPTunnelLAN`。
+- [x] 明确托盘名：`UDP Tunnel LAN`。
 
 验收：
 

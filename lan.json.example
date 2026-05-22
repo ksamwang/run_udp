@@ -1,0 +1,4 @@
+{
+  "server_http": "http://api.tunnel.wanglv.top",
+  "log_level": "info"
+}

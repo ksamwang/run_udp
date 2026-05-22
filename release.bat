@@ -22,6 +22,7 @@ set RELEASE_DIR=%DIST%\release-%TAG%
 set FRONTEND_ZIP=%RELEASE_DIR%\frontend-admin-%TAG%.zip
 set SERVER_ZIP=%RELEASE_DIR%\server-linux-amd64-%TAG%.zip
 set CLIENT_ZIP=%RELEASE_DIR%\client-windows-amd64-%TAG%.zip
+set LAN_ZIP=%RELEASE_DIR%\UDPTunnelLAN-windows-amd64-%TAG%.zip
 set COMMIT=
 
 where git >nul 2>nul || (echo ERROR: git not found & exit /b 1)
@@ -61,6 +62,7 @@ if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 if exist "%FRONTEND_ZIP%" del /Q "%FRONTEND_ZIP%"
 if exist "%SERVER_ZIP%" del /Q "%SERVER_ZIP%"
 if exist "%CLIENT_ZIP%" del /Q "%CLIENT_ZIP%"
+if exist "%LAN_ZIP%" del /Q "%LAN_ZIP%"
 
 echo === Packaging assets ===
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\frontend-admin\*' -DestinationPath '%FRONTEND_ZIP%' -Force"
@@ -69,8 +71,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '
 if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\client.exe','%DIST%\client.json.example' -DestinationPath '%CLIENT_ZIP%' -Force"
 if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\UDPTunnelLAN.exe','%DIST%\lan.json.example' -DestinationPath '%LAN_ZIP%' -Force"
+if errorlevel 1 exit /b 1
 
-set ASSETS="%FRONTEND_ZIP%" "%SERVER_ZIP%" "%CLIENT_ZIP%"
+set ASSETS="%FRONTEND_ZIP%" "%SERVER_ZIP%" "%CLIENT_ZIP%" "%LAN_ZIP%"
 if exist "%DIST%\udp-tunnel-client-%VERSION%-setup.exe" set ASSETS=%ASSETS% "%DIST%\udp-tunnel-client-%VERSION%-setup.exe"
 if exist "%DIST%\latest.json" set ASSETS=%ASSETS% "%DIST%\latest.json"
 
