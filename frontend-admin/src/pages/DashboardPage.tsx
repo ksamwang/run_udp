@@ -3,6 +3,8 @@ import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { getHealth } from '../api/metrics'
+import { listTunnelStates } from '../api/tunnels'
+import { StatusTag } from '../components/StatusTag'
 
 export function DashboardPage() {
   const health = useQuery({
@@ -10,7 +12,14 @@ export function DashboardPage() {
     queryFn: getHealth,
     refetchInterval: 15000,
   })
+  const tunnels = useQuery({
+    queryKey: ['tunnel-states'],
+    queryFn: listTunnelStates,
+    refetchInterval: 15000,
+  })
   const metrics = health.data?.metrics
+  const tunnelRows = tunnels.data || []
+  const abnormalCount = tunnelRows.filter((t) => !['p2p', 'relay', 'disabled'].includes((t.state || '').toLowerCase())).length
 
   return (
     <div className="page-stack">
@@ -39,18 +48,33 @@ export function DashboardPage() {
           <Card><Statistic title="Relay 流量" value={metrics?.relay_bytes ?? 0} /></Card>
         </Col>
       </Row>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} xl={6}>
+          <Card><Statistic title="隧道状态" value={tunnelRows.length} /></Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card><Statistic title="异常隧道" value={abnormalCount} valueStyle={{ color: abnormalCount > 0 ? '#cf1322' : undefined }} /></Card>
+        </Col>
+      </Row>
       <Card title="隧道健康">
         <Table
           size="middle"
-          pagination={false}
-          dataSource={[]}
+          rowKey={(r) => `${r.device_id}-${r.peer_id}-${r.profile}`}
+          loading={tunnels.isLoading}
+          pagination={{ pageSize: 8 }}
+          dataSource={tunnelRows}
           columns={[
-            { title: '入口设备', dataIndex: 'source' },
-            { title: '出口设备', dataIndex: 'target' },
-            { title: '状态', dataIndex: 'state', render: () => <Tag>暂无数据</Tag> },
-            { title: '最近错误', dataIndex: 'error' },
+            { title: '设备', dataIndex: 'device_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+            { title: '对端', dataIndex: 'peer_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+            { title: 'Profile', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{v || 'interactive'}</Tag> },
+            { title: '状态', dataIndex: 'state', render: (v) => <StatusTag state={v} /> },
+            { title: '路径', dataIndex: 'via', render: (v) => v || '-' },
+            { title: 'RTT', dataIndex: 'rtt_ms', render: (v) => v ? `${v} ms` : '-' },
+            { title: 'NAT', dataIndex: 'nat_type', render: (v) => v || '-' },
+            { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
+            { title: '更新时间', dataIndex: 'updated_at', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
           ]}
-          locale={{ emptyText: '下一阶段接入隧道状态列表' }}
+          scroll={{ x: 1100 }}
         />
       </Card>
     </div>

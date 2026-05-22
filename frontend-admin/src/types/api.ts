@@ -63,3 +63,31 @@ export type ForwardRule = {
   attempt?: number
   next_retry_at?: string
 }
+
+export type ForwardRulePayload = {
+  name: string
+  source_id: string
+  target_id: string
+  profile: string
+  local_port: number
+  target_host: string
+  target_port: number
+  enabled: boolean
+}
+
+export type TunnelState = {
+  device_id: string
+  peer_id: string
+  profile: string
+  state: string
+  via: string
+  nat_type: string
+  public_addr: string
+  conv_id: number
+  rtt_ms: number
+  last_error: string
+  attempt: number
+  next_retry_at: string
+  last_transition_at: string
+  updated_at: string
+}

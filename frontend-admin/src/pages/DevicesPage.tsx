@@ -1,15 +1,40 @@
-import { ReloadOutlined } from '@ant-design/icons'
-import { Button, Card, Space, Table, Typography } from 'antd'
-import { useQuery } from '@tanstack/react-query'
+import { DeleteOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Button, Card, message, Popconfirm, Space, Switch, Table, Typography } from 'antd'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
-import { listDevices } from '../api/devices'
+import { useState } from 'react'
+import { deleteDevice, listDevices, setDeviceEnabled } from '../api/devices'
+import { listRules } from '../api/rules'
+import { DeviceDetailDrawer } from '../components/DeviceDetailDrawer'
 import { StatusTag } from '../components/StatusTag'
+import type { Device } from '../types/api'
 
 export function DevicesPage() {
+  const queryClient = useQueryClient()
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const devices = useQuery({
     queryKey: ['devices'],
     queryFn: listDevices,
     refetchInterval: 15000,
+  })
+  const rules = useQuery({
+    queryKey: ['rules'],
+    queryFn: listRules,
+  })
+  const refreshDevices = () => queryClient.invalidateQueries({ queryKey: ['devices'] })
+  const enabledMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => setDeviceEnabled(id, enabled),
+    onSuccess: () => refreshDevices(),
+    onError: (err) => message.error(err instanceof Error ? err.message : '状态更新失败'),
+  })
+  const deleteMutation = useMutation({
+    mutationFn: deleteDevice,
+    onSuccess: () => {
+      message.success('设备已删除')
+      refreshDevices()
+      queryClient.invalidateQueries({ queryKey: ['rules'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
   })
 
   return (
@@ -36,10 +61,29 @@ export function DevicesPage() {
             { title: '健康摘要', dataIndex: 'health_summary', render: (v) => v || '-' },
             { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
             { title: '最后心跳', dataIndex: 'last_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '启用', dataIndex: 'enabled', width: 88, render: (v, r) => <Switch checked={v} loading={enabledMutation.isPending} onChange={(checked) => enabledMutation.mutate({ id: r.id, enabled: checked })} /> },
+            {
+              title: '操作',
+              width: 140,
+              render: (_, r) => (
+                <Space>
+                  <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedDevice(r)} />
+                  <Popconfirm title="删除设备" description="仅无启用规则引用时可删除，确认继续？" onConfirm={() => deleteMutation.mutate(r.id)}>
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
           ]}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1300 }}
         />
       </Card>
+      <DeviceDetailDrawer
+        open={Boolean(selectedDevice)}
+        device={selectedDevice}
+        rules={rules.data || []}
+        onClose={() => setSelectedDevice(null)}
+      />
     </div>
   )
 }
