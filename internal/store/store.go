@@ -100,6 +100,68 @@ type AdminUser struct {
 	UpdatedAt           string `json:"updated_at"`
 }
 
+type VirtualNetwork struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	CIDR      string `json:"cidr"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type VirtualAddress struct {
+	DeviceID   string `json:"device_id"`
+	NetworkID  int64  `json:"network_id"`
+	VirtualIP  string `json:"virtual_ip"`
+	Hostname   string `json:"hostname"`
+	DNSEnabled bool   `json:"dns_enabled"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+type VirtualACLRule struct {
+	ID             int64  `json:"id"`
+	NetworkID      int64  `json:"network_id"`
+	SourceDeviceID string `json:"source_device_id"`
+	SourceGroupID  string `json:"source_group_id"`
+	TargetDeviceID string `json:"target_device_id"`
+	TargetGroupID  string `json:"target_group_id"`
+	Protocol       string `json:"protocol"`
+	PortStart      int    `json:"port_start"`
+	PortEnd        int    `json:"port_end"`
+	Action         string `json:"action"`
+	Enabled        bool   `json:"enabled"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+type VirtualRoute struct {
+	ID        int64  `json:"id"`
+	DeviceID  string `json:"device_id"`
+	NetworkID int64  `json:"network_id"`
+	CIDR      string `json:"cidr"`
+	Advertise bool   `json:"advertise"`
+	Accept    bool   `json:"accept"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type VirtualPeerState struct {
+	DeviceID         string `json:"device_id"`
+	PeerID           string `json:"peer_id"`
+	NetworkID        int64  `json:"network_id"`
+	State            string `json:"state"`
+	Path             string `json:"path"`
+	RTTMs            int    `json:"rtt_ms"`
+	TxBytes          int64  `json:"tx_bytes"`
+	RxBytes          int64  `json:"rx_bytes"`
+	DropReason       string `json:"drop_reason"`
+	LastError        string `json:"last_error"`
+	LastHandshakeAt  string `json:"last_handshake_at"`
+	LastTransitionAt string `json:"last_transition_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
 const (
 	ProfileInteractive = "interactive"
 	ProfileBulk        = "bulk"

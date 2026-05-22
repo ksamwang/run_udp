@@ -60,6 +60,11 @@ func (s *MySQLStore) AutoMigrate() error {
 		&TunnelState{},
 		&AdminUser{},
 		&AdminRefreshToken{},
+		&VirtualNetwork{},
+		&VirtualAddress{},
+		&VirtualACLRule{},
+		&VirtualRoute{},
+		&VirtualPeerState{},
 	)
 }
 
@@ -485,6 +490,264 @@ func (s *MySQLStore) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff
 		Update("revoked_at", nowString()).Error
 }
 
+func (s *MySQLStore) EnsureDefaultVirtualNetwork(ctx context.Context) (store.VirtualNetwork, error) {
+	now := nowString()
+	row := VirtualNetwork{Name: "Default Network", CIDR: "172.16.10.0/24", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cidr"}},
+		DoNothing: true,
+	}).Create(&row).Error; err != nil {
+		return store.VirtualNetwork{}, err
+	}
+	var out VirtualNetwork
+	if err := s.db.WithContext(ctx).First(&out, "cidr = ?", "172.16.10.0/24").Error; err != nil {
+		return store.VirtualNetwork{}, err
+	}
+	return out.toStore(), nil
+}
+
+func (s *MySQLStore) ListVirtualNetworks(ctx context.Context) ([]store.VirtualNetwork, error) {
+	var rows []VirtualNetwork
+	if err := s.db.WithContext(ctx).Order("id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualNetwork, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) CreateVirtualNetwork(ctx context.Context, network store.VirtualNetwork) (store.VirtualNetwork, error) {
+	now := nowString()
+	row := VirtualNetwork{
+		Name: network.Name, CIDR: network.CIDR, Enabled: network.Enabled,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if row.Name == "" {
+		row.Name = row.CIDR
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return network, err
+	}
+	return row.toStore(), nil
+}
+
+func (s *MySQLStore) UpdateVirtualNetwork(ctx context.Context, id int64, network store.VirtualNetwork) error {
+	values := map[string]any{
+		"name": network.Name, "cidr": network.CIDR, "enabled": network.Enabled, "updated_at": nowString(),
+	}
+	tx := s.db.WithContext(ctx).Model(&VirtualNetwork{}).Where("id = ?", id).Updates(values)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) DeleteVirtualNetwork(ctx context.Context, id int64) error {
+	tx := s.db.WithContext(ctx).Delete(&VirtualNetwork{}, id)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) UpsertVirtualAddress(ctx context.Context, address store.VirtualAddress) error {
+	now := nowString()
+	if address.CreatedAt == "" {
+		address.CreatedAt = now
+	}
+	address.UpdatedAt = now
+	hostname := nullableString(address.Hostname)
+	row := VirtualAddress{
+		DeviceID: address.DeviceID, NetworkID: address.NetworkID, VirtualIP: address.VirtualIP,
+		Hostname: hostname, DNSEnabled: address.DNSEnabled,
+		CreatedAt: address.CreatedAt, UpdatedAt: address.UpdatedAt,
+	}
+	var existing VirtualAddress
+	err := s.db.WithContext(ctx).First(&existing, "device_id = ? AND network_id = ?", address.DeviceID, address.NetworkID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return s.db.WithContext(ctx).Create(&row).Error
+	}
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&VirtualAddress{}).
+		Where("device_id = ? AND network_id = ?", address.DeviceID, address.NetworkID).
+		Updates(map[string]any{
+			"virtual_ip": row.VirtualIP, "hostname": row.Hostname, "dns_enabled": row.DNSEnabled, "updated_at": row.UpdatedAt,
+		}).Error
+}
+
+func (s *MySQLStore) ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error) {
+	var rows []VirtualAddress
+	q := s.db.WithContext(ctx).Order("network_id, virtual_ip")
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualAddress, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) GetVirtualAddress(ctx context.Context, networkID int64, deviceID string) (store.VirtualAddress, error) {
+	var row VirtualAddress
+	err := s.db.WithContext(ctx).First(&row, "network_id = ? AND device_id = ?", networkID, deviceID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return store.VirtualAddress{}, sql.ErrNoRows
+	}
+	return row.toStore(), err
+}
+
+func (s *MySQLStore) CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error) {
+	now := nowString()
+	row := VirtualACLRule{
+		NetworkID: rule.NetworkID, SourceDeviceID: rule.SourceDeviceID, SourceGroupID: rule.SourceGroupID,
+		TargetDeviceID: rule.TargetDeviceID, TargetGroupID: rule.TargetGroupID, Protocol: rule.Protocol,
+		PortStart: rule.PortStart, PortEnd: rule.PortEnd, Action: rule.Action, Enabled: rule.Enabled,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if row.Protocol == "" {
+		row.Protocol = "tcp"
+	}
+	if row.Action == "" {
+		row.Action = "allow"
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return rule, err
+	}
+	return row.toStore(), nil
+}
+
+func (s *MySQLStore) ListVirtualACLRules(ctx context.Context, networkID int64) ([]store.VirtualACLRule, error) {
+	var rows []VirtualACLRule
+	q := s.db.WithContext(ctx).Order("id DESC")
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualACLRule, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) UpdateVirtualACLRule(ctx context.Context, id int64, rule store.VirtualACLRule) error {
+	values := map[string]any{
+		"network_id": rule.NetworkID, "source_device_id": rule.SourceDeviceID, "source_group_id": rule.SourceGroupID,
+		"target_device_id": rule.TargetDeviceID, "target_group_id": rule.TargetGroupID, "protocol": rule.Protocol,
+		"port_start": rule.PortStart, "port_end": rule.PortEnd, "action": rule.Action,
+		"enabled": rule.Enabled, "updated_at": nowString(),
+	}
+	tx := s.db.WithContext(ctx).Model(&VirtualACLRule{}).Where("id = ?", id).Updates(values)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) DeleteVirtualACLRule(ctx context.Context, id int64) error {
+	tx := s.db.WithContext(ctx).Delete(&VirtualACLRule{}, id)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) UpsertVirtualRoute(ctx context.Context, route store.VirtualRoute) error {
+	now := nowString()
+	if route.CreatedAt == "" {
+		route.CreatedAt = now
+	}
+	route.UpdatedAt = now
+	row := VirtualRoute{
+		DeviceID: route.DeviceID, NetworkID: route.NetworkID, CIDR: route.CIDR,
+		Advertise: route.Advertise, Accept: route.Accept, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}, {Name: "network_id"}, {Name: "cidr"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"advertise": row.Advertise, "accept": row.Accept, "updated_at": row.UpdatedAt,
+		}),
+	}).Create(&row).Error
+}
+
+func (s *MySQLStore) ListVirtualRoutes(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualRoute, error) {
+	var rows []VirtualRoute
+	q := s.db.WithContext(ctx).Order("network_id, device_id, cidr")
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if deviceID != "" {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualRoute, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error {
+	now := nowString()
+	if state.LastTransitionAt == "" {
+		state.LastTransitionAt = now
+	}
+	row := VirtualPeerState{
+		DeviceID: state.DeviceID, PeerID: state.PeerID, NetworkID: state.NetworkID,
+		State: state.State, Path: state.Path, RTTMs: state.RTTMs, TxBytes: state.TxBytes, RxBytes: state.RxBytes,
+		DropReason: state.DropReason, LastError: state.LastError, LastHandshakeAt: state.LastHandshakeAt,
+		LastTransitionAt: state.LastTransitionAt, UpdatedAt: now,
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}, {Name: "peer_id"}, {Name: "network_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"state": row.State, "path": row.Path, "rtt_ms": row.RTTMs, "tx_bytes": row.TxBytes,
+			"rx_bytes": row.RxBytes, "drop_reason": row.DropReason, "last_error": row.LastError,
+			"last_handshake_at": row.LastHandshakeAt, "last_transition_at": row.LastTransitionAt, "updated_at": row.UpdatedAt,
+		}),
+	}).Create(&row).Error
+}
+
+func (s *MySQLStore) ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error) {
+	var rows []VirtualPeerState
+	q := s.db.WithContext(ctx).Order("updated_at DESC").Limit(200)
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualPeerState, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
 func (s *MySQLStore) count(ctx context.Context, model any, where map[string]any, dest *int) error {
 	var n int64
 	q := s.db.WithContext(ctx).Model(model)
@@ -560,8 +823,57 @@ func (u AdminUser) toStore() store.AdminUser {
 	}
 }
 
+func (n VirtualNetwork) toStore() store.VirtualNetwork {
+	return store.VirtualNetwork{
+		ID: n.ID, Name: n.Name, CIDR: n.CIDR, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
+	}
+}
+
+func (a VirtualAddress) toStore() store.VirtualAddress {
+	hostname := ""
+	if a.Hostname != nil {
+		hostname = *a.Hostname
+	}
+	return store.VirtualAddress{
+		DeviceID: a.DeviceID, NetworkID: a.NetworkID, VirtualIP: a.VirtualIP, Hostname: hostname,
+		DNSEnabled: a.DNSEnabled, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
+	}
+}
+
+func (r VirtualACLRule) toStore() store.VirtualACLRule {
+	return store.VirtualACLRule{
+		ID: r.ID, NetworkID: r.NetworkID, SourceDeviceID: r.SourceDeviceID, SourceGroupID: r.SourceGroupID,
+		TargetDeviceID: r.TargetDeviceID, TargetGroupID: r.TargetGroupID, Protocol: r.Protocol,
+		PortStart: r.PortStart, PortEnd: r.PortEnd, Action: r.Action, Enabled: r.Enabled,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}
+
+func (r VirtualRoute) toStore() store.VirtualRoute {
+	return store.VirtualRoute{
+		ID: r.ID, DeviceID: r.DeviceID, NetworkID: r.NetworkID, CIDR: r.CIDR,
+		Advertise: r.Advertise, Accept: r.Accept, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}
+
+func (p VirtualPeerState) toStore() store.VirtualPeerState {
+	return store.VirtualPeerState{
+		DeviceID: p.DeviceID, PeerID: p.PeerID, NetworkID: p.NetworkID, State: p.State, Path: p.Path,
+		RTTMs: p.RTTMs, TxBytes: p.TxBytes, RxBytes: p.RxBytes, DropReason: p.DropReason,
+		LastError: p.LastError, LastHandshakeAt: p.LastHandshakeAt, LastTransitionAt: p.LastTransitionAt,
+		UpdatedAt: p.UpdatedAt,
+	}
+}
+
 func nowString() string {
 	return time.Now().Format(time.RFC3339)
+}
+
+func nullableString(v string) *string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	return &v
 }
 
 var _ Store = (*MySQLStore)(nil)

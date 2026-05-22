@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,12 @@ type fakeStore struct {
 	tunnelStates  map[string]store.TunnelState
 	refreshTokens map[string]store.AdminRefreshToken
 	adminUsers    map[string]store.AdminUser
+	virtualNets   map[int64]store.VirtualNetwork
+	virtualAddrs  map[string]store.VirtualAddress
+	virtualACLs   map[int64]store.VirtualACLRule
+	virtualRoutes map[string]store.VirtualRoute
+	virtualPeers  map[string]store.VirtualPeerState
+	nextLANID     int64
 	auditEvents   []string
 }
 
@@ -33,6 +40,11 @@ func newFakeStore() *fakeStore {
 		tunnelStates:  map[string]store.TunnelState{},
 		refreshTokens: map[string]store.AdminRefreshToken{},
 		adminUsers:    map[string]store.AdminUser{},
+		virtualNets:   map[int64]store.VirtualNetwork{},
+		virtualAddrs:  map[string]store.VirtualAddress{},
+		virtualACLs:   map[int64]store.VirtualACLRule{},
+		virtualRoutes: map[string]store.VirtualRoute{},
+		virtualPeers:  map[string]store.VirtualPeerState{},
 	}
 }
 
@@ -471,8 +483,207 @@ func (s *fakeStore) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff 
 	return nil
 }
 
+func (s *fakeStore) EnsureDefaultVirtualNetwork(ctx context.Context) (store.VirtualNetwork, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, network := range s.virtualNets {
+		if network.CIDR == "172.16.10.0/24" {
+			return network, nil
+		}
+	}
+	s.nextLANID++
+	now := nowTestString()
+	network := store.VirtualNetwork{ID: s.nextLANID, Name: "Default Network", CIDR: "172.16.10.0/24", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	s.virtualNets[network.ID] = network
+	return network, nil
+}
+
+func (s *fakeStore) ListVirtualNetworks(ctx context.Context) ([]store.VirtualNetwork, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.VirtualNetwork, 0, len(s.virtualNets))
+	for _, network := range s.virtualNets {
+		out = append(out, network)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *fakeStore) CreateVirtualNetwork(ctx context.Context, network store.VirtualNetwork) (store.VirtualNetwork, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextLANID++
+	now := nowTestString()
+	network.ID = s.nextLANID
+	network.CreatedAt = now
+	network.UpdatedAt = now
+	s.virtualNets[network.ID] = network
+	return network, nil
+}
+
+func (s *fakeStore) UpdateVirtualNetwork(ctx context.Context, id int64, network store.VirtualNetwork) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.virtualNets[id]; !ok {
+		return sql.ErrNoRows
+	}
+	network.ID = id
+	network.UpdatedAt = nowTestString()
+	s.virtualNets[id] = network
+	return nil
+}
+
+func (s *fakeStore) DeleteVirtualNetwork(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.virtualNets[id]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(s.virtualNets, id)
+	return nil
+}
+
+func (s *fakeStore) UpsertVirtualAddress(ctx context.Context, address store.VirtualAddress) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := nowTestString()
+	if address.CreatedAt == "" {
+		address.CreatedAt = now
+	}
+	address.UpdatedAt = now
+	s.virtualAddrs[virtualAddressKey(address.NetworkID, address.DeviceID)] = address
+	return nil
+}
+
+func (s *fakeStore) ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []store.VirtualAddress
+	for _, address := range s.virtualAddrs {
+		if networkID == 0 || address.NetworkID == networkID {
+			out = append(out, address)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) GetVirtualAddress(ctx context.Context, networkID int64, deviceID string) (store.VirtualAddress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	address, ok := s.virtualAddrs[virtualAddressKey(networkID, deviceID)]
+	if !ok {
+		return store.VirtualAddress{}, sql.ErrNoRows
+	}
+	return address, nil
+}
+
+func (s *fakeStore) CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextLANID++
+	now := nowTestString()
+	rule.ID = s.nextLANID
+	rule.CreatedAt = now
+	rule.UpdatedAt = now
+	s.virtualACLs[rule.ID] = rule
+	return rule, nil
+}
+
+func (s *fakeStore) ListVirtualACLRules(ctx context.Context, networkID int64) ([]store.VirtualACLRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []store.VirtualACLRule
+	for _, rule := range s.virtualACLs {
+		if networkID == 0 || rule.NetworkID == networkID {
+			out = append(out, rule)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) UpdateVirtualACLRule(ctx context.Context, id int64, rule store.VirtualACLRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.virtualACLs[id]; !ok {
+		return sql.ErrNoRows
+	}
+	rule.ID = id
+	rule.UpdatedAt = nowTestString()
+	s.virtualACLs[id] = rule
+	return nil
+}
+
+func (s *fakeStore) DeleteVirtualACLRule(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.virtualACLs[id]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(s.virtualACLs, id)
+	return nil
+}
+
+func (s *fakeStore) UpsertVirtualRoute(ctx context.Context, route store.VirtualRoute) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := nowTestString()
+	if route.CreatedAt == "" {
+		route.CreatedAt = now
+	}
+	route.UpdatedAt = now
+	s.virtualRoutes[virtualRouteKey(route.NetworkID, route.DeviceID, route.CIDR)] = route
+	return nil
+}
+
+func (s *fakeStore) ListVirtualRoutes(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualRoute, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []store.VirtualRoute
+	for _, route := range s.virtualRoutes {
+		if (networkID == 0 || route.NetworkID == networkID) && (deviceID == "" || route.DeviceID == deviceID) {
+			out = append(out, route)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state.LastTransitionAt == "" {
+		state.LastTransitionAt = nowTestString()
+	}
+	state.UpdatedAt = nowTestString()
+	s.virtualPeers[virtualPeerKey(state.NetworkID, state.DeviceID, state.PeerID)] = state
+	return nil
+}
+
+func (s *fakeStore) ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []store.VirtualPeerState
+	for _, state := range s.virtualPeers {
+		if networkID == 0 || state.NetworkID == networkID {
+			out = append(out, state)
+		}
+	}
+	return out, nil
+}
+
 func tunnelStateKey(deviceID, peerID, profile string) string {
 	return deviceID + "\x00" + peerID + "\x00" + store.NormalizeProfile(profile)
+}
+
+func virtualAddressKey(networkID int64, deviceID string) string {
+	return fmt.Sprintf("%d\x00%s", networkID, deviceID)
+}
+
+func virtualRouteKey(networkID int64, deviceID, cidr string) string {
+	return fmt.Sprintf("%d\x00%s\x00%s", networkID, deviceID, cidr)
+}
+
+func virtualPeerKey(networkID int64, deviceID, peerID string) string {
+	return fmt.Sprintf("%d\x00%s\x00%s", networkID, deviceID, peerID)
 }
 
 func nowTestString() string {

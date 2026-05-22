@@ -114,3 +114,75 @@ type AdminUser struct {
 }
 
 func (AdminUser) TableName() string { return "admin_users" }
+
+type VirtualNetwork struct {
+	ID        int64  `gorm:"primaryKey;column:id"`
+	Name      string `gorm:"size:191;not null;column:name"`
+	CIDR      string `gorm:"uniqueIndex;size:64;not null;column:cidr"`
+	Enabled   bool   `gorm:"index;not null;default:true;column:enabled"`
+	CreatedAt string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualNetwork) TableName() string { return "virtual_networks" }
+
+type VirtualAddress struct {
+	DeviceID   string  `gorm:"primaryKey;size:191;column:device_id"`
+	NetworkID  int64   `gorm:"primaryKey;uniqueIndex:idx_virtual_addresses_ip,priority:1;uniqueIndex:idx_virtual_addresses_hostname,priority:1;column:network_id"`
+	VirtualIP  string  `gorm:"uniqueIndex:idx_virtual_addresses_ip,priority:2;size:64;not null;column:virtual_ip"`
+	Hostname   *string `gorm:"uniqueIndex:idx_virtual_addresses_hostname,priority:2;size:191;column:hostname"`
+	DNSEnabled bool    `gorm:"not null;default:false;column:dns_enabled"`
+	CreatedAt  string  `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt  string  `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualAddress) TableName() string { return "virtual_addresses" }
+
+type VirtualACLRule struct {
+	ID             int64  `gorm:"primaryKey;column:id"`
+	NetworkID      int64  `gorm:"index;not null;column:network_id"`
+	SourceDeviceID string `gorm:"index;size:191;not null;default:'';column:source_device_id"`
+	SourceGroupID  string `gorm:"index;size:191;not null;default:'';column:source_group_id"`
+	TargetDeviceID string `gorm:"index;size:191;not null;default:'';column:target_device_id"`
+	TargetGroupID  string `gorm:"index;size:191;not null;default:'';column:target_group_id"`
+	Protocol       string `gorm:"size:16;not null;default:'tcp';column:protocol"`
+	PortStart      int    `gorm:"not null;default:0;column:port_start"`
+	PortEnd        int    `gorm:"not null;default:0;column:port_end"`
+	Action         string `gorm:"size:16;not null;default:'allow';column:action"`
+	Enabled        bool   `gorm:"index;not null;default:true;column:enabled"`
+	CreatedAt      string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt      string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualACLRule) TableName() string { return "virtual_acl_rules" }
+
+type VirtualRoute struct {
+	ID        int64  `gorm:"primaryKey;column:id"`
+	DeviceID  string `gorm:"uniqueIndex:idx_virtual_routes_device_network_cidr,priority:1;index;size:191;not null;column:device_id"`
+	NetworkID int64  `gorm:"uniqueIndex:idx_virtual_routes_device_network_cidr,priority:2;index;not null;column:network_id"`
+	CIDR      string `gorm:"uniqueIndex:idx_virtual_routes_device_network_cidr,priority:3;size:64;not null;column:cidr"`
+	Advertise bool   `gorm:"not null;default:false;column:advertise"`
+	Accept    bool   `gorm:"not null;default:true;column:accept"`
+	CreatedAt string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualRoute) TableName() string { return "virtual_routes" }
+
+type VirtualPeerState struct {
+	DeviceID         string `gorm:"primaryKey;size:191;column:device_id"`
+	PeerID           string `gorm:"primaryKey;size:191;column:peer_id"`
+	NetworkID        int64  `gorm:"primaryKey;column:network_id"`
+	State            string `gorm:"size:32;not null;default:'';column:state"`
+	Path             string `gorm:"size:32;not null;default:'';column:path"`
+	RTTMs            int    `gorm:"not null;default:0;column:rtt_ms"`
+	TxBytes          int64  `gorm:"not null;default:0;column:tx_bytes"`
+	RxBytes          int64  `gorm:"not null;default:0;column:rx_bytes"`
+	DropReason       string `gorm:"size:64;not null;default:'';column:drop_reason"`
+	LastError        string `gorm:"type:text;not null;column:last_error"`
+	LastHandshakeAt  string `gorm:"size:64;not null;default:'';column:last_handshake_at"`
+	LastTransitionAt string `gorm:"size:64;not null;default:'';column:last_transition_at"`
+	UpdatedAt        string `gorm:"index;size:64;not null;column:updated_at"`
+}
+
+func (VirtualPeerState) TableName() string { return "virtual_peer_states" }

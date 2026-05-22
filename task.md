@@ -88,20 +88,20 @@ internal/
 
 ## 阶段 1：控制面数据模型
 
-- [ ] 新增虚拟网络模型 `virtual_networks`：
+- [x] 新增虚拟网络模型 `virtual_networks`：
   - `id`
   - `name`
   - `cidr`
   - `enabled`
   - `created_at`
   - `updated_at`
-- [ ] 新增虚拟地址模型 `virtual_addresses`：
+- [x] 新增虚拟地址模型 `virtual_addresses`：
   - `device_id`
   - `network_id`
   - `virtual_ip`
   - `hostname`
   - `dns_enabled`
-- [ ] 新增虚拟 ACL 模型 `virtual_acl_rules`：
+- [x] 新增虚拟 ACL 模型 `virtual_acl_rules`：
   - `source_device_id`
   - `source_group_id`
   - `target_device_id`
@@ -111,16 +111,16 @@ internal/
   - `port_end`
   - `action`
   - `enabled`
-- [ ] 新增虚拟路由模型 `virtual_routes`：
+- [x] 新增虚拟路由模型 `virtual_routes`：
   - `device_id`
   - `network_id`
   - `cidr`
   - `advertise`
   - `accept`
-- [ ] 新增虚拟会话/状态模型 `virtual_sessions` 或 `virtual_peer_states`。
-- [ ] 默认创建一个虚拟网络，CIDR 为 `172.16.10.0/24`。
-- [ ] 数据模型支持多个虚拟网络，但第一版业务默认只使用一个网络。
-- [ ] 预留 Magic DNS 所需的 `hostname`、`dns_enabled`、网络内唯一约束。
+- [x] 新增虚拟会话/状态模型 `virtual_sessions` 或 `virtual_peer_states`。
+- [x] 默认创建一个虚拟网络，CIDR 为 `172.16.10.0/24`。
+- [x] 数据模型支持多个虚拟网络，但第一版业务默认只使用一个网络。
+- [x] 预留 Magic DNS 所需的 `hostname`、`dns_enabled`、网络内唯一约束。
 
 验收：
 

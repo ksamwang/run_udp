@@ -182,12 +182,137 @@ func exerciseStore(ctx context.Context, s Store) error {
 	if b.Enabled {
 		return failf("device should be disabled: %+v", b)
 	}
+	if err := exerciseVirtualLANStore(ctx, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+func exerciseVirtualLANStore(ctx context.Context, s Store) error {
+	defaultNetwork, err := s.EnsureDefaultVirtualNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	if defaultNetwork.CIDR != "172.16.10.0/24" || !defaultNetwork.Enabled {
+		return failf("bad default network: %+v", defaultNetwork)
+	}
+	defaultNetwork2, err := s.EnsureDefaultVirtualNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	if defaultNetwork2.ID != defaultNetwork.ID {
+		return failf("default network should be stable: first=%+v second=%+v", defaultNetwork, defaultNetwork2)
+	}
+	network2, err := s.CreateVirtualNetwork(ctx, store.VirtualNetwork{Name: "codex-test-lab", CIDR: "172.16.20.0/24", Enabled: true})
+	if err != nil {
+		return err
+	}
+	networks, err := s.ListVirtualNetworks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(networks) < 2 {
+		return failf("expected at least two virtual networks: %+v", networks)
+	}
+	if err := s.UpdateVirtualNetwork(ctx, network2.ID, store.VirtualNetwork{Name: "codex-test-lab2", CIDR: "172.16.21.0/24", Enabled: false}); err != nil {
+		return err
+	}
+	if err := s.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "codex-test-A", NetworkID: defaultNetwork.ID, VirtualIP: "172.16.10.10", Hostname: "office-a", DNSEnabled: true,
+	}); err != nil {
+		return err
+	}
+	if err := s.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "codex-test-B", NetworkID: defaultNetwork.ID, VirtualIP: "172.16.10.11",
+	}); err != nil {
+		return err
+	}
+	if err := s.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "codex-test-A", NetworkID: network2.ID, VirtualIP: "172.16.21.10", Hostname: "office-a-lab",
+	}); err != nil {
+		return err
+	}
+	addr, err := s.GetVirtualAddress(ctx, defaultNetwork.ID, "codex-test-A")
+	if err != nil {
+		return err
+	}
+	if addr.VirtualIP != "172.16.10.10" || addr.Hostname != "office-a" || !addr.DNSEnabled {
+		return failf("bad virtual address: %+v", addr)
+	}
+	addresses, err := s.ListVirtualAddresses(ctx, 0)
+	if err != nil {
+		return err
+	}
+	if len(addresses) != 3 {
+		return failf("expected three virtual addresses: %+v", addresses)
+	}
+	acl, err := s.CreateVirtualACLRule(ctx, store.VirtualACLRule{
+		NetworkID: defaultNetwork.ID, SourceDeviceID: "codex-test-A", TargetDeviceID: "codex-test-B",
+		Protocol: "tcp", PortStart: 3389, PortEnd: 3389, Action: "deny", Enabled: true,
+	})
+	if err != nil {
+		return err
+	}
+	rules, err := s.ListVirtualACLRules(ctx, defaultNetwork.ID)
+	if err != nil {
+		return err
+	}
+	if len(rules) != 1 || rules[0].Action != "deny" {
+		return failf("bad acl rules: %+v", rules)
+	}
+	if err := s.UpdateVirtualACLRule(ctx, acl.ID, store.VirtualACLRule{
+		NetworkID: defaultNetwork.ID, SourceDeviceID: "codex-test-A", TargetDeviceID: "codex-test-B",
+		Protocol: "tcp", PortStart: 22, PortEnd: 22, Action: "allow", Enabled: false,
+	}); err != nil {
+		return err
+	}
+	if err := s.UpsertVirtualRoute(ctx, store.VirtualRoute{
+		DeviceID: "codex-test-A", NetworkID: defaultNetwork.ID, CIDR: "10.10.0.0/16", Advertise: true, Accept: false,
+	}); err != nil {
+		return err
+	}
+	if err := s.UpsertVirtualRoute(ctx, store.VirtualRoute{
+		DeviceID: "codex-test-A", NetworkID: defaultNetwork.ID, CIDR: "10.10.0.0/16", Advertise: false, Accept: true,
+	}); err != nil {
+		return err
+	}
+	routes, err := s.ListVirtualRoutes(ctx, defaultNetwork.ID, "codex-test-A")
+	if err != nil {
+		return err
+	}
+	if len(routes) != 1 || routes[0].Advertise || !routes[0].Accept {
+		return failf("bad virtual routes: %+v", routes)
+	}
+	if err := s.PutVirtualPeerState(ctx, store.VirtualPeerState{
+		DeviceID: "codex-test-A", PeerID: "codex-test-B", NetworkID: defaultNetwork.ID,
+		State: "connected", Path: "p2p", RTTMs: 10, TxBytes: 100, RxBytes: 200, LastHandshakeAt: "2026-05-23T01:00:00Z",
+	}); err != nil {
+		return err
+	}
+	peerStates, err := s.ListVirtualPeerStates(ctx, defaultNetwork.ID)
+	if err != nil {
+		return err
+	}
+	if len(peerStates) != 1 || peerStates[0].Path != "p2p" || peerStates[0].TxBytes != 100 {
+		return failf("bad virtual peer states: %+v", peerStates)
+	}
+	if err := s.DeleteVirtualACLRule(ctx, acl.ID); err != nil {
+		return err
+	}
+	if err := s.DeleteVirtualNetwork(ctx, network2.ID); err != nil {
+		return err
+	}
 	return nil
 }
 
 func cleanupMySQL(t *testing.T, s *MySQLStore) {
 	t.Helper()
 	statements := []string{
+		"DELETE FROM virtual_peer_states WHERE device_id LIKE ? OR peer_id LIKE ?",
+		"DELETE FROM virtual_routes WHERE device_id LIKE ? OR cidr LIKE ?",
+		"DELETE FROM virtual_acl_rules WHERE source_device_id LIKE ? OR target_device_id LIKE ? OR source_group_id LIKE ? OR target_group_id LIKE ?",
+		"DELETE FROM virtual_addresses WHERE device_id LIKE ? OR virtual_ip LIKE ? OR hostname LIKE ?",
+		"DELETE FROM virtual_networks WHERE name LIKE ? OR cidr = ?",
 		"DELETE FROM admin_refresh_tokens WHERE user_id = ? OR token_hash = ?",
 		"DELETE FROM admin_users WHERE id = ? OR username = ?",
 		"DELETE FROM audit_events WHERE kind = ?",
@@ -199,6 +324,11 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		"DELETE FROM meta WHERE `key` = ?",
 	}
 	args := [][]any{
+		{"codex-test-%", "codex-test-%"},
+		{"codex-test-%", "10.10.%"},
+		{"codex-test-%", "codex-test-%", "codex-test-%", "codex-test-%"},
+		{"codex-test-%", "172.16.%", "office-%"},
+		{"codex-test-%", "172.16.21.0/24"},
 		{"codex-test-admin", "codex-test-token-hash"},
 		{"codex-test-admin", "codex-admin"},
 		{"codex-test"},

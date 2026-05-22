@@ -46,4 +46,20 @@ type Store interface {
 	RevokeAdminRefreshToken(ctx context.Context, tokenHash string) error
 	RevokeAdminRefreshTokensByUser(ctx context.Context, userID string) error
 	RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff time.Time) error
+	EnsureDefaultVirtualNetwork(ctx context.Context) (store.VirtualNetwork, error)
+	ListVirtualNetworks(ctx context.Context) ([]store.VirtualNetwork, error)
+	CreateVirtualNetwork(ctx context.Context, network store.VirtualNetwork) (store.VirtualNetwork, error)
+	UpdateVirtualNetwork(ctx context.Context, id int64, network store.VirtualNetwork) error
+	DeleteVirtualNetwork(ctx context.Context, id int64) error
+	UpsertVirtualAddress(ctx context.Context, address store.VirtualAddress) error
+	ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error)
+	GetVirtualAddress(ctx context.Context, networkID int64, deviceID string) (store.VirtualAddress, error)
+	CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error)
+	ListVirtualACLRules(ctx context.Context, networkID int64) ([]store.VirtualACLRule, error)
+	UpdateVirtualACLRule(ctx context.Context, id int64, rule store.VirtualACLRule) error
+	DeleteVirtualACLRule(ctx context.Context, id int64) error
+	UpsertVirtualRoute(ctx context.Context, route store.VirtualRoute) error
+	ListVirtualRoutes(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualRoute, error)
+	PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error
+	ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error)
 }
