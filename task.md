@@ -254,20 +254,20 @@ internal/
 
 ## 阶段 5：Packet Router
 
-- [ ] 解析 IPv4 header。
-- [ ] 根据目标虚拟 IP 查找目标设备。
-- [ ] 根据 ACL 判断是否允许转发。
-- [ ] 封装 packet frame：
+- [x] 解析 IPv4 header。
+- [x] 根据目标虚拟 IP 查找目标设备。
+- [x] 根据 ACL 判断是否允许转发。
+- [x] 封装 packet frame：
   - `network_id`
   - `src_device`
   - `dst_device`
   - `packet_type`
   - `payload`
-- [ ] 优先处理 TCP 转发所需的 IPv4 包路径。
-- [ ] ICMP 可作为调试能力，但不作为第一版核心验收目标。
-- [ ] UDP 留作后续能力。
-- [ ] 统计 tx/rx bytes、packet count、drop reason。
-- [ ] 统计 ACL deny、route miss、MTU drop、peer unavailable。
+- [x] 优先处理 TCP 转发所需的 IPv4 包路径。
+- [x] ICMP 可作为调试能力，但不作为第一版核心验收目标。
+- [x] UDP 留作后续能力。
+- [x] 统计 tx/rx bytes、packet count、drop reason。
+- [x] 统计 ACL deny、route miss、MTU drop、peer unavailable。
 
 验收：
 
