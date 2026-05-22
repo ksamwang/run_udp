@@ -273,6 +273,15 @@ func main() {
 		_ = ensureRuntimeIdentity(&cfg)
 		logPath := setupLogging(cfg.DeviceID)
 		logStartup(cfg, *configPath, logPath, clientMode(cfg, *agent, *probe, *trayMode, *serviceMode))
+		releaseTray, acquired, err := acquireTraySingleInstance()
+		if err != nil {
+			log.Printf("[%s] tray single instance check failed: %v", cfg.DeviceID, err)
+		}
+		if !acquired {
+			log.Printf("[%s] tray already running; exiting duplicate helper", cfg.DeviceID)
+			return
+		}
+		defer releaseTray()
 		if st, err := queryWindowsServiceStatus(); err == nil {
 			appRuntime.SetServiceStatus(st)
 		}

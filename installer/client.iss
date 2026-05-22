@@ -33,7 +33,6 @@ Name: "{group}\UDP Tunnel Settings"; Filename: "{app}\{#MyAppExeName}"; Paramete
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Parameters: "-install-service -config ""{app}\client.json"""; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "-start-service"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Parameters: "-tray -config ""{app}\client.json"""; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "{app}\{#MyAppExeName}"; Parameters: "-stop-service"; Flags: runhidden waituntilterminated skipifdoesntexist
