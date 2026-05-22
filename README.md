@@ -63,7 +63,7 @@ npm run dev
 VITE_API_BASE_URL=http://<server>:7001
 ```
 
-同时在 `server.json` 的 `admin_allowed_origins` 中加入管理后台地址。
+服务端 CORS 当前直接放行全部来源，前端和 API 分离部署时无需额外配置来源白名单。
 
 生产部署时，`dist/frontend-admin` 是纯静态站点，可以由 Nginx、对象存储或任意静态文件服务托管。前端和 API 分离部署时，服务端只暴露 API 和 UDP 服务，不再内嵌旧 Web 管理页。
 
@@ -98,8 +98,8 @@ copy server.json.example server.json
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
-  "control_database_driver": "sqlite",
-  "control_database_dsn": "",
+  "control_database_driver": "mysql",
+  "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,
   "admin_password": "change-me",
   "psk": "change-this-deployment-secret",
@@ -134,7 +134,7 @@ copy server.json.example server.json
 
 访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 SQLite 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
 
-服务端 HTTP API 已切换到 Gin。当前运行数据仍由现有 SQLite store 承载；`internal/controlstore` 已提供 Gorm + MySQL 连接和模型骨架，后续切换时使用 `control_database_driver=mysql`、`control_database_dsn` 和 `control_database_auto_migrate`。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
+服务端 HTTP API 已切换到 Gin。控制库目标为 MySQL 5.5，`internal/controlstore` 已按 MySQL 5.5 兼容方式配置 Gorm 连接和模型骨架。当前业务读写仍由现有 SQLite store 承载，后续会逐步迁移到 MySQL。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
 #### 3. 部署客户端
 
@@ -328,7 +328,7 @@ The Vite dev server listens on `http://localhost:5173` and proxies `/api` and `/
 VITE_API_BASE_URL=http://<server>:7001
 ```
 
-Also add the admin console origin to `admin_allowed_origins` in `server.json`.
+The server currently allows all CORS origins, so separated frontend/API deployments do not need an origin allowlist.
 
 For production, `dist/frontend-admin` is a plain static site and can be served by Nginx, object storage, or any static file server. With separated frontend/API deployment, the Go server only serves APIs and UDP services; it no longer embeds the legacy Web UI.
 
@@ -363,8 +363,8 @@ Edit `server.json`:
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
-  "control_database_driver": "sqlite",
-  "control_database_dsn": "",
+  "control_database_driver": "mysql",
+  "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,
   "admin_password": "change-me",
   "psk": "change-this-deployment-secret",
@@ -399,7 +399,7 @@ Open these ports:
 
 Open the deployed React admin console and log in with `admin_password`.
 
-The server HTTP API now runs on Gin. Runtime data is still backed by the existing SQLite store; `internal/controlstore` provides the Gorm + MySQL connection and model skeleton for the next storage migration. Use `control_database_driver=mysql`, `control_database_dsn`, and `control_database_auto_migrate` when enabling that path. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
+The server HTTP API now runs on Gin. The target control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and model skeletons. Runtime business reads/writes are still backed by the existing SQLite store and will be migrated gradually. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
 
 #### 3. Deploy the client
 

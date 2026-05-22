@@ -3,16 +3,13 @@
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
-  "control_database_driver": "sqlite",
-  "control_database_dsn": "",
+  "control_database_driver": "mysql",
+  "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,
   "admin_password": "change-me",
   "admin_jwt_secret": "change-this-admin-jwt-secret",
   "admin_access_token_ttl": "1h",
   "admin_refresh_token_ttl": "720h",
-  "admin_allowed_origins": [
-    "http://localhost:5173"
-  ],
   "psk": "change-this-deployment-secret",
   "peer_ttl": "90s",
   "pair_ttl": "2m",

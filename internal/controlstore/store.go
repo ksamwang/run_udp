@@ -1,7 +1,6 @@
 package controlstore
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -10,8 +9,7 @@ import (
 )
 
 const (
-	DriverSQLite = "sqlite"
-	DriverMySQL  = "mysql"
+	DriverMySQL = "mysql"
 )
 
 type Config struct {
@@ -106,15 +104,21 @@ type AdminRefreshToken struct {
 func Open(cfg Config) (*Store, error) {
 	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
 	if driver == "" {
-		driver = DriverSQLite
+		driver = DriverMySQL
 	}
 	if driver != DriverMySQL {
 		return nil, nil
 	}
 	if strings.TrimSpace(cfg.DSN) == "" {
-		return nil, fmt.Errorf("control database dsn is required when driver is %q", DriverMySQL)
+		return nil, nil
 	}
-	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{})
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		DSN:                      cfg.DSN,
+		DisableDatetimePrecision: true,
+		DontSupportRenameIndex:   true,
+		DontSupportRenameColumn:  true,
+		DefaultStringSize:        191,
+	}), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}

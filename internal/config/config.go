@@ -24,7 +24,6 @@ type Server struct {
 	AdminJWTSecret                string        `json:"admin_jwt_secret"`
 	AdminAccessTokenTTL           time.Duration `json:"admin_access_token_ttl"`
 	AdminRefreshTokenTTL          time.Duration `json:"admin_refresh_token_ttl"`
-	AdminAllowedOrigins           []string      `json:"admin_allowed_origins"`
 	PSK                           string        `json:"psk"`
 	PeerTTL                       time.Duration `json:"peer_ttl"`
 	PairTTL                       time.Duration `json:"pair_ttl"`
@@ -71,7 +70,7 @@ func DefaultServer() Server {
 		StunAltListen:         ":7002",
 		HTTPListen:            ":7001",
 		DatabasePath:          "udp-tunnel.db",
-		ControlDatabaseDriver: "sqlite",
+		ControlDatabaseDriver: "mysql",
 		AdminAccessTokenTTL:   time.Hour,
 		AdminRefreshTokenTTL:  30 * 24 * time.Hour,
 		PeerTTL:               90 * time.Second,
@@ -113,7 +112,6 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 		AdminJWTSecret                string       `json:"admin_jwt_secret"`
 		AdminAccessTokenTTL           durationJSON `json:"admin_access_token_ttl"`
 		AdminRefreshTokenTTL          durationJSON `json:"admin_refresh_token_ttl"`
-		AdminAllowedOrigins           []string     `json:"admin_allowed_origins"`
 		PSK                           string       `json:"psk"`
 		PeerTTL                       durationJSON `json:"peer_ttl"`
 		PairTTL                       durationJSON `json:"pair_ttl"`
@@ -168,9 +166,6 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 	}
 	if x.AdminRefreshTokenTTL.set {
 		s.AdminRefreshTokenTTL = x.AdminRefreshTokenTTL.Duration
-	}
-	if x.AdminAllowedOrigins != nil {
-		s.AdminAllowedOrigins = x.AdminAllowedOrigins
 	}
 	s.PSK = x.PSK
 	if x.PeerTTL.set {
@@ -235,39 +230,38 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 
 func (s Server) MarshalJSON() ([]byte, error) {
 	type serverJSON struct {
-		UDPListen                     string   `json:"udp_listen"`
-		StunAltListen                 string   `json:"stun_alt_listen"`
-		HTTPListen                    string   `json:"http_listen"`
-		DatabasePath                  string   `json:"database_path"`
-		ControlDatabaseDriver         string   `json:"control_database_driver"`
-		ControlDatabaseDSN            string   `json:"control_database_dsn,omitempty"`
-		ControlDatabaseAutoMigrate    bool     `json:"control_database_auto_migrate"`
-		AdminPassword                 string   `json:"admin_password,omitempty"`
-		AdminPasswordHash             string   `json:"admin_password_hash,omitempty"`
-		AdminJWTSecret                string   `json:"admin_jwt_secret,omitempty"`
-		AdminAccessTokenTTL           string   `json:"admin_access_token_ttl"`
-		AdminRefreshTokenTTL          string   `json:"admin_refresh_token_ttl"`
-		AdminAllowedOrigins           []string `json:"admin_allowed_origins,omitempty"`
-		PSK                           string   `json:"psk"`
-		PeerTTL                       string   `json:"peer_ttl"`
-		PairTTL                       string   `json:"pair_ttl"`
-		RelayIdleTimeout              string   `json:"relay_idle_timeout"`
-		AllowRelay                    bool     `json:"allow_relay"`
-		AllowLegacy                   bool     `json:"allow_legacy"`
-		ClientNoUPnP                  bool     `json:"client_no_upnp"`
-		ClientUPnPTimeout             string   `json:"client_upnp_timeout"`
-		ClientLogLevel                string   `json:"client_log_level"`
-		ClientTrayEnabled             bool     `json:"client_tray_enabled"`
-		ClientPunchTimeout            string   `json:"client_punch_timeout"`
-		ClientForceRelay              bool     `json:"client_force_relay"`
-		ClientAllowLegacy             bool     `json:"client_allow_legacy"`
-		ClientReleaseVersion          string   `json:"client_release_version,omitempty"`
-		ClientReleaseURL              string   `json:"client_release_url,omitempty"`
-		ClientReleaseSHA256           string   `json:"client_release_sha256,omitempty"`
-		ClientReleasePublishedAt      string   `json:"client_release_published_at,omitempty"`
-		ClientReleaseNotes            string   `json:"client_release_notes,omitempty"`
-		ClientReleaseMinimumSupported string   `json:"client_release_minimum_supported_version,omitempty"`
-		ClientReleaseFile             string   `json:"client_release_file,omitempty"`
+		UDPListen                     string `json:"udp_listen"`
+		StunAltListen                 string `json:"stun_alt_listen"`
+		HTTPListen                    string `json:"http_listen"`
+		DatabasePath                  string `json:"database_path"`
+		ControlDatabaseDriver         string `json:"control_database_driver"`
+		ControlDatabaseDSN            string `json:"control_database_dsn,omitempty"`
+		ControlDatabaseAutoMigrate    bool   `json:"control_database_auto_migrate"`
+		AdminPassword                 string `json:"admin_password,omitempty"`
+		AdminPasswordHash             string `json:"admin_password_hash,omitempty"`
+		AdminJWTSecret                string `json:"admin_jwt_secret,omitempty"`
+		AdminAccessTokenTTL           string `json:"admin_access_token_ttl"`
+		AdminRefreshTokenTTL          string `json:"admin_refresh_token_ttl"`
+		PSK                           string `json:"psk"`
+		PeerTTL                       string `json:"peer_ttl"`
+		PairTTL                       string `json:"pair_ttl"`
+		RelayIdleTimeout              string `json:"relay_idle_timeout"`
+		AllowRelay                    bool   `json:"allow_relay"`
+		AllowLegacy                   bool   `json:"allow_legacy"`
+		ClientNoUPnP                  bool   `json:"client_no_upnp"`
+		ClientUPnPTimeout             string `json:"client_upnp_timeout"`
+		ClientLogLevel                string `json:"client_log_level"`
+		ClientTrayEnabled             bool   `json:"client_tray_enabled"`
+		ClientPunchTimeout            string `json:"client_punch_timeout"`
+		ClientForceRelay              bool   `json:"client_force_relay"`
+		ClientAllowLegacy             bool   `json:"client_allow_legacy"`
+		ClientReleaseVersion          string `json:"client_release_version,omitempty"`
+		ClientReleaseURL              string `json:"client_release_url,omitempty"`
+		ClientReleaseSHA256           string `json:"client_release_sha256,omitempty"`
+		ClientReleasePublishedAt      string `json:"client_release_published_at,omitempty"`
+		ClientReleaseNotes            string `json:"client_release_notes,omitempty"`
+		ClientReleaseMinimumSupported string `json:"client_release_minimum_supported_version,omitempty"`
+		ClientReleaseFile             string `json:"client_release_file,omitempty"`
 	}
 	return json.Marshal(serverJSON{
 		UDPListen:                     s.UDPListen,
@@ -282,7 +276,6 @@ func (s Server) MarshalJSON() ([]byte, error) {
 		AdminJWTSecret:                s.AdminJWTSecret,
 		AdminAccessTokenTTL:           s.AdminAccessTokenTTL.String(),
 		AdminRefreshTokenTTL:          s.AdminRefreshTokenTTL.String(),
-		AdminAllowedOrigins:           s.AdminAllowedOrigins,
 		PSK:                           s.PSK,
 		PeerTTL:                       s.PeerTTL.String(),
 		PairTTL:                       s.PairTTL.String(),

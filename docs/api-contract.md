@@ -1,6 +1,6 @@
 # API Contract
 
-当前服务端 HTTP 层使用 Gin，管理后台和 API 分离部署。UDP rendezvous、relay、agent 拉取规则等核心隧道流程不属于本文档的重构范围。
+当前服务端 HTTP 层使用 Gin，管理后台和 API 分离部署，CORS 直接放行全部来源。UDP rendezvous、relay、agent 拉取规则等核心隧道流程不属于本文档的重构范围。
 
 ## Conventions
 
@@ -208,7 +208,7 @@
 
 ## Storage Direction
 
-当前运行数据仍由现有 SQLite store 承载。`internal/controlstore` 已提供 Gorm + MySQL 模型和连接骨架，配置项如下：
+目标控制库为 MySQL 5.5。当前运行数据仍由现有 SQLite store 承载，`internal/controlstore` 已提供 Gorm + MySQL 5.5 兼容模型和连接骨架，配置项如下：
 
 ```json
 {
