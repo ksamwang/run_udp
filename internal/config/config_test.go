@@ -33,7 +33,7 @@ func TestLoadMissingConfigIsAllowed(t *testing.T) {
 }
 
 func TestServerAllowRelayDefaultsToTrueWhenOmitted(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "server.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"psk":"secret","allow_legacy":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +46,33 @@ func TestServerAllowRelayDefaultsToTrueWhenOmitted(t *testing.T) {
 	}
 	if !cfg.AllowLegacy {
 		t.Fatal("allow_legacy should be loaded")
+	}
+}
+
+func TestLoadServerEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte(`
+UDP_LISTEN=:17000
+CONTROL_DATABASE_DSN='user:pass@tcp(127.0.0.1:3306)/udp_tunnel'
+ADMIN_ACCESS_TOKEN_TTL=2h
+ALLOW_RELAY=false
+CLIENT_TRAY_ENABLED=false
+CLIENT_LOG_LEVEL=debug
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultServer()
+	if err := LoadServerEnv(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UDPListen != ":17000" || cfg.ControlDatabaseDSN != "user:pass@tcp(127.0.0.1:3306)/udp_tunnel" {
+		t.Fatalf("env strings not loaded: %+v", cfg)
+	}
+	if cfg.AdminAccessTokenTTL != 2*time.Hour {
+		t.Fatalf("duration not loaded: %+v", cfg.AdminAccessTokenTTL)
+	}
+	if cfg.AllowRelay || cfg.ClientTrayEnabled || cfg.ClientLogLevel != "debug" {
+		t.Fatalf("bool/string values not loaded: %+v", cfg)
 	}
 }
 

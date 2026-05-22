@@ -27,7 +27,7 @@ func (a *App) ensureAdminPassword() error {
 		pass := a.cfg.AdminPassword
 		if pass == "" {
 			pass = "admin"
-			log.Printf("WARN admin password defaulting to %q; change it in server.json or with -admin-password", pass)
+			log.Printf("WARN admin password defaulting to %q; change it in .env or with -admin-password", pass)
 		}
 		b, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
 		if err != nil {

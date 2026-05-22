@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -415,6 +417,125 @@ func LoadJSON(path string, dst any) error {
 	}
 	if err := json.Unmarshal(b, dst); err != nil {
 		return fmt.Errorf("decode config %s: %w", path, err)
+	}
+	return nil
+}
+
+func LoadServerEnv(path string, cfg *Server) error {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read env %s: %w", path, err)
+	}
+	defer f.Close()
+	values := map[string]string{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("decode env %s: bad line %q", path, line)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		values[key] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read env %s: %w", path, err)
+	}
+	return applyServerEnv(values, cfg)
+}
+
+func applyServerEnv(values map[string]string, s *Server) error {
+	setString := func(key string, dst *string) {
+		if v, ok := values[key]; ok {
+			*dst = v
+		}
+	}
+	setDuration := func(key string, dst *time.Duration) error {
+		v, ok := values[key]
+		if !ok || v == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+		*dst = d
+		return nil
+	}
+	setBool := func(key string, dst *bool) error {
+		v, ok := values[key]
+		if !ok || v == "" {
+			return nil
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+		*dst = b
+		return nil
+	}
+	setString("UDP_LISTEN", &s.UDPListen)
+	setString("STUN_ALT_LISTEN", &s.StunAltListen)
+	setString("HTTP_LISTEN", &s.HTTPListen)
+	setString("CONTROL_DATABASE_DRIVER", &s.ControlDatabaseDriver)
+	setString("CONTROL_DATABASE_DSN", &s.ControlDatabaseDSN)
+	setString("ADMIN_PASSWORD", &s.AdminPassword)
+	setString("ADMIN_PASSWORD_HASH", &s.AdminPasswordHash)
+	setString("ADMIN_JWT_SECRET", &s.AdminJWTSecret)
+	setString("PSK", &s.PSK)
+	setString("CLIENT_LOG_LEVEL", &s.ClientLogLevel)
+	setString("CLIENT_RELEASE_VERSION", &s.ClientReleaseVersion)
+	setString("CLIENT_RELEASE_URL", &s.ClientReleaseURL)
+	setString("CLIENT_RELEASE_SHA256", &s.ClientReleaseSHA256)
+	setString("CLIENT_RELEASE_PUBLISHED_AT", &s.ClientReleasePublishedAt)
+	setString("CLIENT_RELEASE_NOTES", &s.ClientReleaseNotes)
+	setString("CLIENT_RELEASE_MINIMUM_SUPPORTED_VERSION", &s.ClientReleaseMinimumSupported)
+	setString("CLIENT_RELEASE_FILE", &s.ClientReleaseFile)
+	for _, item := range []struct {
+		key string
+		dst *time.Duration
+	}{
+		{"ADMIN_ACCESS_TOKEN_TTL", &s.AdminAccessTokenTTL},
+		{"ADMIN_REFRESH_TOKEN_TTL", &s.AdminRefreshTokenTTL},
+		{"PEER_TTL", &s.PeerTTL},
+		{"PAIR_TTL", &s.PairTTL},
+		{"RELAY_IDLE_TIMEOUT", &s.RelayIdleTimeout},
+		{"CLIENT_UPNP_TIMEOUT", &s.ClientUPnPTimeout},
+		{"CLIENT_PUNCH_TIMEOUT", &s.ClientPunchTimeout},
+	} {
+		if err := setDuration(item.key, item.dst); err != nil {
+			return err
+		}
+	}
+	for _, item := range []struct {
+		key string
+		dst *bool
+	}{
+		{"CONTROL_DATABASE_AUTO_MIGRATE", &s.ControlDatabaseAutoMigrate},
+		{"ALLOW_RELAY", &s.AllowRelay},
+		{"ALLOW_LEGACY", &s.AllowLegacy},
+		{"CLIENT_NO_UPNP", &s.ClientNoUPnP},
+		{"CLIENT_TRAY_ENABLED", &s.ClientTrayEnabled},
+		{"CLIENT_FORCE_RELAY", &s.ClientForceRelay},
+		{"CLIENT_ALLOW_LEGACY", &s.ClientAllowLegacy},
+	} {
+		if err := setBool(item.key, item.dst); err != nil {
+			return err
+		}
 	}
 	return nil
 }

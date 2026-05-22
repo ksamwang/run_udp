@@ -13,6 +13,7 @@
 # 本地运行数据库
 udp-tunnel.db*
 测试数据库.txt
+.env
 
 # IDE
 .vscode/

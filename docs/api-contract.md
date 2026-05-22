@@ -210,12 +210,10 @@
 
 控制库为 MySQL 5.5，`internal/controlstore` 提供 Gorm + MySQL 5.5 兼容模型和完整读写实现，配置项如下：
 
-```json
-{
-  "control_database_driver": "mysql",
-  "control_database_dsn": "user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
-  "control_database_auto_migrate": true
-}
+```dotenv
+CONTROL_DATABASE_DRIVER=mysql
+CONTROL_DATABASE_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
+CONTROL_DATABASE_AUTO_MIGRATE=true
 ```
 
 后续替换存储实现时，应以本文档接口行为和现有 store 测试为回归基线。

@@ -22,7 +22,7 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 #### 最小上线流程
 
 1. 在一台公网可达的 Linux 机器上部署服务端，开放 `7000/udp`、`7002/udp`、`7001/tcp`
-2. 配置好 `server.json`，至少确认 `psk` 和 `admin_password`
+2. 配置好 `.env`，至少确认 `PSK`、`ADMIN_PASSWORD` 和 `CONTROL_DATABASE_DSN`
 3. 启动服务端并确认 `http://<server>:7001/health` 正常
 4. 在每台 Windows 客户端旁放置 `client.exe` 和最小 `client.json`
 5. 在 `client.json` 中填写 `server_http` 和 `psk`
@@ -87,40 +87,25 @@ server {
 复制配置样例：
 
 ```bat
-copy server.json.example server.json
+copy .env.example .env
 ```
 
-编辑 `server.json`：
+编辑 `.env`：
 
-```json
-{
-  "udp_listen": ":7000",
-  "stun_alt_listen": ":7002",
-  "http_listen": ":7001",
-  "control_database_driver": "mysql",
-  "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
-  "control_database_auto_migrate": false,
-  "admin_password": "change-me",
-  "psk": "change-this-deployment-secret",
-  "peer_ttl": "90s",
-  "pair_ttl": "2m",
-  "relay_idle_timeout": "5m",
-  "allow_relay": true,
-  "allow_legacy": false,
-  "client_no_upnp": false,
-  "client_upnp_timeout": "4s",
-  "client_log_level": "info",
-  "client_tray_enabled": true,
-  "client_punch_timeout": "30s",
-  "client_force_relay": false,
-  "client_allow_legacy": false
-}
+```dotenv
+UDP_LISTEN=:7000
+STUN_ALT_LISTEN=:7002
+HTTP_LISTEN=:7001
+CONTROL_DATABASE_DSN=udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
+ADMIN_PASSWORD=change-me
+ADMIN_JWT_SECRET=change-this-admin-jwt-secret
+PSK=change-this-deployment-secret
 ```
 
 启动服务端：
 
 ```bash
-./server -config server.json
+./server -env .env
 ```
 
 服务端需要开放以下端口：
@@ -286,7 +271,7 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 #### Quick Start Checklist
 
 1. Deploy the server on a publicly reachable Linux host and open `7000/udp`, `7002/udp`, and `7001/tcp`
-2. Configure `server.json`, at minimum setting `psk` and `admin_password`
+2. Configure `.env`, at minimum setting `PSK`, `ADMIN_PASSWORD`, and `CONTROL_DATABASE_DSN`
 3. Start the server and verify `http://<server>:7001/health` is healthy
 4. Place `client.exe` and a minimal `client.json` on each Windows client
 5. Fill in `server_http` and `psk` in `client.json`
@@ -351,40 +336,25 @@ server {
 Copy the sample config:
 
 ```bat
-copy server.json.example server.json
+copy .env.example .env
 ```
 
-Edit `server.json`:
+Edit `.env`:
 
-```json
-{
-  "udp_listen": ":7000",
-  "stun_alt_listen": ":7002",
-  "http_listen": ":7001",
-  "control_database_driver": "mysql",
-  "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
-  "control_database_auto_migrate": false,
-  "admin_password": "change-me",
-  "psk": "change-this-deployment-secret",
-  "peer_ttl": "90s",
-  "pair_ttl": "2m",
-  "relay_idle_timeout": "5m",
-  "allow_relay": true,
-  "allow_legacy": false,
-  "client_no_upnp": false,
-  "client_upnp_timeout": "4s",
-  "client_log_level": "info",
-  "client_tray_enabled": true,
-  "client_punch_timeout": "30s",
-  "client_force_relay": false,
-  "client_allow_legacy": false
-}
+```dotenv
+UDP_LISTEN=:7000
+STUN_ALT_LISTEN=:7002
+HTTP_LISTEN=:7001
+CONTROL_DATABASE_DSN=udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
+ADMIN_PASSWORD=change-me
+ADMIN_JWT_SECRET=change-this-admin-jwt-secret
+PSK=change-this-deployment-secret
 ```
 
 Start the server:
 
 ```bash
-./server -config server.json
+./server -env .env
 ```
 
 Open these ports:

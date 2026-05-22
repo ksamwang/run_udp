@@ -13,7 +13,7 @@ import (
 func main() {
 	cfg := config.DefaultServer()
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	configPath := fs.String("config", "server.json", "server config file")
+	envPath := fs.String("env", ".env", "server env file")
 	udpAddr := fs.String("listen", cfg.UDPListen, "UDP listen address")
 	stunAlt := fs.String("stun-alt", cfg.StunAltListen, "STUN alternate UDP listen address")
 	httpAddr := fs.String("http", cfg.HTTPListen, "HTTP listen address")
@@ -31,7 +31,9 @@ func main() {
 	allowLegacy := fs.Bool("allow-legacy", cfg.AllowLegacy, "allow legacy plaintext JSON UDP protocol")
 	fs.Parse(os.Args[1:])
 
-	_ = config.LoadJSON(*configPath, &cfg)
+	if err := config.LoadServerEnv(*envPath, &cfg); err != nil {
+		log.Fatal(err)
+	}
 	if flagSet(fs, "listen") {
 		cfg.UDPListen = *udpAddr
 	}
