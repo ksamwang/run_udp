@@ -152,6 +152,8 @@ copy client.json.example client.json
 - `device_name`：可选，留空时默认使用 Windows 计算机名
 - `psk`：必须与服务端一致
 
+`client.json.example` 只保留以上三项本机引导配置。不要再把 UDP 地址、打洞超时、端口映射、中继策略、日志等级、托盘开关、客户端发布信息写入客户端配置样例；这些配置都由服务端数据库统一管理。
+
 客户端首次启动会自动生成稳定 `device_id`。  
 运行期的 UDP 地址、打洞、UPnP、relay 默认项会从 MySQL 配置读取，并通过 `POST /api/agent/bootstrap` 由服务端统一下发。
 客户端启动时会自动做一次 NAT 探测；如果判定为 `Symmetric NAT`，本进程会直接优先走 relay。
@@ -186,7 +188,7 @@ client.exe -config client.json -agent
 客户端启动后可从 Windows 托盘打开：
 
 - `Open Control Plane`：打开管理后台入口
-- `Client Settings`：本机 `client.json` 可视化配置页
+- `Client Settings`：打开本机引导配置页，只维护 `server_http`、`device_name`、`psk`
 - `Exit`：退出客户端
 
 #### 调试模式
@@ -244,6 +246,7 @@ Agent 接口：
 - `GET /api/admin/tunnel-states`
 
 管理后台 API 使用 JWT Bearer Token。Agent API 使用 `X-UDP-Tunnel-PSK` header。
+错误响应统一为 JSON：`{"code":"bad_rule","error":"target_port must be 1-65535"}`。
 
 ### 验证
 
@@ -409,6 +412,8 @@ Notes:
 - `device_name`: optional; defaults to the Windows hostname
 - `psk`: must match the server
 
+`client.json.example` intentionally contains only these three local bootstrap fields. Do not add UDP addresses, punch timeouts, port mapping, relay policy, log level, tray settings, or client release metadata back into the sample client config; those values are centrally managed in the server database.
+
 On first start, the client generates a stable `device_id`.  
 Runtime settings such as UDP rendezvous address, punching, UPnP, and relay defaults are read from MySQL settings and delivered by the server through `POST /api/agent/bootstrap`.
 The client also performs automatic NAT probing at startup; if it detects a symmetric NAT, it will prefer relay immediately.
@@ -443,7 +448,7 @@ Then connect from the source device to:
 Once started, the Windows tray provides:
 
 - `Open Control Plane`
-- `Client Settings`
+- `Client Settings`: opens the local bootstrap settings page for `server_http`, `device_name`, and `psk`
 - `Exit`
 
 #### Debug mode
@@ -501,6 +506,7 @@ Agent endpoints:
 - `GET /api/admin/tunnel-states`
 
 Admin APIs use JWT Bearer tokens. Agent APIs use the `X-UDP-Tunnel-PSK` header.
+Error responses use JSON consistently: `{"code":"bad_rule","error":"target_port must be 1-65535"}`.
 
 ### Verification
 

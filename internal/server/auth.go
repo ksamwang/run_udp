@@ -17,7 +17,7 @@ const defaultAdminPassword = "admin"
 func (a *App) requireAgent(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.cfg.PSK != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-UDP-Tunnel-PSK")), []byte(a.cfg.PSK)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 			return
 		}
 		next(w, r)

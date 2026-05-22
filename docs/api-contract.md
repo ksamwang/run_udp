@@ -9,7 +9,7 @@
 - 管理后台认证：`Authorization: Bearer <access_token>`
 - Agent 认证：`X-UDP-Tunnel-PSK: <psk>`
 - 请求体和响应体均为 JSON，文件下载接口除外
-- 错误响应优先返回：
+- 错误响应统一返回 JSON。`code` 给前端分支处理，`error` 给用户提示或日志展示：
 
 ```json
 {
@@ -17,6 +17,20 @@
   "error": "target_port must be 1-65535"
 }
 ```
+
+常见错误码：
+
+- `unauthorized`：认证失败或 token 已失效
+- `bad_json`：请求体不是合法 JSON，或缺少必填字段
+- `method_not_allowed`：HTTP 方法不允许
+- `device_not_found`：设备不存在
+- `device_disabled`：设备已禁用
+- `device_in_use`：设备仍被启用规则引用，不能删除
+- `same_device_forbidden`：入口设备和出口设备不能相同
+- `local_port_conflict`：同一入口设备的本地端口被启用规则占用
+- `bad_rule`：规则字段不合法
+- `duration_too_short` / `client_duration_too_short`：时间配置低于服务端允许下限
+- `wrong_current_password` / `password_too_short`：修改管理员密码失败
 
 ## Public
 
@@ -53,8 +67,10 @@
     "id": "admin",
     "username": "admin",
     "name": "Administrator",
-    "role": "admin"
-  }
+    "role": "admin",
+    "force_password_change": true
+  },
+  "force_password_change": true
 }
 ```
 
@@ -165,6 +181,32 @@
 
 更新可运行时生效的数据库配置项，并立即写入 MySQL `system_settings` 表。监听地址、数据库连接、PSK、JWT 等仍属于 `.env` 启动配置。
 
+请求：
+
+```json
+{
+  "peer_ttl": "45s",
+  "pair_ttl": "1m",
+  "relay_idle_timeout": "2m",
+  "allow_relay": true,
+  "allow_legacy": false,
+  "client_no_upnp": true,
+  "client_upnp_timeout": "3s",
+  "client_log_level": "debug",
+  "client_tray_enabled": false,
+  "client_punch_timeout": "15s",
+  "client_force_relay": false,
+  "client_allow_legacy": false,
+  "client_release_version": "1.0.0",
+  "client_release_url": "https://example.com/client.exe",
+  "client_release_sha256": "abc123",
+  "client_release_published_at": "2026-05-23T10:00:00+08:00",
+  "client_release_notes": "stable",
+  "client_release_minimum_supported_version": "0.9.0",
+  "client_release_file": ""
+}
+```
+
 ### `POST /api/admin/password`
 
 请求：
@@ -194,6 +236,36 @@
 
 客户端启动时拉取服务端下发配置。
 
+本地 `client.json` 只保留 `server_http`、`device_name`、`psk` 三个引导字段。下面响应中的运行期字段由服务端 MySQL `system_settings` 统一下发，客户端不应长期保存在配置样例里。
+
+请求：
+
+```json
+{
+  "device_id": "office-pc",
+  "device_name": "Office PC"
+}
+```
+
+响应：
+
+```json
+{
+  "device_id": "office-pc",
+  "device_name": "Office PC",
+  "server": "tunnel.example.com:7000",
+  "server_http": "http://tunnel.example.com:7001",
+  "stun_alt_port": 7002,
+  "no_upnp": true,
+  "upnp_timeout": "3s",
+  "log_level": "debug",
+  "tray_enabled": false,
+  "punch_timeout": "15s",
+  "force_relay": false,
+  "allow_legacy": false
+}
+```
+
 ### `GET /api/agent/rules?device_id=<id>`
 
 返回与设备相关且启用的转发规则。
@@ -217,5 +289,15 @@ CONTROL_DATABASE_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&pa
 ```
 
 运行期隧道策略、客户端默认配置、客户端发布信息存储在 `system_settings` 表，服务启动时会按代码默认值补齐缺失键，管理后台设置页通过 `PATCH /api/admin/settings` 持久化更新。
+
+客户端最小引导配置固定为：
+
+```json
+{
+  "server_http": "http://tunnel.example.com",
+  "device_name": "",
+  "psk": "change-this-deployment-secret"
+}
+```
 
 后续替换存储实现时，应以本文档接口行为和现有 store 测试为回归基线。

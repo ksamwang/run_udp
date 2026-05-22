@@ -21,7 +21,7 @@ func (a *App) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		Tunnels  []agentTunnelReport `json:"tunnels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
@@ -50,7 +50,7 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Tunnels  []agentTunnelReport `json:"tunnels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil {
@@ -89,7 +89,7 @@ func (a *App) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		LastTransitionAt string `json:"last_transition_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.Peer == "" {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	req.Profile = store.NormalizeProfile(req.Profile)
@@ -128,7 +128,7 @@ func (a *App) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 		return
 	}
 	var req struct {
@@ -136,7 +136,7 @@ func (a *App) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 		DeviceName string `json:"device_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	if err := a.ensureAgentDeviceAllowed(r.Context(), req.DeviceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -152,7 +152,7 @@ func (a *App) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleAgentRules(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.URL.Query().Get("device_id")
 	if deviceID == "" {
-		http.Error(w, "device_id required", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("device_id_required", "device_id required"))
 		return
 	}
 	if err := a.ensureAgentDeviceAllowed(r.Context(), deviceID); err != nil {

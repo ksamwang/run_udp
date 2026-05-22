@@ -660,6 +660,213 @@ func TestAdminConsoleAPISmoke(t *testing.T) {
 	}
 }
 
+func TestEndToEndAdminAgentBootstrapFlow(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.ensureAdminUser(); err != nil {
+		t.Fatal(err)
+	}
+
+	loginRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{
+		"username": defaultAdminUsername,
+		"password": defaultAdminPassword,
+	}, nil)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	var loginResp tokenResponse
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginResp); err != nil {
+		t.Fatal(err)
+	}
+	if !loginResp.ForcePasswordChange {
+		t.Fatalf("default admin should require password change: %+v", loginResp)
+	}
+
+	changeRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/password", map[string]any{
+		"current_password": defaultAdminPassword,
+		"new_password":     "admin-secret-123",
+	}, map[string]string{"Authorization": "Bearer " + loginResp.AccessToken})
+	if changeRec.Code != http.StatusOK {
+		t.Fatalf("change password status=%d body=%s", changeRec.Code, changeRec.Body.String())
+	}
+
+	oldMeRec := doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/me", nil, map[string]string{"Authorization": "Bearer " + loginResp.AccessToken})
+	if oldMeRec.Code != http.StatusUnauthorized {
+		t.Fatalf("old access token should be invalid after password change, got=%d body=%s", oldMeRec.Code, oldMeRec.Body.String())
+	}
+
+	loginRec = doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{
+		"username": defaultAdminUsername,
+		"password": "admin-secret-123",
+	}, nil)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("second login status=%d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginResp); err != nil {
+		t.Fatal(err)
+	}
+	adminHeaders := map[string]string{"Authorization": "Bearer " + loginResp.AccessToken}
+
+	settingsRec := doJSON(t, a.httpMux(), http.MethodPatch, "/api/admin/settings", map[string]any{
+		"peer_ttl":                                 "45s",
+		"pair_ttl":                                 "1m",
+		"relay_idle_timeout":                       "2m",
+		"allow_relay":                              true,
+		"allow_legacy":                             false,
+		"client_no_upnp":                           true,
+		"client_upnp_timeout":                      "3s",
+		"client_log_level":                         "debug",
+		"client_tray_enabled":                      false,
+		"client_punch_timeout":                     "15s",
+		"client_force_relay":                       true,
+		"client_allow_legacy":                      false,
+		"client_release_version":                   "1.0.0",
+		"client_release_url":                       "https://example.com/client.exe",
+		"client_release_sha256":                    "abc",
+		"client_release_published_at":              "2026-05-23T10:00:00+08:00",
+		"client_release_notes":                     "stable",
+		"client_release_minimum_supported_version": "0.9.0",
+		"client_release_file":                      "",
+	}, adminHeaders)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("settings status=%d body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+
+	bootstrapRec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{
+		"device_id":   "dev-a",
+		"device_name": "Office A",
+	})
+	if bootstrapRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap dev-a status=%d body=%s", bootstrapRec.Code, bootstrapRec.Body.String())
+	}
+	var bootstrap agentBootstrapResponse
+	if err := json.Unmarshal(bootstrapRec.Body.Bytes(), &bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrap.NoUPnP || bootstrap.UPnPTimeout != "3s" || bootstrap.LogLevel != "debug" || !bootstrap.ForceRelay {
+		t.Fatalf("bootstrap did not use stored settings: %+v", bootstrap)
+	}
+
+	bootstrapRec = doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{
+		"device_id":   "dev-b",
+		"device_name": "Office B",
+	})
+	if bootstrapRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap dev-b status=%d body=%s", bootstrapRec.Code, bootstrapRec.Body.String())
+	}
+	if err := a.db.SetDeviceEnabled(ctx, "dev-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetDeviceEnabled(ctx, "dev-b", true); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"dev-a", "dev-b"} {
+		rec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/register", map[string]any{
+			"device_id": id,
+			"name":      id,
+			"tunnels": []map[string]any{{
+				"peer":    otherDevice(id),
+				"profile": "interactive",
+				"state":   "connecting",
+			}},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("register %s status=%d body=%s", id, rec.Code, rec.Body.String())
+		}
+	}
+
+	ruleRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/rules", map[string]any{
+		"name": "rdp", "source_id": "dev-a", "target_id": "dev-b", "profile": "interactive",
+		"local_port": 13389, "target_host": "127.0.0.1", "target_port": 3389, "enabled": true,
+	}, adminHeaders)
+	if ruleRec.Code != http.StatusOK {
+		t.Fatalf("create rule status=%d body=%s", ruleRec.Code, ruleRec.Body.String())
+	}
+
+	rulesRec := doAgentJSON(t, a.httpMux(), http.MethodGet, "/api/agent/rules?device_id=dev-a", nil)
+	if rulesRec.Code != http.StatusOK {
+		t.Fatalf("agent rules status=%d body=%s", rulesRec.Code, rulesRec.Body.String())
+	}
+	var rules []store.ForwardRule
+	if err := json.Unmarshal(rulesRec.Body.Bytes(), &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].TargetID != "dev-b" {
+		t.Fatalf("unexpected agent rules: %+v", rules)
+	}
+
+	sessionID, err := a.db.StartSession(ctx, "dev-a", "dev-b", store.ProfileInteractive, "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusRec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/tunnel-status", map[string]any{
+		"device_id": "dev-a",
+		"peer":      "dev-b",
+		"profile":   "interactive",
+		"state":     "relay",
+		"via":       "relay",
+		"rtt_ms":    12,
+	})
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("tunnel status=%d body=%s", statusRec.Code, statusRec.Body.String())
+	}
+	sessionsRec := doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/sessions", nil, adminHeaders)
+	if sessionsRec.Code != http.StatusOK {
+		t.Fatalf("sessions status=%d body=%s", sessionsRec.Code, sessionsRec.Body.String())
+	}
+	var sessions []store.Session
+	if err := json.Unmarshal(sessionsRec.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) == 0 || sessions[0].ID != sessionID || sessions[0].Path != "relay" {
+		t.Fatalf("session path not updated: %+v", sessions)
+	}
+}
+
+func TestErrorResponsesUseJSONContract(t *testing.T) {
+	a := newTestApp(t)
+	checks := []struct {
+		name   string
+		rec    *httptest.ResponseRecorder
+		status int
+		code   string
+	}{
+		{
+			name:   "agent unauthorized",
+			rec:    doJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{"device_id": "dev-a"}, nil),
+			status: http.StatusUnauthorized,
+			code:   "unauthorized",
+		},
+		{
+			name:   "bad settings duration",
+			rec:    doAdminJSON(t, a, http.MethodPatch, "/api/admin/settings", map[string]any{"peer_ttl": "bad"}),
+			status: http.StatusBadRequest,
+			code:   "bad_peer_ttl",
+		},
+		{
+			name:   "bad agent request",
+			rec:    doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/register", map[string]any{}),
+			status: http.StatusBadRequest,
+			code:   "bad_json",
+		},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if check.rec.Code != check.status {
+				t.Fatalf("status=%d body=%s", check.rec.Code, check.rec.Body.String())
+			}
+			var resp map[string]any
+			if err := json.Unmarshal(check.rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not json: %v body=%s", err, check.rec.Body.String())
+			}
+			if resp["code"] != check.code || resp["error"] == "" {
+				t.Fatalf("unexpected error contract: %+v", resp)
+			}
+		})
+	}
+}
+
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	db := newFakeStore()
@@ -683,6 +890,13 @@ func mustUpsertDevice(t *testing.T, a *App, ctx context.Context, id string, enab
 	if err := a.db.SetDeviceEnabled(ctx, id, enabled); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func otherDevice(id string) string {
+	if id == "dev-a" {
+		return "dev-b"
+	}
+	return "dev-a"
 }
 
 func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {

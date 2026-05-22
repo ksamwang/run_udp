@@ -60,7 +60,7 @@ func (a *App) handleDeviceByID(w http.ResponseWriter, r *http.Request, id string
 		}
 		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 	}
 }
 
@@ -87,7 +87,7 @@ func (a *App) handleForwards(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONOrError(w, rule, err)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 	}
 }
 
@@ -98,7 +98,7 @@ func (a *App) handleAdminForward(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleForwardByID(w http.ResponseWriter, r *http.Request, id int64, err error) {
 	if err != nil {
-		http.Error(w, "bad id", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_id", "bad id"))
 		return
 	}
 	switch r.Method {
@@ -126,7 +126,7 @@ func (a *App) handleForwardByID(w http.ResponseWriter, r *http.Request, id int64
 		}
 		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 	}
 }
 
@@ -201,40 +201,40 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			ClientReleaseFile             string `json:"client_release_file"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 			return
 		}
 		peerTTL, err := time.ParseDuration(req.PeerTTL)
 		if err != nil {
-			http.Error(w, "bad peer_ttl", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_peer_ttl", "bad peer_ttl"))
 			return
 		}
 		pairTTL, err := time.ParseDuration(req.PairTTL)
 		if err != nil {
-			http.Error(w, "bad pair_ttl", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_pair_ttl", "bad pair_ttl"))
 			return
 		}
 		relayIdle, err := time.ParseDuration(req.RelayIdleTimeout)
 		if err != nil {
-			http.Error(w, "bad relay_idle_timeout", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_relay_idle_timeout", "bad relay_idle_timeout"))
 			return
 		}
 		if peerTTL < 10*time.Second || pairTTL < 10*time.Second || relayIdle < 10*time.Second {
-			http.Error(w, "durations must be at least 10s", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("duration_too_short", "durations must be at least 10s"))
 			return
 		}
 		clientUPnPTimeout, err := time.ParseDuration(req.ClientUPnPTimeout)
 		if err != nil {
-			http.Error(w, "bad client_upnp_timeout", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_client_upnp_timeout", "bad client_upnp_timeout"))
 			return
 		}
 		clientPunchTimeout, err := time.ParseDuration(req.ClientPunchTimeout)
 		if err != nil {
-			http.Error(w, "bad client_punch_timeout", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("bad_client_punch_timeout", "bad client_punch_timeout"))
 			return
 		}
 		if clientUPnPTimeout < time.Second || clientPunchTimeout < time.Second {
-			http.Error(w, "client durations must be at least 1s", http.StatusBadRequest)
+			writeJSONOrError(w, nil, badRequest("client_duration_too_short", "client durations must be at least 1s"))
 			return
 		}
 		a.cfgMu.Lock()
@@ -287,13 +287,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 	}
 }
 
 func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONOrError(w, nil, methodNotAllowed())
 		return
 	}
 	var req struct {
@@ -301,11 +301,11 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword     string `json:"new_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
 	if len(req.NewPassword) < 8 {
-		http.Error(w, "new password must be at least 8 chars", http.StatusBadRequest)
+		writeJSONOrError(w, nil, badRequest("password_too_short", "new password must be at least 8 chars"))
 		return
 	}
 	claims, _ := r.Context().Value(adminClaimsKey{}).(adminClaims)
@@ -315,28 +315,28 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if claims.PasswordVersion != 0 && user.PasswordVersion != claims.PasswordVersion {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("unauthorized", "unauthorized"))
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)) != nil {
-		http.Error(w, "current password is wrong", http.StatusUnauthorized)
+		writeJSONOrError(w, nil, unauthorized("wrong_current_password", "current password is wrong"))
 		return
 	}
 	next, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	if err := a.db.UpdateAdminPassword(r.Context(), user.ID, string(next)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	if err := a.db.ClearAdminPasswordChangeRequired(r.Context(), user.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	if err := a.db.RevokeAdminRefreshTokensByUser(r.Context(), user.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONOrError(w, nil, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

@@ -27,6 +27,14 @@ func badRequest(code, message string) error {
 	return &apiError{Status: http.StatusBadRequest, Code: code, Message: message}
 }
 
+func unauthorized(code, message string) error {
+	return &apiError{Status: http.StatusUnauthorized, Code: code, Message: message}
+}
+
+func methodNotAllowed() error {
+	return &apiError{Status: http.StatusMethodNotAllowed, Code: "method_not_allowed", Message: "method not allowed"}
+}
+
 func writeJSONOrError(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		status := http.StatusInternalServerError
