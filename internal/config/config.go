@@ -97,7 +97,6 @@ func (c *Client) UnmarshalJSON(b []byte) error {
 	type clientJSON struct {
 		Server       string       `json:"server"`
 		ServerHTTP   string       `json:"server_http"`
-		DeviceID     string       `json:"device_id"`
 		DeviceName   string       `json:"device_name"`
 		PeerID       string       `json:"peer_id"`
 		PSK          string       `json:"psk"`
@@ -116,7 +115,6 @@ func (c *Client) UnmarshalJSON(b []byte) error {
 	}
 	c.Server = x.Server
 	c.ServerHTTP = x.ServerHTTP
-	c.DeviceID = x.DeviceID
 	c.DeviceName = x.DeviceName
 	c.PeerID = x.PeerID
 	c.PSK = x.PSK
@@ -321,12 +319,10 @@ func SaveClientLocalJSON(path string, cfg Client) error {
 	}
 	local := struct {
 		ServerHTTP string `json:"server_http"`
-		DeviceID   string `json:"device_id,omitempty"`
 		DeviceName string `json:"device_name,omitempty"`
 		PSK        string `json:"psk"`
 	}{
 		ServerHTTP: cfg.ServerHTTP,
-		DeviceID:   cfg.DeviceID,
 		DeviceName: cfg.DeviceName,
 		PSK:        cfg.PSK,
 	}

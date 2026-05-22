@@ -154,7 +154,7 @@ copy client.json.example client.json
 
 `client.json.example` 只保留以上三项本机引导配置。不要再把 UDP 地址、打洞超时、端口映射、中继策略、日志等级、托盘开关、客户端发布信息写入客户端配置样例；这些配置都由服务端数据库统一管理。
 
-客户端首次启动会自动生成稳定 `device_id`。  
+客户端启动时会从本机 UUID 自动推导稳定 `device_id`，不会从 `client.json` 读取，也不会写入 `client.json`。
 运行期的 UDP 地址、打洞、UPnP、relay 默认项会从 MySQL 配置读取，并通过 `POST /api/agent/bootstrap` 由服务端统一下发。
 客户端启动时会自动做一次 NAT 探测；如果判定为 `Symmetric NAT`，本进程会直接优先走 relay。
 
@@ -417,7 +417,7 @@ Notes:
 
 `client.json.example` intentionally contains only these three local bootstrap fields. Do not add UDP addresses, punch timeouts, port mapping, relay policy, log level, tray settings, or client release metadata back into the sample client config; those values are centrally managed in the server database.
 
-On first start, the client generates a stable `device_id`.  
+On startup, the client derives a stable `device_id` from the local machine UUID; it is neither read from nor written to `client.json`.
 Runtime settings such as UDP rendezvous address, punching, UPnP, and relay defaults are read from MySQL settings and delivered by the server through `POST /api/agent/bootstrap`.
 The client also performs automatic NAT probing at startup; if it detects a symmetric NAT, it will prefer relay immediately.
 

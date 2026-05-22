@@ -52,7 +52,6 @@ type clientConfigState struct {
 
 type clientLocalConfigView struct {
 	ServerHTTP string `json:"server_http"`
-	DeviceID   string `json:"device_id,omitempty"`
 	DeviceName string `json:"device_name"`
 	PSK        string `json:"psk"`
 }
@@ -69,7 +68,6 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 		defer s.mu.Unlock()
 		writeClientJSON(w, clientLocalConfigView{
 			ServerHTTP: s.cfg.ServerHTTP,
-			DeviceID:   s.cfg.DeviceID,
 			DeviceName: s.cfg.DeviceName,
 			PSK:        s.cfg.PSK,
 		})
@@ -201,7 +199,6 @@ const clientConfigHTML = `<!doctype html>
   <form id="form">
     <label>控制面地址<input name="server_http" placeholder="http://tunnel.example.com"><small>客户端唯一必填入口，启动后会从这里拉取运行配置。</small></label>
     <label>设备显示名<input name="device_name" placeholder="默认使用 Windows 计算机名"><small>Web 管理页优先显示这个名称。</small></label>
-    <label>设备 ID<input name="device_id" readonly><small>首次启动自动生成的稳定 ID，用于设备唯一标识。</small></label>
     <label>预共享密钥<input name="psk"><small>必须和服务端 PSK 一致。</small></label>
     <div class="full">
       <button type="submit">保存配置</button>
@@ -217,7 +214,7 @@ const clientConfigHTML = `<!doctype html>
 const form=document.querySelector("#form"),msg=document.querySelector("#msg"),runtime=document.querySelector("#runtime");
 async function load(){const r=await fetch("/api/config");const c=await r.json();for(const [k,v] of Object.entries(c)){const el=form.elements[k];if(!el)continue;if(el.type==="checkbox")el.checked=!!v;else el.value=String(v??"");}}
 async function loadRuntime(){const r=await fetch("/api/runtime");const c=await r.json();runtime.innerHTML=[["版本",c.version],["提交",c.commit],["构建时间",c.build_time],["安装路径",c.install_path],["日志路径",c.log_path],["服务状态",c.service_status],["更新状态",c.update_status],["上次检查",c.last_update_check],["最近错误",c.last_update_error]].map(([k,v])=>"<div><strong>"+k+":</strong> "+String(v||"")+"</div>").join("");}
-form.addEventListener("submit",async e=>{e.preventDefault();const fd=new FormData(form),body=Object.fromEntries(fd.entries());delete body.device_id;const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){msg.textContent="保存失败："+await r.text();return;}const resp=await r.json();msg.textContent=resp.elevation_required?"已请求管理员权限保存配置，请确认 UAC 后再重启服务":(resp.process_exiting?"已保存，客户端正在重启":"已保存，重启客户端后生效");if(resp.process_exiting){Array.from(form.elements).forEach(el=>el.disabled=true);}});
+form.addEventListener("submit",async e=>{e.preventDefault();const fd=new FormData(form),body=Object.fromEntries(fd.entries());const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){msg.textContent="保存失败："+await r.text();return;}const resp=await r.json();msg.textContent=resp.elevation_required?"已请求管理员权限保存配置，请确认 UAC 后再重启服务":(resp.process_exiting?"已保存，客户端正在重启":"已保存，重启客户端后生效");if(resp.process_exiting){Array.from(form.elements).forEach(el=>el.disabled=true);}});
 document.querySelector("#restart-service").addEventListener("click",async()=>{const r=await fetch("/api/restart-service",{method:"POST"});msg.textContent=r.ok?"服务重启请求已发送":"服务重启失败："+await r.text();loadRuntime().catch(()=>{});});
 document.querySelector("#check-updates").addEventListener("click",async()=>{const r=await fetch("/api/check-updates",{method:"POST"});msg.textContent=r.ok?"更新检查已触发":"更新检查失败："+await r.text();loadRuntime().catch(()=>{});});
 Promise.all([load(),loadRuntime()]).catch(e=>msg.textContent=e);

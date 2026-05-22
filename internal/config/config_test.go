@@ -17,7 +17,7 @@ func TestLoadClientConfigDurations(t *testing.T) {
 	if err := LoadJSON(path, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "1.2.3.4:7000" || cfg.DeviceID != "A" {
+	if cfg.Server != "1.2.3.4:7000" || cfg.DeviceID != "" {
 		t.Fatalf("config not loaded: %+v", cfg)
 	}
 	if cfg.UPnPTimeout != 2*time.Second || cfg.PunchTimeout != 7*time.Second {
@@ -82,8 +82,11 @@ func TestSaveClientLocalJSONWritesMinimalBootstrapConfig(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["server_http"] != "http://tunnel.example.com" || got["device_id"] != "dev-1234" || got["device_name"] != "office-pc" || got["psk"] != "secret" {
+	if got["server_http"] != "http://tunnel.example.com" || got["device_name"] != "office-pc" || got["psk"] != "secret" {
 		t.Fatalf("unexpected saved config: %v", got)
+	}
+	if _, ok := got["device_id"]; ok {
+		t.Fatalf("device_id should not be persisted: %v", got)
 	}
 	if _, ok := got["server"]; ok {
 		t.Fatalf("server should not be persisted: %v", got)

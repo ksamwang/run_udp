@@ -1381,7 +1381,7 @@ func ensureLocalIdentity(cfg *config.Client, configPath string) error {
 		cfg.DeviceName = defaultDeviceName()
 		changed = true
 	}
-	if strings.TrimSpace(cfg.DeviceID) == "" && cfg.PeerID == "" {
+	if cfg.PeerID == "" {
 		cfg.DeviceID = generateDeviceID()
 		changed = true
 	}

@@ -110,7 +110,10 @@ func TestClientConfigUIOnlyExposesBootstrapFields(t *testing.T) {
 			t.Fatalf("runtime field %s should not be exposed: %+v", key, got)
 		}
 	}
-	if got["server_http"] != cfg.ServerHTTP || got["device_id"] != cfg.DeviceID || got["device_name"] != cfg.DeviceName || got["psk"] != cfg.PSK {
+	if _, ok := got["device_id"]; ok {
+		t.Fatalf("device_id should not be exposed in local config UI: %+v", got)
+	}
+	if got["server_http"] != cfg.ServerHTTP || got["device_name"] != cfg.DeviceName || got["psk"] != cfg.PSK {
 		t.Fatalf("bootstrap fields missing: %+v", got)
 	}
 }
