@@ -98,6 +98,9 @@ copy server.json.example server.json
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
+  "control_database_driver": "sqlite",
+  "control_database_dsn": "",
+  "control_database_auto_migrate": false,
   "admin_password": "change-me",
   "psk": "change-this-deployment-secret",
   "peer_ttl": "90s",
@@ -130,6 +133,8 @@ copy server.json.example server.json
 | 7001 | TCP | Web 控制面和 API |
 
 访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 SQLite 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
+
+服务端 HTTP API 已切换到 Gin。当前运行数据仍由现有 SQLite store 承载；`internal/controlstore` 已提供 Gorm + MySQL 连接和模型骨架，后续切换时使用 `control_database_driver=mysql`、`control_database_dsn` 和 `control_database_auto_migrate`。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
 #### 3. 部署客户端
 
@@ -358,6 +363,9 @@ Edit `server.json`:
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
   "database_path": "udp-tunnel.db",
+  "control_database_driver": "sqlite",
+  "control_database_dsn": "",
+  "control_database_auto_migrate": false,
   "admin_password": "change-me",
   "psk": "change-this-deployment-secret",
   "peer_ttl": "90s",
@@ -390,6 +398,8 @@ Open these ports:
 | 7001 | TCP | HTTP API |
 
 Open the deployed React admin console and log in with `admin_password`.
+
+The server HTTP API now runs on Gin. Runtime data is still backed by the existing SQLite store; `internal/controlstore` provides the Gorm + MySQL connection and model skeleton for the next storage migration. Use `control_database_driver=mysql`, `control_database_dsn`, and `control_database_auto_migrate` when enabling that path. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
 
 #### 3. Deploy the client
 

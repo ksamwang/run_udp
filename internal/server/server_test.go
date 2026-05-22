@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -405,6 +406,53 @@ func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 	}
 	if refreshResp.AccessToken == "" || refreshResp.RefreshToken == "" || refreshResp.RefreshToken == loginResp.RefreshToken {
 		t.Fatalf("bad refresh response: %+v", refreshResp)
+	}
+}
+
+func TestAdminConsoleAPISmoke(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+
+	rec := doAdminJSON(t, a, http.MethodGet, "/api/admin/devices", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("devices status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", map[string]any{
+		"name": "rdp", "source_id": "dev-a", "target_id": "dev-b", "profile": "interactive",
+		"local_port": 13389, "target_host": "127.0.0.1", "target_port": 3389, "enabled": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create rule status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var rule store.ForwardRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &rule); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodGet, "/api/admin/rules", nil},
+		{http.MethodGet, "/api/admin/sessions", nil},
+		{http.MethodGet, "/api/admin/tunnel-states", nil},
+		{http.MethodGet, "/api/admin/metrics", nil},
+		{http.MethodGet, "/api/admin/settings", nil},
+		{http.MethodPatch, "/api/admin/rules/" + strconv.FormatInt(rule.ID, 10), map[string]any{
+			"name": "rdp", "source_id": "dev-a", "target_id": "dev-b", "profile": "interactive",
+			"local_port": 13390, "target_host": "127.0.0.1", "target_port": 3389, "enabled": true,
+		}},
+		{http.MethodPatch, "/api/admin/devices/dev-b", map[string]any{"enabled": false}},
+	}
+	for _, check := range checks {
+		rec = doAdminJSON(t, a, check.method, check.path, check.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s status=%d body=%s", check.method, check.path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

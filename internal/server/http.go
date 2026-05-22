@@ -4,6 +4,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (a *App) runHTTP() {
@@ -15,30 +17,44 @@ func (a *App) runHTTP() {
 }
 
 func (a *App) httpMux() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", a.handleHealth)
-	mux.HandleFunc("/peers", a.handlePeers)
-	mux.HandleFunc("/api/admin/auth/login", a.handleAdminLogin)
-	mux.HandleFunc("/api/admin/auth/refresh", a.handleAdminRefresh)
-	mux.HandleFunc("/api/admin/auth/logout", a.handleAdminLogout)
-	mux.HandleFunc("/api/admin/me", a.requireAdmin(a.handleAdminMe))
-	mux.HandleFunc("/api/admin/devices", a.requireAdmin(a.handleDevices))
-	mux.HandleFunc("/api/admin/devices/", a.requireAdmin(a.handleAdminDevice))
-	mux.HandleFunc("/api/admin/rules", a.requireAdmin(a.handleForwards))
-	mux.HandleFunc("/api/admin/rules/", a.requireAdmin(a.handleAdminForward))
-	mux.HandleFunc("/api/admin/sessions", a.requireAdmin(a.handleSessions))
-	mux.HandleFunc("/api/admin/tunnel-states", a.requireAdmin(a.handleTunnelStates))
-	mux.HandleFunc("/api/admin/metrics", a.requireAdmin(a.handleMetrics))
-	mux.HandleFunc("/api/admin/settings", a.requireAdmin(a.handleSettings))
-	mux.HandleFunc("/api/admin/password", a.requireAdmin(a.handleChangePassword))
-	mux.HandleFunc("/api/agent/register", a.requireAgent(a.handleAgentRegister))
-	mux.HandleFunc("/api/agent/heartbeat", a.requireAgent(a.handleAgentHeartbeat))
-	mux.HandleFunc("/api/agent/tunnel-status", a.requireAgent(a.handleAgentTunnelStatus))
-	mux.HandleFunc("/api/agent/bootstrap", a.requireAgent(a.handleAgentBootstrap))
-	mux.HandleFunc("/api/agent/rules", a.requireAgent(a.handleAgentRules))
-	mux.HandleFunc("/api/client/release", a.requireAgent(a.handleClientRelease))
-	mux.HandleFunc("/downloads/client/installer", a.handleClientInstaller)
-	return a.withCORS(mux)
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery(), a.ginCORS())
+
+	r.Any("/health", ginWrap(a.handleHealth))
+	r.Any("/peers", ginWrap(a.handlePeers))
+
+	admin := r.Group("/api/admin")
+	admin.POST("/auth/login", ginWrap(a.handleAdminLogin))
+	admin.POST("/auth/refresh", ginWrap(a.handleAdminRefresh))
+	admin.POST("/auth/logout", ginWrap(a.handleAdminLogout))
+	admin.Any("/me", ginWrap(a.requireAdmin(a.handleAdminMe)))
+	admin.Any("/devices", ginWrap(a.requireAdmin(a.handleDevices)))
+	admin.Any("/devices/:id", ginWrap(a.requireAdmin(a.handleAdminDevice)))
+	admin.Any("/rules", ginWrap(a.requireAdmin(a.handleForwards)))
+	admin.Any("/rules/:id", ginWrap(a.requireAdmin(a.handleAdminForward)))
+	admin.Any("/sessions", ginWrap(a.requireAdmin(a.handleSessions)))
+	admin.Any("/tunnel-states", ginWrap(a.requireAdmin(a.handleTunnelStates)))
+	admin.Any("/metrics", ginWrap(a.requireAdmin(a.handleMetrics)))
+	admin.Any("/settings", ginWrap(a.requireAdmin(a.handleSettings)))
+	admin.POST("/password", ginWrap(a.requireAdmin(a.handleChangePassword)))
+
+	agent := r.Group("/api/agent")
+	agent.POST("/register", ginWrap(a.requireAgent(a.handleAgentRegister)))
+	agent.POST("/heartbeat", ginWrap(a.requireAgent(a.handleAgentHeartbeat)))
+	agent.POST("/tunnel-status", ginWrap(a.requireAgent(a.handleAgentTunnelStatus)))
+	agent.POST("/bootstrap", ginWrap(a.requireAgent(a.handleAgentBootstrap)))
+	agent.GET("/rules", ginWrap(a.requireAgent(a.handleAgentRules)))
+
+	r.GET("/api/client/release", ginWrap(a.requireAgent(a.handleClientRelease)))
+	r.GET("/downloads/client/installer", ginWrap(a.handleClientInstaller))
+	return r
+}
+
+func ginWrap(h http.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h(c.Writer, c.Request)
+	}
 }
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {

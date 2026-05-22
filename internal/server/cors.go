@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (a *App) withCORS(next http.Handler) http.Handler {
@@ -20,6 +22,25 @@ func (a *App) withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (a *App) ginCORS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if a.originAllowed(origin) {
+			h := c.Writer.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Vary", "Origin")
+			h.Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-UDP-Tunnel-PSK")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.Status(http.StatusNoContent)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func (a *App) originAllowed(origin string) bool {

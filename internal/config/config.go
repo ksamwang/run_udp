@@ -16,6 +16,9 @@ type Server struct {
 	StunAltListen                 string        `json:"stun_alt_listen"`
 	HTTPListen                    string        `json:"http_listen"`
 	DatabasePath                  string        `json:"database_path"`
+	ControlDatabaseDriver         string        `json:"control_database_driver"`
+	ControlDatabaseDSN            string        `json:"control_database_dsn"`
+	ControlDatabaseAutoMigrate    bool          `json:"control_database_auto_migrate"`
 	AdminPassword                 string        `json:"admin_password"`
 	AdminPasswordHash             string        `json:"admin_password_hash"`
 	AdminJWTSecret                string        `json:"admin_jwt_secret"`
@@ -64,24 +67,25 @@ type Client struct {
 func DefaultServer() Server {
 	c := DefaultClient()
 	return Server{
-		UDPListen:            ":7000",
-		StunAltListen:        ":7002",
-		HTTPListen:           ":7001",
-		DatabasePath:         "udp-tunnel.db",
-		AdminAccessTokenTTL:  time.Hour,
-		AdminRefreshTokenTTL: 30 * 24 * time.Hour,
-		PeerTTL:              90 * time.Second,
-		PairTTL:              2 * time.Minute,
-		RelayIdleTimeout:     5 * time.Minute,
-		AllowRelay:           true,
-		AllowLegacy:          false,
-		ClientNoUPnP:         c.NoUPnP,
-		ClientUPnPTimeout:    c.UPnPTimeout,
-		ClientLogLevel:       c.LogLevel,
-		ClientTrayEnabled:    c.TrayEnabled,
-		ClientPunchTimeout:   c.PunchTimeout,
-		ClientForceRelay:     c.ForceRelay,
-		ClientAllowLegacy:    c.AllowLegacy,
+		UDPListen:             ":7000",
+		StunAltListen:         ":7002",
+		HTTPListen:            ":7001",
+		DatabasePath:          "udp-tunnel.db",
+		ControlDatabaseDriver: "sqlite",
+		AdminAccessTokenTTL:   time.Hour,
+		AdminRefreshTokenTTL:  30 * 24 * time.Hour,
+		PeerTTL:               90 * time.Second,
+		PairTTL:               2 * time.Minute,
+		RelayIdleTimeout:      5 * time.Minute,
+		AllowRelay:            true,
+		AllowLegacy:           false,
+		ClientNoUPnP:          c.NoUPnP,
+		ClientUPnPTimeout:     c.UPnPTimeout,
+		ClientLogLevel:        c.LogLevel,
+		ClientTrayEnabled:     c.TrayEnabled,
+		ClientPunchTimeout:    c.PunchTimeout,
+		ClientForceRelay:      c.ForceRelay,
+		ClientAllowLegacy:     c.AllowLegacy,
 	}
 }
 
@@ -101,6 +105,9 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 		StunAltListen                 string       `json:"stun_alt_listen"`
 		HTTPListen                    string       `json:"http_listen"`
 		DatabasePath                  string       `json:"database_path"`
+		ControlDatabaseDriver         string       `json:"control_database_driver"`
+		ControlDatabaseDSN            string       `json:"control_database_dsn"`
+		ControlDatabaseAutoMigrate    *bool        `json:"control_database_auto_migrate"`
 		AdminPassword                 string       `json:"admin_password"`
 		AdminPasswordHash             string       `json:"admin_password_hash"`
 		AdminJWTSecret                string       `json:"admin_jwt_secret"`
@@ -143,6 +150,15 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 	}
 	if x.DatabasePath != "" {
 		s.DatabasePath = x.DatabasePath
+	}
+	if x.ControlDatabaseDriver != "" {
+		s.ControlDatabaseDriver = x.ControlDatabaseDriver
+	}
+	if x.ControlDatabaseDSN != "" {
+		s.ControlDatabaseDSN = x.ControlDatabaseDSN
+	}
+	if x.ControlDatabaseAutoMigrate != nil {
+		s.ControlDatabaseAutoMigrate = *x.ControlDatabaseAutoMigrate
 	}
 	s.AdminPassword = x.AdminPassword
 	s.AdminPasswordHash = x.AdminPasswordHash
@@ -223,6 +239,9 @@ func (s Server) MarshalJSON() ([]byte, error) {
 		StunAltListen                 string   `json:"stun_alt_listen"`
 		HTTPListen                    string   `json:"http_listen"`
 		DatabasePath                  string   `json:"database_path"`
+		ControlDatabaseDriver         string   `json:"control_database_driver"`
+		ControlDatabaseDSN            string   `json:"control_database_dsn,omitempty"`
+		ControlDatabaseAutoMigrate    bool     `json:"control_database_auto_migrate"`
 		AdminPassword                 string   `json:"admin_password,omitempty"`
 		AdminPasswordHash             string   `json:"admin_password_hash,omitempty"`
 		AdminJWTSecret                string   `json:"admin_jwt_secret,omitempty"`
@@ -255,6 +274,9 @@ func (s Server) MarshalJSON() ([]byte, error) {
 		StunAltListen:                 s.StunAltListen,
 		HTTPListen:                    s.HTTPListen,
 		DatabasePath:                  s.DatabasePath,
+		ControlDatabaseDriver:         s.ControlDatabaseDriver,
+		ControlDatabaseDSN:            s.ControlDatabaseDSN,
+		ControlDatabaseAutoMigrate:    s.ControlDatabaseAutoMigrate,
 		AdminPassword:                 s.AdminPassword,
 		AdminPasswordHash:             s.AdminPasswordHash,
 		AdminJWTSecret:                s.AdminJWTSecret,

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"udp_tunnel_demo/internal/config"
+	"udp_tunnel_demo/internal/controlstore"
 	"udp_tunnel_demo/internal/secure"
 	"udp_tunnel_demo/internal/store"
 )
@@ -32,6 +33,7 @@ type pairRoute struct {
 type App struct {
 	cfg   config.Server
 	db    *store.Store
+	gorm  *controlstore.Store
 	codec *secure.Codec
 
 	startTime     time.Time
@@ -91,11 +93,21 @@ func New(cfg config.Server) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	gormStore, err := controlstore.Open(controlstore.Config{
+		Driver:      cfg.ControlDatabaseDriver,
+		DSN:         cfg.ControlDatabaseDSN,
+		AutoMigrate: cfg.ControlDatabaseAutoMigrate,
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	var codec *secure.Codec
 	if cfg.PSK != "" {
 		codec, err = secure.NewCodec(cfg.PSK)
 		if err != nil {
+			_ = gormStore.Close()
 			_ = db.Close()
 			return nil, err
 		}
@@ -107,16 +119,19 @@ func New(cfg config.Server) (*App, error) {
 	a := &App{
 		cfg:       cfg,
 		db:        db,
+		gorm:      gormStore,
 		codec:     codec,
 		startTime: time.Now(),
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
 	}
 	if err := a.ensureAdminPassword(); err != nil {
+		_ = gormStore.Close()
 		_ = db.Close()
 		return nil, err
 	}
 	if err := a.applyStoredSettings(); err != nil {
+		_ = gormStore.Close()
 		_ = db.Close()
 		return nil, err
 	}
@@ -127,7 +142,10 @@ func (a *App) Close() error {
 	if a == nil || a.db == nil {
 		return nil
 	}
-	return a.db.Close()
+	if err := a.db.Close(); err != nil {
+		return err
+	}
+	return a.gorm.Close()
 }
 
 func (a *App) Run(ctx context.Context) error {
