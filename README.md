@@ -12,6 +12,7 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 
 - `cmd/server`：服务端可执行程序入口，包含 UDP rendezvous、relay、HTTP API 和内嵌 Web 管理页
 - `cmd/client`：Windows 客户端可执行程序入口，包含 agent、托盘、服务、配置页和更新逻辑
+- `frontend-admin`：独立 React + Ant Design 管理后台，使用 JWT 调用服务端 API
 - `internal`：仓库内复用的业务模块，包括配置、协议、加密帧、KCP 隧道、TCP 转发、SQLite 存储和 UPnP
 - `installer`：Windows 客户端安装包脚本
 - `dist`：本地构建输出目录
@@ -39,6 +40,29 @@ build-all.bat
 
 - `dist/server`：Linux amd64 服务端
 - `dist/client.exe`：Windows amd64 客户端
+
+管理后台单独构建：
+
+```bat
+cd frontend-admin
+npm install
+npm run build
+```
+
+开发时启动管理后台：
+
+```bat
+cd frontend-admin
+npm run dev
+```
+
+默认 Vite 开发服务器监听 `http://localhost:5173`，并把 `/api`、`/health` 代理到 `http://127.0.0.1:7001`。如果生产环境前端和 API 分离部署，请设置：
+
+```text
+VITE_API_BASE_URL=http://<server>:7001
+```
+
+同时在 `server.json` 的 `admin_allowed_origins` 中加入管理后台地址。
 
 #### 2. 部署服务端
 
@@ -229,8 +253,9 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 
 ### Project Layout
 
-- `cmd/server`: server executable entrypoint with UDP rendezvous, relay, HTTP API, and embedded Web UI
+- `cmd/server`: server executable entrypoint with UDP rendezvous, relay, HTTP API, and embedded legacy Web UI
 - `cmd/client`: Windows client executable entrypoint with agent, tray, service, settings page, and update logic
+- `frontend-admin`: standalone React + Ant Design admin console that calls the server API with JWT authentication
 - `internal`: repository-private reusable modules for config, protocol, secure frames, KCP tunneling, TCP forwarding, SQLite storage, and UPnP
 - `installer`: Windows client installer script
 - `dist`: local build output directory
@@ -258,6 +283,29 @@ Build outputs:
 
 - `dist/server`: Linux amd64 server
 - `dist/client.exe`: Windows amd64 client
+
+Build the admin console separately:
+
+```bat
+cd frontend-admin
+npm install
+npm run build
+```
+
+Run the admin console in development:
+
+```bat
+cd frontend-admin
+npm run dev
+```
+
+The Vite dev server listens on `http://localhost:5173` and proxies `/api` and `/health` to `http://127.0.0.1:7001`. For separated production deployment, set:
+
+```text
+VITE_API_BASE_URL=http://<server>:7001
+```
+
+Also add the admin console origin to `admin_allowed_origins` in `server.json`.
 
 #### 2. Deploy the server
 

@@ -1,6 +1,7 @@
 import { SaveOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Form, Input, message, Select, Space, Switch, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { changePassword, getSettings, updateSettings } from '../api/settings'
 import type { Settings } from '../types/api'
 
@@ -29,9 +30,11 @@ export function SettingsPage() {
     onError: (err) => message.error(err instanceof Error ? err.message : '修改密码失败'),
   })
 
-  if (settings.data) {
-    form.setFieldsValue(settings.data)
-  }
+  useEffect(() => {
+    if (settings.data) {
+      form.setFieldsValue(settings.data)
+    }
+  }, [form, settings.data])
 
   return (
     <div className="page-stack">
