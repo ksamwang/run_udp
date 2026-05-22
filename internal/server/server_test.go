@@ -48,7 +48,7 @@ func TestHandleForwardsValidationErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", tc.body)
+			rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
@@ -76,7 +76,7 @@ func TestHandleForwardsLocalPortConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", map[string]any{
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", map[string]any{
 		"name": "rdp-2", "source_id": "dev-a", "target_id": "dev-c", "local_port": 11388,
 		"target_host": "127.0.0.1", "target_port": 3389, "enabled": true,
 	})
@@ -98,7 +98,7 @@ func TestHandleForwardsProfileValidationAndBulkRule(t *testing.T) {
 	mustUpsertDevice(t, a, ctx, "dev-a", true)
 	mustUpsertDevice(t, a, ctx, "dev-b", true)
 
-	rec := doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", map[string]any{
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", map[string]any{
 		"name": "smb", "source_id": "dev-a", "target_id": "dev-b", "profile": "bulk", "local_port": 1445,
 		"target_host": "127.0.0.1", "target_port": 445, "enabled": true,
 	})
@@ -113,7 +113,7 @@ func TestHandleForwardsProfileValidationAndBulkRule(t *testing.T) {
 		t.Fatalf("expected bulk profile: %+v", rule)
 	}
 
-	rec = doWebJSON(t, a.httpMux(), http.MethodPost, "/api/forwards", map[string]any{
+	rec = doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", map[string]any{
 		"name": "bad", "source_id": "dev-a", "target_id": "dev-b", "profile": "video", "local_port": 1446,
 		"target_host": "127.0.0.1", "target_port": 445, "enabled": true,
 	})
@@ -194,7 +194,7 @@ func TestHandleDeviceDeleteBlockedByEnabledRule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := doWebJSON(t, a.httpMux(), http.MethodDelete, "/api/devices/dev-a", nil)
+	rec := doAdminJSON(t, a, http.MethodDelete, "/api/admin/devices/dev-a", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -224,12 +224,12 @@ func TestHandleDevicePatchDisablesAndListShowsHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := doWebJSON(t, a.httpMux(), http.MethodPatch, "/api/devices/dev-b", map[string]any{"enabled": false})
+	rec := doAdminJSON(t, a, http.MethodPatch, "/api/admin/devices/dev-b", map[string]any{"enabled": false})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	rec = doWebJSON(t, a.httpMux(), http.MethodGet, "/api/devices", nil)
+	rec = doAdminJSON(t, a, http.MethodGet, "/api/admin/devices", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -423,7 +423,6 @@ func newTestApp(t *testing.T) *App {
 		startTime: time.Now(),
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
-		sessions:  map[string]time.Time{"test-session": time.Now().Add(time.Hour)},
 	}
 }
 
@@ -437,12 +436,21 @@ func mustUpsertDevice(t *testing.T, a *App, ctx context.Context, id string, enab
 	}
 }
 
-func doWebJSON(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {
+func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	token, err := a.signAccessToken(adminClaims{
+		Subject: adminUserID,
+		Role:    "admin",
+		Issued:  time.Now().Unix(),
+		Expires: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := newJSONRequest(t, method, path, body)
-	req.AddCookie(&http.Cookie{Name: "udp_tunnel_session", Value: "test-session"})
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	a.httpMux().ServeHTTP(rec, req)
 	return rec
 }
 

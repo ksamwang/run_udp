@@ -2,11 +2,11 @@ import { apiRequest } from './client'
 import type { Settings } from '../types/api'
 
 export function getSettings() {
-  return apiRequest<Settings>('/api/settings')
+  return apiRequest<Settings>('/api/admin/settings')
 }
 
 export function updateSettings(payload: Settings) {
-  return apiRequest<{ ok: boolean }>('/api/settings', {
+  return apiRequest<{ ok: boolean }>('/api/admin/settings', {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })

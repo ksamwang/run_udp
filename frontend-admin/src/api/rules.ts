@@ -2,25 +2,25 @@ import { apiRequest } from './client'
 import type { ForwardRule, ForwardRulePayload } from '../types/api'
 
 export function listRules() {
-  return apiRequest<ForwardRule[]>('/api/forwards')
+  return apiRequest<ForwardRule[]>('/api/admin/rules')
 }
 
 export function createRule(payload: ForwardRulePayload) {
-  return apiRequest<ForwardRule>('/api/forwards', {
+  return apiRequest<ForwardRule>('/api/admin/rules', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
 export function updateRule(id: number, payload: ForwardRulePayload) {
-  return apiRequest<{ ok: boolean }>(`/api/forwards/${id}`, {
+  return apiRequest<{ ok: boolean }>(`/api/admin/rules/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }
 
 export function deleteRule(id: number) {
-  return apiRequest<{ ok: boolean }>(`/api/forwards/${id}`, {
+  return apiRequest<{ ok: boolean }>(`/api/admin/rules/${id}`, {
     method: 'DELETE',
   })
 }

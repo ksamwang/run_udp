@@ -6,11 +6,11 @@
 
 ### 项目简介
 
-UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvous / STUN / TURN、SQLite 控制面和 Web 管理页；客户端作为 Windows agent 常驻运行，从控制面拉取转发规则，优先 P2P 打洞，失败后自动走服务器中继。
+UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvous / STUN / TURN、SQLite 控制面和 HTTP API；客户端作为 Windows agent 常驻运行，从控制面拉取转发规则，优先 P2P 打洞，失败后自动走服务器中继。
 
 ### 项目结构
 
-- `cmd/server`：服务端可执行程序入口，包含 UDP rendezvous、relay、HTTP API 和内嵌 Web 管理页
+- `cmd/server`：服务端可执行程序入口，包含 UDP rendezvous、relay 和 HTTP API
 - `cmd/client`：Windows 客户端可执行程序入口，包含 agent、托盘、服务、配置页和更新逻辑
 - `frontend-admin`：独立 React + Ant Design 管理后台，使用 JWT 调用服务端 API
 - `internal`：仓库内复用的业务模块，包括配置、协议、加密帧、KCP 隧道、TCP 转发、SQLite 存储和 UPnP
@@ -23,11 +23,11 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 
 1. 在一台公网可达的 Linux 机器上部署服务端，开放 `7000/udp`、`7002/udp`、`7001/tcp`
 2. 配置好 `server.json`，至少确认 `psk` 和 `admin_password`
-3. 启动服务端并确认可以访问 `http://<server>:7001/`
+3. 启动服务端并确认 `http://<server>:7001/health` 正常
 4. 在每台 Windows 客户端旁放置 `client.exe` 和最小 `client.json`
 5. 在 `client.json` 中填写 `server_http` 和 `psk`
-6. 启动客户端 agent，确认设备出现在 Web 管理页
-7. 在 Web 上创建转发规则
+6. 启动客户端 agent，确认设备出现在 React 管理后台
+7. 在 React 管理后台创建转发规则
 8. 在入口设备访问 `127.0.0.1:<local_port>` 验证连通性
 
 #### 1. 构建
@@ -65,7 +65,7 @@ VITE_API_BASE_URL=http://<server>:7001
 
 同时在 `server.json` 的 `admin_allowed_origins` 中加入管理后台地址。
 
-生产部署时，`dist/frontend-admin` 是纯静态站点，可以由 Nginx、对象存储或任意静态文件服务托管。前端和 API 分离部署时，服务端只暴露 API 和 UDP 服务；旧的内嵌 Web 管理页暂时保留用于兼容，确认 React 管理后台稳定后再删除。
+生产部署时，`dist/frontend-admin` 是纯静态站点，可以由 Nginx、对象存储或任意静态文件服务托管。前端和 API 分离部署时，服务端只暴露 API 和 UDP 服务，不再内嵌旧 Web 管理页。
 
 最小 Nginx 示例：
 
@@ -129,7 +129,7 @@ copy server.json.example server.json
 | 7002 | UDP | NAT 探测备用 STUN |
 | 7001 | TCP | Web 控制面和 API |
 
-访问 `http://<server>:7001/`，使用 `admin_password` 登录。首次启动会把密码写入 SQLite 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
+访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 SQLite 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
 
 #### 3. 部署客户端
 
@@ -169,7 +169,7 @@ client.exe -config client.json -agent
 
 #### 4. 配置转发规则
 
-在服务端 Web 管理页添加规则，例如：
+在 React 管理后台添加规则，例如：
 
 - 入口设备：`laptop`
 - 出口设备：`office-pc`
@@ -188,7 +188,7 @@ client.exe -config client.json -agent
 
 客户端启动后可从 Windows 托盘打开：
 
-- `Open Control Plane`：服务端 Web 管理页
+- `Open Control Plane`：打开管理后台入口
 - `Client Settings`：本机 `client.json` 可视化配置页
 - `Exit`：退出客户端
 
@@ -215,24 +215,25 @@ client.exe -server 1.2.3.4:7000 -psk change-this-deployment-secret -probe
 
 ### API
 
-Web 登录接口：
+管理后台认证接口：
 
-- `POST /api/login`
-- `POST /api/logout`
-- `GET /api/me`
+- `POST /api/admin/auth/login`
+- `POST /api/admin/auth/refresh`
+- `POST /api/admin/auth/logout`
+- `GET /api/admin/me`
 
 管理接口：
 
-- `GET /api/devices`
-- `GET /api/devices/{id}`
-- `GET /api/forwards`
-- `POST /api/forwards`
-- `PATCH /api/forwards/{id}`
-- `DELETE /api/forwards/{id}`
-- `GET /api/sessions`
-- `GET /api/metrics`
-- `GET /api/settings`
-- `PATCH /api/settings`
+- `GET /api/admin/devices`
+- `GET /api/admin/devices/{id}`
+- `GET /api/admin/rules`
+- `POST /api/admin/rules`
+- `PATCH /api/admin/rules/{id}`
+- `DELETE /api/admin/rules/{id}`
+- `GET /api/admin/sessions`
+- `GET /api/admin/metrics`
+- `GET /api/admin/settings`
+- `PATCH /api/admin/settings`
 - `POST /api/admin/password`
 
 Agent 接口：
@@ -243,11 +244,9 @@ Agent 接口：
 - `POST /api/agent/bootstrap`
 - `GET /api/agent/rules?device_id=<id>`
 
-隧道状态接口：
+- `GET /api/admin/tunnel-states`
 
-- `GET /api/tunnel-states`
-
-Agent API 使用 `X-UDP-Tunnel-PSK` header。
+管理后台 API 使用 JWT Bearer Token。Agent API 使用 `X-UDP-Tunnel-PSK` header。
 
 ### 验证
 
@@ -258,7 +257,7 @@ build-all.bat
 
 ### 限制
 
-- Web 管理页是内嵌原生 HTML/CSS/JS，适合 MVP 管理，不是完整桌面控制台
+- 管理后台和 API 已分离部署，服务端不再提供内嵌静态管理页
 - 设备安全模型是部署级 PSK，不是每设备独立密钥
 
 ---
@@ -271,7 +270,7 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 
 ### Project Layout
 
-- `cmd/server`: server executable entrypoint with UDP rendezvous, relay, HTTP API, and embedded legacy Web UI
+- `cmd/server`: server executable entrypoint with UDP rendezvous, relay, and HTTP API
 - `cmd/client`: Windows client executable entrypoint with agent, tray, service, settings page, and update logic
 - `frontend-admin`: standalone React + Ant Design admin console that calls the server API with JWT authentication
 - `internal`: repository-private reusable modules for config, protocol, secure frames, KCP tunneling, TCP forwarding, SQLite storage, and UPnP
@@ -284,7 +283,7 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 
 1. Deploy the server on a publicly reachable Linux host and open `7000/udp`, `7002/udp`, and `7001/tcp`
 2. Configure `server.json`, at minimum setting `psk` and `admin_password`
-3. Start the server and verify `http://<server>:7001/` is reachable
+3. Start the server and verify `http://<server>:7001/health` is healthy
 4. Place `client.exe` and a minimal `client.json` on each Windows client
 5. Fill in `server_http` and `psk` in `client.json`
 6. Start the client agent and confirm the device appears in the Web UI
@@ -326,7 +325,7 @@ VITE_API_BASE_URL=http://<server>:7001
 
 Also add the admin console origin to `admin_allowed_origins` in `server.json`.
 
-For production, `dist/frontend-admin` is a plain static site and can be served by Nginx, object storage, or any static file server. With separated frontend/API deployment, the Go server only serves APIs and UDP services. The legacy embedded Web UI is kept temporarily for compatibility and can be removed after the React admin console is verified stable.
+For production, `dist/frontend-admin` is a plain static site and can be served by Nginx, object storage, or any static file server. With separated frontend/API deployment, the Go server only serves APIs and UDP services; it no longer embeds the legacy Web UI.
 
 Minimal Nginx example:
 
@@ -388,9 +387,9 @@ Open these ports:
 |---|---|---|
 | 7000 | UDP | Rendezvous / STUN / TURN |
 | 7002 | UDP | Alternate STUN port for NAT probing |
-| 7001 | TCP | Web control plane and API |
+| 7001 | TCP | HTTP API |
 
-Open `http://<server>:7001/` and log in with `admin_password`.
+Open the deployed React admin console and log in with `admin_password`.
 
 #### 3. Deploy the client
 
@@ -430,7 +429,7 @@ If the local bootstrap config is incomplete, the client automatically opens the 
 
 #### 4. Create forwarding rules
 
-In the Web control plane, add a rule such as:
+In the React admin console, add a rule such as:
 
 - Source device: `laptop`
 - Target device: `office-pc`
@@ -476,24 +475,25 @@ client.exe -server 1.2.3.4:7000 -psk change-this-deployment-secret -probe
 
 ### API
 
-Web auth endpoints:
+Admin auth endpoints:
 
-- `POST /api/login`
-- `POST /api/logout`
-- `GET /api/me`
+- `POST /api/admin/auth/login`
+- `POST /api/admin/auth/refresh`
+- `POST /api/admin/auth/logout`
+- `GET /api/admin/me`
 
 Management endpoints:
 
-- `GET /api/devices`
-- `GET /api/devices/{id}`
-- `GET /api/forwards`
-- `POST /api/forwards`
-- `PATCH /api/forwards/{id}`
-- `DELETE /api/forwards/{id}`
-- `GET /api/sessions`
-- `GET /api/metrics`
-- `GET /api/settings`
-- `PATCH /api/settings`
+- `GET /api/admin/devices`
+- `GET /api/admin/devices/{id}`
+- `GET /api/admin/rules`
+- `POST /api/admin/rules`
+- `PATCH /api/admin/rules/{id}`
+- `DELETE /api/admin/rules/{id}`
+- `GET /api/admin/sessions`
+- `GET /api/admin/metrics`
+- `GET /api/admin/settings`
+- `PATCH /api/admin/settings`
 - `POST /api/admin/password`
 
 Agent endpoints:
@@ -504,11 +504,9 @@ Agent endpoints:
 - `POST /api/agent/bootstrap`
 - `GET /api/agent/rules?device_id=<id>`
 
-Tunnel state endpoint:
+- `GET /api/admin/tunnel-states`
 
-- `GET /api/tunnel-states`
-
-Agent APIs use the `X-UDP-Tunnel-PSK` header.
+Admin APIs use JWT Bearer tokens. Agent APIs use the `X-UDP-Tunnel-PSK` header.
 
 ### Verification
 
@@ -519,5 +517,5 @@ build-all.bat
 
 ### Limitations
 
-- The Web UI is an embedded native HTML/CSS/JS MVP, not a full desktop-grade operations console
+- The admin console and API are deployed separately; the server no longer serves an embedded static admin UI
 - The security model uses a deployment-wide PSK, not per-device keys
