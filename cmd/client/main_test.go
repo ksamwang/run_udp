@@ -158,7 +158,7 @@ func TestClientConfigUIPostClearsServerManagedFields(t *testing.T) {
 	if saved.ServerHTTP != "http://new.example.com" || saved.DeviceName == "" {
 		t.Fatalf("bootstrap fields not saved: %+v", saved)
 	}
-	if saved.Server != "" || saved.PeerID != "" || saved.PSK != "" || saved.NoUPnP || saved.UPnPTimeout != 0 || saved.LogLevel != "" || saved.TrayEnabled || saved.PunchTimeout != 0 || saved.ForceRelay || saved.AllowLegacy || len(saved.Forwards) != 0 {
+	if saved.Server != "" || saved.PeerID != "" || saved.PSK != "" || saved.NoUPnP || saved.UPnPTimeout != 0 || saved.LogLevel != "" || !saved.TrayEnabled || saved.PunchTimeout != 0 || saved.ForceRelay || saved.AllowLegacy || len(saved.Forwards) != 0 {
 		t.Fatalf("server-managed fields should be cleared before save: %+v", saved)
 	}
 }

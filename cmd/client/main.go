@@ -480,8 +480,17 @@ func runBootstrapConfigMode(cfg *config.Client, configPath string) {
 
 func runBootstrapTrayMode(cfg *config.Client, configPath string) {
 	configURL := startClientConfigServer(cfg, configPath, clientConfigHooks{
-		OnSaved: restartSelf,
-		Runtime: currentRuntimeInfo,
+		OnSaved: func() {
+			if err := spawnServiceCommand("-restart-service"); err != nil {
+				log.Printf("restart service helper failed: %v", err)
+				restartSelf()
+				return
+			}
+			os.Exit(0)
+		},
+		SaveConfig:     func(next config.Client) (bool, error) { return saveClientConfigWithElevation(configPath, next) },
+		Runtime:        currentRuntimeInfo,
+		RestartService: restartWindowsServiceWithElevation,
 	})
 	if configURL != "" {
 		log.Printf("[%s] bootstrap unavailable; tray settings page is available: %s", cfg.DeviceID, configURL)

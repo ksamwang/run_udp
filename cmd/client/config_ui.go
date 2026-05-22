@@ -119,7 +119,7 @@ func (s *clientConfigState) clearServerManagedConfig() {
 	s.cfg.NoUPnP = false
 	s.cfg.UPnPTimeout = 0
 	s.cfg.LogLevel = ""
-	s.cfg.TrayEnabled = false
+	s.cfg.TrayEnabled = true
 	s.cfg.PunchTimeout = 0
 	s.cfg.ForceRelay = false
 	s.cfg.AllowLegacy = false
