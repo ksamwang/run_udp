@@ -54,6 +54,9 @@ type Store interface {
 	UpsertVirtualAddress(ctx context.Context, address store.VirtualAddress) error
 	ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error)
 	GetVirtualAddress(ctx context.Context, networkID int64, deviceID string) (store.VirtualAddress, error)
+	UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error
+	GetVirtualDeviceKey(ctx context.Context, deviceID string) (store.VirtualDeviceKey, error)
+	ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualDeviceKey, error)
 	CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error)
 	ListVirtualACLRules(ctx context.Context, networkID int64) ([]store.VirtualACLRule, error)
 	UpdateVirtualACLRule(ctx context.Context, id int64, rule store.VirtualACLRule) error

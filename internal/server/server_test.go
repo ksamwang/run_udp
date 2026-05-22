@@ -186,6 +186,11 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{
+		DeviceID: "dev-b", Algorithm: "ed25519", PublicKey: "pub-b",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.db.CreateVirtualACLRule(ctx, store.VirtualACLRule{
 		NetworkID: network.ID, SourceDeviceID: "dev-a", TargetDeviceID: "dev-b",
 		Protocol: "tcp", PortStart: 3389, PortEnd: 3389, Action: "allow", Enabled: true,
@@ -208,6 +213,16 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if len(resp.Peers) != 1 || resp.Peers[0].DeviceID != "dev-b" {
 		t.Fatalf("bad bootstrap peers: %+v", resp.Peers)
+	}
+	if resp.Peers[0].PublicKey != "pub-b" {
+		t.Fatalf("peer public key not returned: %+v", resp.Peers)
+	}
+	key, err := a.db.GetVirtualDeviceKey(ctx, "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Algorithm != "ed25519" || key.PublicKey != "pub-a" {
+		t.Fatalf("bootstrap public key not stored: %+v", key)
 	}
 
 	statusRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{

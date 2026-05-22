@@ -62,6 +62,7 @@ func (s *MySQLStore) AutoMigrate() error {
 		&AdminRefreshToken{},
 		&VirtualNetwork{},
 		&VirtualAddress{},
+		&VirtualDeviceKey{},
 		&VirtualACLRule{},
 		&VirtualRoute{},
 		&VirtualPeerState{},
@@ -610,6 +611,45 @@ func (s *MySQLStore) GetVirtualAddress(ctx context.Context, networkID int64, dev
 	return row.toStore(), err
 }
 
+func (s *MySQLStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
+	now := nowString()
+	if key.CreatedAt == "" {
+		key.CreatedAt = now
+	}
+	key.UpdatedAt = now
+	row := VirtualDeviceKey{
+		DeviceID: key.DeviceID, Algorithm: key.Algorithm, PublicKey: key.PublicKey,
+		CreatedAt: key.CreatedAt, UpdatedAt: key.UpdatedAt,
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"algorithm": row.Algorithm, "public_key": row.PublicKey, "updated_at": row.UpdatedAt,
+		}),
+	}).Create(&row).Error
+}
+
+func (s *MySQLStore) GetVirtualDeviceKey(ctx context.Context, deviceID string) (store.VirtualDeviceKey, error) {
+	var row VirtualDeviceKey
+	err := s.db.WithContext(ctx).First(&row, "device_id = ?", deviceID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return store.VirtualDeviceKey{}, sql.ErrNoRows
+	}
+	return row.toStore(), err
+}
+
+func (s *MySQLStore) ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualDeviceKey, error) {
+	var rows []VirtualDeviceKey
+	if err := s.db.WithContext(ctx).Order("device_id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualDeviceKey, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
 func (s *MySQLStore) CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error) {
 	now := nowString()
 	row := VirtualACLRule{
@@ -837,6 +877,12 @@ func (a VirtualAddress) toStore() store.VirtualAddress {
 	return store.VirtualAddress{
 		DeviceID: a.DeviceID, NetworkID: a.NetworkID, VirtualIP: a.VirtualIP, Hostname: hostname,
 		DNSEnabled: a.DNSEnabled, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
+	}
+}
+
+func (k VirtualDeviceKey) toStore() store.VirtualDeviceKey {
+	return store.VirtualDeviceKey{
+		DeviceID: k.DeviceID, Algorithm: k.Algorithm, PublicKey: k.PublicKey, CreatedAt: k.CreatedAt, UpdatedAt: k.UpdatedAt,
 	}
 }
 

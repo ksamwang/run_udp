@@ -30,5 +30,11 @@ func main() {
 	log.Printf("%s is a placeholder entrypoint for the virtual LAN product line", lan.ServiceName)
 	log.Printf("service=%s tray=%q", lan.ServiceName, lan.TrayName)
 	log.Printf("config=%s server_http=%s version=%s commit=%s build_time=%s", *configPath, *serverHTTP, Version, Commit, BuildTime)
+	log.Printf("device_id=%s", lan.DeviceID())
+	identity, err := lan.LoadOrCreateIdentity(*configPath)
+	if err != nil {
+		log.Fatalf("LAN identity failed: %v", err)
+	}
+	log.Printf("lan_identity_algorithm=%s public_key=%s", identity.Algorithm, identity.PublicKey)
 	log.Printf("virtual LAN runtime is not implemented yet; see task.md")
 }

@@ -246,6 +246,25 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	if len(addresses) != 3 {
 		return failf("expected three virtual addresses: %+v", addresses)
 	}
+	if err := s.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{
+		DeviceID: "codex-test-A", Algorithm: "ed25519", PublicKey: "codex-public-key-a",
+	}); err != nil {
+		return err
+	}
+	key, err := s.GetVirtualDeviceKey(ctx, "codex-test-A")
+	if err != nil {
+		return err
+	}
+	if key.Algorithm != "ed25519" || key.PublicKey != "codex-public-key-a" {
+		return failf("bad virtual device key: %+v", key)
+	}
+	keys, err := s.ListVirtualDeviceKeys(ctx)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return failf("expected virtual device keys")
+	}
 	acl, err := s.CreateVirtualACLRule(ctx, store.VirtualACLRule{
 		NetworkID: defaultNetwork.ID, SourceDeviceID: "codex-test-A", TargetDeviceID: "codex-test-B",
 		Protocol: "tcp", PortStart: 3389, PortEnd: 3389, Action: "deny", Enabled: true,
@@ -311,6 +330,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		"DELETE FROM virtual_peer_states WHERE device_id LIKE ? OR peer_id LIKE ?",
 		"DELETE FROM virtual_routes WHERE device_id LIKE ? OR cidr LIKE ?",
 		"DELETE FROM virtual_acl_rules WHERE source_device_id LIKE ? OR target_device_id LIKE ? OR source_group_id LIKE ? OR target_group_id LIKE ?",
+		"DELETE FROM virtual_device_keys WHERE device_id LIKE ?",
 		"DELETE FROM virtual_addresses WHERE device_id LIKE ? OR virtual_ip LIKE ? OR hostname LIKE ?",
 		"DELETE FROM virtual_networks WHERE name LIKE ? OR cidr = ?",
 		"DELETE FROM admin_refresh_tokens WHERE user_id = ? OR token_hash = ?",
@@ -327,6 +347,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		{"codex-test-%", "codex-test-%"},
 		{"codex-test-%", "10.10.%"},
 		{"codex-test-%", "codex-test-%", "codex-test-%", "codex-test-%"},
+		{"codex-test-%"},
 		{"codex-test-%", "172.16.%", "office-%"},
 		{"codex-test-%", "172.16.21.0/24"},
 		{"codex-test-admin", "codex-test-token-hash"},

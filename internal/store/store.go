@@ -119,6 +119,14 @@ type VirtualAddress struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
+type VirtualDeviceKey struct {
+	DeviceID  string `json:"device_id"`
+	Algorithm string `json:"algorithm"`
+	PublicKey string `json:"public_key"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type VirtualACLRule struct {
 	ID             int64  `json:"id"`
 	NetworkID      int64  `json:"network_id"`

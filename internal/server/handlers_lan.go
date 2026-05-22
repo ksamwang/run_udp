@@ -173,6 +173,14 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
+	if strings.TrimSpace(req.PublicKey) != "" {
+		if err := a.db.UpsertVirtualDeviceKey(r.Context(), store.VirtualDeviceKey{
+			DeviceID: req.DeviceID, Algorithm: "ed25519", PublicKey: strings.TrimSpace(req.PublicKey),
+		}); err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+	}
 	address, err := a.db.GetVirtualAddress(r.Context(), network.ID, req.DeviceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		address = store.VirtualAddress{DeviceID: req.DeviceID, NetworkID: network.ID}
@@ -195,12 +203,25 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
+	keys, err := a.db.ListVirtualDeviceKeys(r.Context())
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	keyByDevice := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if key.Algorithm == "ed25519" {
+			keyByDevice[key.DeviceID] = key.PublicKey
+		}
+	}
 	peers := make([]lanBootstrapPeer, 0, len(addresses))
 	for _, peer := range addresses {
 		if peer.DeviceID == req.DeviceID {
 			continue
 		}
-		peers = append(peers, lanBootstrapPeer{DeviceID: peer.DeviceID, VirtualIP: peer.VirtualIP, Hostname: peer.Hostname})
+		peers = append(peers, lanBootstrapPeer{
+			DeviceID: peer.DeviceID, VirtualIP: peer.VirtualIP, Hostname: peer.Hostname, PublicKey: keyByDevice[peer.DeviceID],
+		})
 	}
 	writeJSON(w, http.StatusOK, lanBootstrapResponse{
 		Version: lanBootstrapVersion, Capabilities: []string{"ipv4", "tcp", "rdp"},

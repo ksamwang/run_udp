@@ -138,6 +138,16 @@ type VirtualAddress struct {
 
 func (VirtualAddress) TableName() string { return "virtual_addresses" }
 
+type VirtualDeviceKey struct {
+	DeviceID  string `gorm:"primaryKey;size:191;column:device_id"`
+	Algorithm string `gorm:"size:32;not null;column:algorithm"`
+	PublicKey string `gorm:"type:text;not null;column:public_key"`
+	CreatedAt string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualDeviceKey) TableName() string { return "virtual_device_keys" }
+
 type VirtualACLRule struct {
 	ID             int64  `gorm:"primaryKey;column:id"`
 	NetworkID      int64  `gorm:"index;not null;column:network_id"`

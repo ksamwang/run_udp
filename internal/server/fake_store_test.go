@@ -24,6 +24,7 @@ type fakeStore struct {
 	adminUsers    map[string]store.AdminUser
 	virtualNets   map[int64]store.VirtualNetwork
 	virtualAddrs  map[string]store.VirtualAddress
+	virtualKeys   map[string]store.VirtualDeviceKey
 	virtualACLs   map[int64]store.VirtualACLRule
 	virtualRoutes map[string]store.VirtualRoute
 	virtualPeers  map[string]store.VirtualPeerState
@@ -42,6 +43,7 @@ func newFakeStore() *fakeStore {
 		adminUsers:    map[string]store.AdminUser{},
 		virtualNets:   map[int64]store.VirtualNetwork{},
 		virtualAddrs:  map[string]store.VirtualAddress{},
+		virtualKeys:   map[string]store.VirtualDeviceKey{},
 		virtualACLs:   map[int64]store.VirtualACLRule{},
 		virtualRoutes: map[string]store.VirtualRoute{},
 		virtualPeers:  map[string]store.VirtualPeerState{},
@@ -575,6 +577,38 @@ func (s *fakeStore) GetVirtualAddress(ctx context.Context, networkID int64, devi
 		return store.VirtualAddress{}, sql.ErrNoRows
 	}
 	return address, nil
+}
+
+func (s *fakeStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := nowTestString()
+	if key.CreatedAt == "" {
+		key.CreatedAt = now
+	}
+	key.UpdatedAt = now
+	s.virtualKeys[key.DeviceID] = key
+	return nil
+}
+
+func (s *fakeStore) GetVirtualDeviceKey(ctx context.Context, deviceID string) (store.VirtualDeviceKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.virtualKeys[deviceID]
+	if !ok {
+		return store.VirtualDeviceKey{}, sql.ErrNoRows
+	}
+	return key, nil
+}
+
+func (s *fakeStore) ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualDeviceKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.VirtualDeviceKey, 0, len(s.virtualKeys))
+	for _, key := range s.virtualKeys {
+		out = append(out, key)
+	}
+	return out, nil
 }
 
 func (s *fakeStore) CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error) {
