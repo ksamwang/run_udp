@@ -208,7 +208,7 @@
 
 ## Storage Direction
 
-目标控制库为 MySQL 5.5。当前运行数据仍由现有 SQLite store 承载，`internal/controlstore` 已提供 Gorm + MySQL 5.5 兼容模型和连接骨架，配置项如下：
+控制库为 MySQL 5.5，`internal/controlstore` 提供 Gorm + MySQL 5.5 兼容模型和完整读写实现，配置项如下：
 
 ```json
 {

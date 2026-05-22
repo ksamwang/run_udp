@@ -2,7 +2,6 @@
   "udp_listen": ":7000",
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
-  "database_path": "udp-tunnel.db",
   "control_database_driver": "mysql",
   "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,

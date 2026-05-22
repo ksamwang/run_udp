@@ -15,7 +15,6 @@ type Server struct {
 	UDPListen                     string        `json:"udp_listen"`
 	StunAltListen                 string        `json:"stun_alt_listen"`
 	HTTPListen                    string        `json:"http_listen"`
-	DatabasePath                  string        `json:"database_path"`
 	ControlDatabaseDriver         string        `json:"control_database_driver"`
 	ControlDatabaseDSN            string        `json:"control_database_dsn"`
 	ControlDatabaseAutoMigrate    bool          `json:"control_database_auto_migrate"`
@@ -69,7 +68,6 @@ func DefaultServer() Server {
 		UDPListen:             ":7000",
 		StunAltListen:         ":7002",
 		HTTPListen:            ":7001",
-		DatabasePath:          "udp-tunnel.db",
 		ControlDatabaseDriver: "mysql",
 		AdminAccessTokenTTL:   time.Hour,
 		AdminRefreshTokenTTL:  30 * 24 * time.Hour,
@@ -103,7 +101,6 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 		UDPListen                     string       `json:"udp_listen"`
 		StunAltListen                 string       `json:"stun_alt_listen"`
 		HTTPListen                    string       `json:"http_listen"`
-		DatabasePath                  string       `json:"database_path"`
 		ControlDatabaseDriver         string       `json:"control_database_driver"`
 		ControlDatabaseDSN            string       `json:"control_database_dsn"`
 		ControlDatabaseAutoMigrate    *bool        `json:"control_database_auto_migrate"`
@@ -145,9 +142,6 @@ func (s *Server) UnmarshalJSON(b []byte) error {
 	}
 	if x.HTTPListen != "" {
 		s.HTTPListen = x.HTTPListen
-	}
-	if x.DatabasePath != "" {
-		s.DatabasePath = x.DatabasePath
 	}
 	if x.ControlDatabaseDriver != "" {
 		s.ControlDatabaseDriver = x.ControlDatabaseDriver
@@ -233,7 +227,6 @@ func (s Server) MarshalJSON() ([]byte, error) {
 		UDPListen                     string `json:"udp_listen"`
 		StunAltListen                 string `json:"stun_alt_listen"`
 		HTTPListen                    string `json:"http_listen"`
-		DatabasePath                  string `json:"database_path"`
 		ControlDatabaseDriver         string `json:"control_database_driver"`
 		ControlDatabaseDSN            string `json:"control_database_dsn,omitempty"`
 		ControlDatabaseAutoMigrate    bool   `json:"control_database_auto_migrate"`
@@ -267,7 +260,6 @@ func (s Server) MarshalJSON() ([]byte, error) {
 		UDPListen:                     s.UDPListen,
 		StunAltListen:                 s.StunAltListen,
 		HTTPListen:                    s.HTTPListen,
-		DatabasePath:                  s.DatabasePath,
 		ControlDatabaseDriver:         s.ControlDatabaseDriver,
 		ControlDatabaseDSN:            s.ControlDatabaseDSN,
 		ControlDatabaseAutoMigrate:    s.ControlDatabaseAutoMigrate,

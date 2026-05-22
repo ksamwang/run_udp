@@ -1,231 +1,37 @@
 package store
 
-import (
-	"context"
-	"path/filepath"
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestRulesAndMetrics(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
+func TestForwardRuleValidation(t *testing.T) {
+	valid := ForwardRule{
+		Name: "rdp", SourceID: "A", TargetID: "B", Profile: ProfileInteractive,
+		LocalPort: 13389, TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
+	}
+	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "", "B", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertDevice(ctx, "B", "B", "2.2.2.2:2", "", "A", true); err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.CreateRule(ctx, ForwardRule{
-		Name: "rdp", SourceID: "A", TargetID: "B", LocalPort: 13389,
-		TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rules, err := s.RulesForDevice(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].TargetID != "B" {
-		t.Fatalf("unexpected rules: %+v", rules)
-	}
-	if rules[0].Profile != ProfileInteractive {
-		t.Fatalf("expected default profile interactive, got %+v", rules[0])
-	}
-	metrics, err := s.Metrics(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if metrics.Devices != 2 || metrics.ForwardRules != 1 {
-		t.Fatalf("bad metrics: %+v", metrics)
-	}
-}
-
-func TestMarkOfflineBefore(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkOfflineBefore(ctx, time.Now().Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	d, err := s.GetDevice(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.Online {
-		t.Fatal("device should be offline")
-	}
-}
-
-func TestUpsertDevicePreservesNonEmptyFields(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "A", "1.1.1.1:1", "2.2.2.2:2", "B", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertDevice(ctx, "A", "", "", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	d, err := s.GetDevice(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.Addr != "1.1.1.1:1" || d.UpnpAddr != "2.2.2.2:2" || d.Want != "B" {
-		t.Fatalf("fields unexpectedly cleared: %+v", d)
-	}
-}
-
-func TestUpsertDeviceEmptyNameDoesNotOverwriteDisplayName(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "dev-123", "office-pc", "1.1.1.1:1", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertDevice(ctx, "dev-123", "", "2.2.2.2:2", "", "peer", true); err != nil {
-		t.Fatal(err)
-	}
-	d, err := s.GetDevice(ctx, "dev-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.Name != "office-pc" {
-		t.Fatalf("empty update should preserve display name: %+v", d)
-	}
-	if d.Addr != "2.2.2.2:2" || d.Want != "peer" {
-		t.Fatalf("expected other fields to update: %+v", d)
-	}
-}
-
-func TestUpdateSessionPathForPairAndTunnelState(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	id, err := s.StartSession(ctx, "A", "B", ProfileBulk, "pending")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id == 0 {
-		t.Fatal("expected session id")
-	}
-	if err := s.UpdateSessionPathForPair(ctx, "B", "A", ProfileBulk, "p2p"); err != nil {
-		t.Fatal(err)
-	}
-	sessions, err := s.ListSessions(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sessions) != 1 || sessions[0].Path != "p2p" || sessions[0].Profile != ProfileBulk {
-		t.Fatalf("unexpected sessions: %+v", sessions)
-	}
-	if err := s.PutTunnelState(ctx, TunnelState{
-		DeviceID: "A", PeerID: "B", Profile: ProfileBulk, State: "p2p", Via: "p2p", NATType: "cone",
-		ConvID: 123, RTTMs: 45, LastError: "none", Attempt: 2, NextRetryAt: "2026-04-28T03:00:00Z", LastTransitionAt: "2026-04-28T02:59:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	states, err := s.ListTunnelStates(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 1 || states[0].Profile != ProfileBulk || states[0].RTTMs != 45 || states[0].ConvID != 123 || states[0].NATType != "cone" || states[0].LastError != "none" || states[0].Attempt != 2 || states[0].NextRetryAt == "" || states[0].LastTransitionAt == "" {
-		t.Fatalf("unexpected tunnel states: %+v", states)
-	}
-}
-
-func TestRuleProfileValidationAndBulkPersistence(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "A", "", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertDevice(ctx, "B", "B", "", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	rule := ForwardRule{
-		Name: "smb", SourceID: "A", TargetID: "B", Profile: ProfileBulk, LocalPort: 1445,
-		TargetHost: "127.0.0.1", TargetPort: 445, Enabled: true,
-	}
-	if err := rule.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.CreateRule(ctx, rule); err != nil {
-		t.Fatal(err)
-	}
-	rules, err := s.RulesForDevice(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].Profile != ProfileBulk {
-		t.Fatalf("unexpected rules: %+v", rules)
-	}
-	bad := rule
+	bad := valid
 	bad.Profile = "video"
 	if err := bad.Validate(); err == nil {
-		t.Fatal("expected invalid profile error")
+		t.Fatal("expected invalid profile")
+	}
+	bad = valid
+	bad.TargetID = "A"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected same device validation error")
+	}
+	bad = valid
+	bad.TargetPort = 70000
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected port validation error")
 	}
 }
 
-func TestDeviceEnabledAndRuleReferenceCount(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
+func TestNormalizeProfile(t *testing.T) {
+	if NormalizeProfile("") != ProfileInteractive {
+		t.Fatal("empty profile should default to interactive")
 	}
-	defer s.Close()
-	ctx := context.Background()
-	if err := s.UpsertDevice(ctx, "A", "A", "", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertDevice(ctx, "B", "B", "", "", "", true); err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.CreateRule(ctx, ForwardRule{
-		Name: "rdp", SourceID: "A", TargetID: "B", LocalPort: 11388,
-		TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	count, err := s.EnabledRuleReferenceCount(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("expected enabled rule count 1, got %d", count)
-	}
-	if err := s.SetDeviceEnabled(ctx, "A", false); err != nil {
-		t.Fatal(err)
-	}
-	d, err := s.GetDevice(ctx, "A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.Enabled {
-		t.Fatalf("expected device disabled: %+v", d)
+	if NormalizeProfile(" BULK ") != ProfileBulk {
+		t.Fatal("profile should be normalized")
 	}
 }

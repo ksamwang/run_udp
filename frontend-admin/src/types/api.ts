@@ -108,7 +108,8 @@ export type Settings = {
   udp_listen: string
   stun_alt_listen: string
   http_listen: string
-  database_path: string
+  control_database_driver: string
+  control_database_configured: boolean
   psk_configured: boolean
   peer_ttl: string
   pair_ttl: string

@@ -153,7 +153,8 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"udp_listen":                               a.cfg.UDPListen,
 			"stun_alt_listen":                          a.cfg.StunAltListen,
 			"http_listen":                              a.cfg.HTTPListen,
-			"database_path":                            a.cfg.DatabasePath,
+			"control_database_driver":                  a.cfg.ControlDatabaseDriver,
+			"control_database_configured":              a.cfg.ControlDatabaseDSN != "",
 			"psk_configured":                           a.cfg.PSK != "",
 			"peer_ttl":                                 a.cfg.PeerTTL.String(),
 			"pair_ttl":                                 a.cfg.PairTTL.String(),
@@ -174,7 +175,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"client_release_notes":                     a.cfg.ClientReleaseNotes,
 			"client_release_minimum_supported_version": a.cfg.ClientReleaseMinimumSupported,
 			"client_release_file":                      a.cfg.ClientReleaseFile,
-			"restart_only_fields":                      []string{"udp_listen", "stun_alt_listen", "http_listen", "database_path", "psk"},
+			"restart_only_fields":                      []string{"udp_listen", "stun_alt_listen", "http_listen", "control_database_dsn", "psk"},
 		}
 		a.cfgMu.RUnlock()
 		writeJSON(w, http.StatusOK, resp)

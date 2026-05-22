@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -458,10 +457,7 @@ func TestAdminConsoleAPISmoke(t *testing.T) {
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "server-test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := newFakeStore()
 	t.Cleanup(func() { _ = db.Close() })
 	cfg := config.DefaultServer()
 	cfg.PSK = "test-psk"

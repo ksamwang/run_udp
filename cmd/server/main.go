@@ -17,7 +17,7 @@ func main() {
 	udpAddr := fs.String("listen", cfg.UDPListen, "UDP listen address")
 	stunAlt := fs.String("stun-alt", cfg.StunAltListen, "STUN alternate UDP listen address")
 	httpAddr := fs.String("http", cfg.HTTPListen, "HTTP listen address")
-	dbPath := fs.String("db", cfg.DatabasePath, "SQLite database path")
+	mysqlDSN := fs.String("mysql-dsn", cfg.ControlDatabaseDSN, "MySQL control database DSN")
 	psk := fs.String("psk", cfg.PSK, "deployment pre-shared key")
 	adminPassword := fs.String("admin-password", cfg.AdminPassword, "initial admin password")
 	adminHash := fs.String("admin-password-hash", cfg.AdminPasswordHash, "bcrypt admin password hash")
@@ -41,8 +41,8 @@ func main() {
 	if flagSet(fs, "http") {
 		cfg.HTTPListen = *httpAddr
 	}
-	if flagSet(fs, "db") {
-		cfg.DatabasePath = *dbPath
+	if flagSet(fs, "mysql-dsn") {
+		cfg.ControlDatabaseDSN = *mysqlDSN
 	}
 	if flagSet(fs, "psk") {
 		cfg.PSK = *psk

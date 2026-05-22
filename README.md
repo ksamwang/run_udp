@@ -6,14 +6,14 @@
 
 ### 项目简介
 
-UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvous / STUN / TURN、SQLite 控制面和 HTTP API；客户端作为 Windows agent 常驻运行，从控制面拉取转发规则，优先 P2P 打洞，失败后自动走服务器中继。
+UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvous / STUN / TURN、MySQL 控制面和 HTTP API；客户端作为 Windows agent 常驻运行，从控制面拉取转发规则，优先 P2P 打洞，失败后自动走服务器中继。
 
 ### 项目结构
 
 - `cmd/server`：服务端可执行程序入口，包含 UDP rendezvous、relay 和 HTTP API
 - `cmd/client`：Windows 客户端可执行程序入口，包含 agent、托盘、服务、配置页和更新逻辑
 - `frontend-admin`：独立 React + Ant Design 管理后台，使用 JWT 调用服务端 API
-- `internal`：仓库内复用的业务模块，包括配置、协议、加密帧、KCP 隧道、TCP 转发、SQLite 存储和 UPnP
+- `internal`：仓库内复用的业务模块，包括配置、协议、加密帧、KCP 隧道、TCP 转发、MySQL 控制库和 UPnP
 - `installer`：Windows 客户端安装包脚本
 - `dist`：本地构建输出目录
 
@@ -97,7 +97,6 @@ copy server.json.example server.json
   "udp_listen": ":7000",
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
-  "database_path": "udp-tunnel.db",
   "control_database_driver": "mysql",
   "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,
@@ -132,9 +131,9 @@ copy server.json.example server.json
 | 7002 | UDP | NAT 探测备用 STUN |
 | 7001 | TCP | Web 控制面和 API |
 
-访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 SQLite 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
+访问已部署的 React 管理后台，使用 `admin_password` 登录。首次启动会把密码写入 MySQL 的 bcrypt hash；如果后续修改密码，建议同步更新配置或重建密码 hash。
 
-服务端 HTTP API 已切换到 Gin。控制库目标为 MySQL 5.5，`internal/controlstore` 已按 MySQL 5.5 兼容方式配置 Gorm 连接和模型骨架。当前业务读写仍由现有 SQLite store 承载，后续会逐步迁移到 MySQL。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
+服务端 HTTP API 已切换到 Gin。控制库为 MySQL 5.5，`internal/controlstore` 按 MySQL 5.5 兼容方式配置 Gorm 连接和模型。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
 #### 3. 部署客户端
 
@@ -271,14 +270,14 @@ build-all.bat
 
 ### Overview
 
-UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvous / STUN / TURN, an SQLite-backed control plane, and a Web UI. The Windows client runs as a resident agent, pulls forwarding rules from the control plane, prefers P2P hole punching, and falls back to server relay when needed.
+UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvous / STUN / TURN, a MySQL-backed control plane, and HTTP APIs. The Windows client runs as a resident agent, pulls forwarding rules from the control plane, prefers P2P hole punching, and falls back to server relay when needed.
 
 ### Project Layout
 
 - `cmd/server`: server executable entrypoint with UDP rendezvous, relay, and HTTP API
 - `cmd/client`: Windows client executable entrypoint with agent, tray, service, settings page, and update logic
 - `frontend-admin`: standalone React + Ant Design admin console that calls the server API with JWT authentication
-- `internal`: repository-private reusable modules for config, protocol, secure frames, KCP tunneling, TCP forwarding, SQLite storage, and UPnP
+- `internal`: repository-private reusable modules for config, protocol, secure frames, KCP tunneling, TCP forwarding, MySQL control storage, and UPnP
 - `installer`: Windows client installer script
 - `dist`: local build output directory
 
@@ -362,7 +361,6 @@ Edit `server.json`:
   "udp_listen": ":7000",
   "stun_alt_listen": ":7002",
   "http_listen": ":7001",
-  "database_path": "udp-tunnel.db",
   "control_database_driver": "mysql",
   "control_database_dsn": "udp_tunnel:change-me@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local",
   "control_database_auto_migrate": false,
@@ -399,7 +397,7 @@ Open these ports:
 
 Open the deployed React admin console and log in with `admin_password`.
 
-The server HTTP API now runs on Gin. The target control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and model skeletons. Runtime business reads/writes are still backed by the existing SQLite store and will be migrated gradually. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
+The server HTTP API now runs on Gin. The control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and models. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
 
 #### 3. Deploy the client
 
