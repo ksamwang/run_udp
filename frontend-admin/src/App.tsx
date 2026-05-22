@@ -1,10 +1,10 @@
 import { App as AntApp, Spin } from 'antd'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { clearAuth, hasAuth } from './api/auth'
 import { getMe } from './api/metrics'
-import { logout } from './api/client'
+import { AUTH_EXPIRED_EVENT, AuthExpiredError, logout } from './api/client'
 import { AppLayout } from './layouts/AppLayout'
 import { LoginPage } from './pages/LoginPage'
 
@@ -35,6 +35,7 @@ function AdminApp() {
   const location = useLocation()
   const navigate = useNavigate()
   const [authenticated, setAuthenticated] = useState(hasAuth())
+  const [sessionMessage, setSessionMessage] = useState('')
   const activePage = useMemo(() => pageFromPath(location.pathname), [location.pathname])
   const me = useQuery({
     queryKey: ['me'],
@@ -44,11 +45,41 @@ function AdminApp() {
   })
   const forcePasswordChange = Boolean(me.data?.user.force_password_change)
 
+  useEffect(() => {
+    if (!me.isError) {
+      return
+    }
+    if (me.error instanceof AuthExpiredError) {
+      setSessionMessage(me.error.message)
+      clearAuth()
+      queryClient.clear()
+      setAuthenticated(false)
+      return
+    }
+    setSessionMessage('登录状态异常，请重新登录')
+    clearAuth()
+    queryClient.clear()
+    setAuthenticated(false)
+  }, [me.error, me.isError, queryClient])
+
+  useEffect(() => {
+    function handleAuthExpired(event: Event) {
+      const detail = (event as CustomEvent<{ message?: string }>).detail
+      setSessionMessage(detail?.message || '登录状态已失效，请重新登录')
+      queryClient.clear()
+      setAuthenticated(false)
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+  }, [queryClient])
+
   if (!authenticated) {
     return (
       <AntApp>
         <LoginPage
+          sessionMessage={sessionMessage || (me.error instanceof AuthExpiredError ? me.error.message : undefined)}
           onLoggedIn={() => {
+            setSessionMessage('')
             setAuthenticated(true)
             queryClient.invalidateQueries({ queryKey: ['me'] })
           }}
@@ -61,11 +92,7 @@ function AdminApp() {
     return <Spin fullscreen tip="正在加载控制台" />
   }
 
-  if (me.isError) {
-    clearAuth()
-    setAuthenticated(false)
-    return null
-  }
+  if (me.isError) return <Spin fullscreen tip="正在退出登录" />
 
   if (forcePasswordChange && activePage !== 'settings') {
     return <Navigate to="/settings" replace />

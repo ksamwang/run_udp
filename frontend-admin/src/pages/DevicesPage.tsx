@@ -1,8 +1,8 @@
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Card, message, Popconfirm, Space, Switch, Table, Typography } from 'antd'
+import { Button, Card, message, Popconfirm, Space, Switch, Table, Tooltip, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { deleteDevice, listDevices, setDeviceEnabled } from '../api/devices'
 import { listRules } from '../api/rules'
 import { DeviceDetailDrawer } from '../components/DeviceDetailDrawer'
@@ -24,8 +24,21 @@ export function DevicesPage() {
   const refreshDevices = () => queryClient.invalidateQueries({ queryKey: ['devices'] })
   const enabledMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => setDeviceEnabled(id, enabled),
+    onMutate: async ({ id, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ['devices'] })
+      const previous = queryClient.getQueryData<Device[]>(['devices'])
+      queryClient.setQueryData<Device[]>(['devices'], (old) =>
+        old?.map((item) => item.id === id ? { ...item, enabled } : item) || old,
+      )
+      return { previous }
+    },
     onSuccess: () => refreshDevices(),
-    onError: (err) => message.error(err instanceof Error ? err.message : '状态更新失败'),
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['devices'], context.previous)
+      }
+      message.error(err instanceof Error ? err.message : '状态更新失败，已恢复原状态')
+    },
   })
   const deleteMutation = useMutation({
     mutationFn: deleteDevice,
@@ -36,6 +49,14 @@ export function DevicesPage() {
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
   })
+
+  useEffect(() => {
+    if (!selectedDevice || !devices.data || devices.isFetching) {
+      return
+    }
+    const latest = devices.data.find((device) => device.id === selectedDevice.id)
+    setSelectedDevice(latest || null)
+  }, [devices.data, devices.isFetching, selectedDevice])
 
   return (
     <div className="page-stack">
@@ -57,7 +78,7 @@ export function DevicesPage() {
             { title: '状态', dataIndex: 'online', width: 96, render: (_, r) => <StatusTag online={r.online} enabled={r.enabled} /> },
             { title: '设备名', dataIndex: 'name', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{v || r.id}</Typography.Text><Typography.Text type="secondary" copyable>{r.id}</Typography.Text></Space> },
             { title: '公网地址', dataIndex: 'addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
-            { title: 'UPnP 地址', dataIndex: 'upnp_addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
+            { title: '端口映射地址', dataIndex: 'upnp_addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
             { title: '健康摘要', dataIndex: 'health_summary', render: (v) => v || '-' },
             { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
             { title: '最后心跳', dataIndex: 'last_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
@@ -67,9 +88,13 @@ export function DevicesPage() {
               width: 140,
               render: (_, r) => (
                 <Space>
-                  <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedDevice(r)} />
+                  <Tooltip title="查看详情">
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedDevice(r)} />
+                  </Tooltip>
                   <Popconfirm title="删除设备" description="仅无启用规则引用时可删除，确认继续？" onConfirm={() => deleteMutation.mutate(r.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
+                    <Tooltip title="删除设备">
+                      <Button size="small" danger icon={<DeleteOutlined />} loading={deleteMutation.isPending} />
+                    </Tooltip>
                   </Popconfirm>
                 </Space>
               ),

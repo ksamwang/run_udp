@@ -5,14 +5,29 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 let refreshPromise: Promise<AuthResponse> | null = null
 
+export class AuthExpiredError extends Error {
+  constructor(message = '登录状态已失效，请重新登录') {
+    super(message)
+    this.name = 'AuthExpiredError'
+  }
+}
+
+export const AUTH_EXPIRED_EVENT = 'udp-tunnel-auth-expired'
+
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   await refreshIfNeeded()
   const res = await send(path, init)
   if (res.status !== 401) {
     return readJSON<T>(res)
   }
+  if (!shouldRefreshAfter401(path)) {
+    throwAuthExpired()
+  }
   await refreshTokens()
   const retry = await send(path, init)
+  if (retry.status === 401) {
+    throwAuthExpired()
+  }
   return readJSON<T>(retry)
 }
 
@@ -72,8 +87,7 @@ async function refreshTokens() {
   }
   const refreshToken = getRefreshToken()
   if (!refreshToken) {
-    clearAuth()
-    throw new Error('登录已过期')
+    throwAuthExpired('登录已过期，请重新登录')
   }
   refreshPromise = fetch(`${API_BASE}/api/admin/auth/refresh`, {
     method: 'POST',
@@ -86,8 +100,7 @@ async function refreshTokens() {
       return data
     })
     .catch((err) => {
-      clearAuth()
-      throw err
+      throwAuthExpired(err instanceof Error ? err.message : '登录已过期，请重新登录')
     })
     .finally(() => {
       refreshPromise = null
@@ -101,4 +114,14 @@ async function readJSON<T>(res: Response): Promise<T> {
     throw new Error(text || `HTTP ${res.status}`)
   }
   return text ? (JSON.parse(text) as T) : ({} as T)
+}
+
+function shouldRefreshAfter401(path: string) {
+  return !path.startsWith('/api/admin/me') && !path.startsWith('/api/admin/auth/')
+}
+
+function throwAuthExpired(message?: string): never {
+  clearAuth()
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }))
+  throw new AuthExpiredError(message)
 }

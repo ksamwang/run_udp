@@ -17,7 +17,7 @@ export function StatusTag({ state, enabled, online }: StatusTagProps) {
     case 'p2p':
       return <Tag color="green">P2P</Tag>
     case 'relay':
-      return <Tag color="blue">Relay</Tag>
+      return <Tag color="blue">中继</Tag>
     case 'connecting':
       return <Tag color="gold">连接中</Tag>
     case 'backoff':

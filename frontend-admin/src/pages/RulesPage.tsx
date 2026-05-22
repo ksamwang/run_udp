@@ -1,5 +1,5 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Card, message, Popconfirm, Space, Switch, Table, Tag, Typography } from 'antd'
+import { Button, Card, message, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listDevices } from '../api/devices'
@@ -42,8 +42,21 @@ export function RulesPage() {
   })
   const enabledMutation = useMutation({
     mutationFn: ({ rule, enabled }: { rule: ForwardRule; enabled: boolean }) => setRuleEnabled(rule, enabled),
+    onMutate: async ({ rule, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ['rules'] })
+      const previous = queryClient.getQueryData<ForwardRule[]>(['rules'])
+      queryClient.setQueryData<ForwardRule[]>(['rules'], (old) =>
+        old?.map((item) => item.id === rule.id ? { ...item, enabled } : item) || old,
+      )
+      return { previous }
+    },
     onSuccess: () => refreshRules(),
-    onError: (err) => message.error(err instanceof Error ? err.message : '状态更新失败'),
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['rules'], context.previous)
+      }
+      message.error(err instanceof Error ? err.message : '状态更新失败，已恢复原状态')
+    },
   })
 
   return (
@@ -70,7 +83,7 @@ export function RulesPage() {
             { title: '本地端口', dataIndex: 'local_port' },
             { title: '出口设备', dataIndex: 'target_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
             { title: '目标地址', render: (_, r) => <Typography.Text copyable>{`${r.target_host}:${r.target_port}`}</Typography.Text> },
-            { title: 'Profile', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{v || 'interactive'}</Tag> },
+            { title: '连接模式', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{formatProfile(v)}</Tag> },
             { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
             { title: '启用', dataIndex: 'enabled', width: 88, render: (v, r) => <Switch checked={v} loading={enabledMutation.isPending} onChange={(checked) => enabledMutation.mutate({ rule: r, enabled: checked })} /> },
             {
@@ -78,9 +91,13 @@ export function RulesPage() {
               width: 140,
               render: (_, r) => (
                 <Space>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => { setEditingRule(r); setDrawerOpen(true) }} />
+                  <Tooltip title="编辑规则">
+                    <Button size="small" icon={<EditOutlined />} onClick={() => { setEditingRule(r); setDrawerOpen(true) }} />
+                  </Tooltip>
                   <Popconfirm title="删除规则" description="确认删除这条转发规则？" onConfirm={() => deleteMutation.mutate(r.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
+                    <Tooltip title="删除规则">
+                      <Button size="small" danger icon={<DeleteOutlined />} loading={deleteMutation.isPending} />
+                    </Tooltip>
                   </Popconfirm>
                 </Space>
               ),
@@ -99,4 +116,8 @@ export function RulesPage() {
       />
     </div>
   )
+}
+
+function formatProfile(profile?: string) {
+  return profile === 'bulk' ? '吞吐优先' : '交互优先'
 }

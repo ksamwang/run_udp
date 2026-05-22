@@ -26,7 +26,7 @@ export function DeviceDetailDrawer({ open, device, rules, onClose }: DeviceDetai
                   <Descriptions.Item label="设备名">{device.name || '-'}</Descriptions.Item>
                   <Descriptions.Item label="设备 ID"><Typography.Text copyable>{device.id}</Typography.Text></Descriptions.Item>
                   <Descriptions.Item label="公网地址">{device.addr ? <Typography.Text copyable>{device.addr}</Typography.Text> : '-'}</Descriptions.Item>
-                  <Descriptions.Item label="UPnP 地址">{device.upnp_addr ? <Typography.Text copyable>{device.upnp_addr}</Typography.Text> : '-'}</Descriptions.Item>
+                  <Descriptions.Item label="端口映射地址">{device.upnp_addr ? <Typography.Text copyable>{device.upnp_addr}</Typography.Text> : '-'}</Descriptions.Item>
                   <Descriptions.Item label="健康摘要">{device.health_summary || '-'}</Descriptions.Item>
                   <Descriptions.Item label="最近错误">{device.last_error || '-'}</Descriptions.Item>
                   <Descriptions.Item label="最后心跳">{device.last_seen ? dayjs(device.last_seen).format('YYYY-MM-DD HH:mm:ss') : '-'}</Descriptions.Item>

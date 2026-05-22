@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { login } from '../api/client'
 
 type LoginPageProps = {
+  sessionMessage?: string
   onLoggedIn: () => void
 }
 
-export function LoginPage({ onLoggedIn }: LoginPageProps) {
+export function LoginPage({ sessionMessage, onLoggedIn }: LoginPageProps) {
   const [form] = Form.useForm<{ username: string; password: string }>()
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -37,6 +38,7 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
           </Typography.Paragraph>
         </div>
         <Card className="login-card" title="管理员登录">
+          {sessionMessage ? <Alert type="warning" message={sessionMessage} showIcon className="form-alert" /> : null}
           {error && <Alert type="error" message={error} showIcon className="form-alert" />}
           <Form form={form} layout="vertical" initialValues={{ username: 'admin' }} onFinish={submit}>
             <Form.Item name="username" label="管理员账号" rules={[{ required: true, message: '请输入管理员账号' }]}>

@@ -45,7 +45,7 @@ export function DashboardPage() {
           <Card><Statistic title="活跃会话" value={metrics?.active_sessions ?? 0} /></Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <Card><Statistic title="Relay 流量" value={metrics?.relay_bytes ?? 0} /></Card>
+          <Card><Statistic title="中继流量" value={metrics?.relay_bytes ?? 0} /></Card>
         </Col>
       </Row>
       <Row gutter={[16, 16]}>
@@ -66,7 +66,7 @@ export function DashboardPage() {
           columns={[
             { title: '设备', dataIndex: 'device_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
             { title: '对端', dataIndex: 'peer_id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
-            { title: 'Profile', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{v || 'interactive'}</Tag> },
+            { title: '连接模式', dataIndex: 'profile', render: (v) => <Tag color={v === 'bulk' ? 'purple' : 'cyan'}>{formatProfile(v)}</Tag> },
             { title: '状态', dataIndex: 'state', render: (v) => <StatusTag state={v} /> },
             { title: '路径', dataIndex: 'via', render: (v) => v || '-' },
             { title: 'RTT', dataIndex: 'rtt_ms', render: (v) => v ? `${v} ms` : '-' },
@@ -79,4 +79,8 @@ export function DashboardPage() {
       </Card>
     </div>
   )
+}
+
+function formatProfile(profile?: string) {
+  return profile === 'bulk' ? '吞吐优先' : '交互优先'
 }

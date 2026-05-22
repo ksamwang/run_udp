@@ -62,7 +62,12 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
     passwordMutation.mutate({ current_password: values.current_password, new_password: values.new_password })
   }
   function submitSettings() {
-    const values = form.getFieldsValue(true) as SettingsForm
+    form.validateFields()
+      .then((values) => saveSettings(values as SettingsForm))
+      .catch(() => undefined)
+  }
+
+  function saveSettings(values: SettingsForm) {
     const durationError = validateDurationValues(values)
     if (durationError) {
       message.error(durationError)
@@ -96,12 +101,12 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       children: (
         <Card>
           <div className="settings-grid">
-            <DurationField name="peer_ttl" label="Peer TTL" minSeconds={10} />
-            <DurationField name="pair_ttl" label="Pair TTL" minSeconds={10} />
-            <DurationField name="relay_idle_timeout" label="Relay Idle Timeout" minSeconds={10} />
+            <DurationField name="peer_ttl" label="设备心跳有效期" minSeconds={10} />
+            <DurationField name="pair_ttl" label="配对请求有效期" minSeconds={10} />
+            <DurationField name="relay_idle_timeout" label="中继空闲超时" minSeconds={10} />
             <Form.Item
               name="allow_relay"
-              label="允许 Relay"
+              label="允许中继"
               valuePropName="checked"
               tooltip="关闭后，系统不会主动走中继路径。"
             >
@@ -125,14 +130,14 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       children: (
         <Card>
           <div className="settings-grid">
-            <Form.Item name="client_no_upnp" label="禁用 UPnP" valuePropName="checked"><Switch /></Form.Item>
-            <DurationField name="client_upnp_timeout" label="UPnP Timeout" minSeconds={1} />
-            <DurationField name="client_punch_timeout" label="Punch Timeout" minSeconds={1} />
+            <Form.Item name="client_no_upnp" label="禁用端口映射" valuePropName="checked"><Switch /></Form.Item>
+            <DurationField name="client_upnp_timeout" label="端口映射超时" minSeconds={1} />
+            <DurationField name="client_punch_timeout" label="打洞超时" minSeconds={1} />
             <Form.Item
               name="client_force_relay"
-              label="强制 Relay"
+              label="强制中继"
               valuePropName="checked"
-              tooltip="启用后客户端会优先走 Relay。"
+              tooltip="启用后客户端会优先走中继。"
             >
               <Switch />
             </Form.Item>
@@ -164,7 +169,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
             <Form.Item name="client_release_published_at" label="发布时间"><Input /></Form.Item>
             <Form.Item name="client_release_minimum_supported_version" label="最低支持版本"><Input /></Form.Item>
             <Form.Item name="client_release_file" label="服务端安装包文件"><Input /></Form.Item>
-            <Form.Item name="client_release_notes" label="Release Notes" className="settings-wide"><Input.TextArea rows={4} /></Form.Item>
+            <Form.Item name="client_release_notes" label="发布说明" className="settings-wide"><Input.TextArea rows={4} /></Form.Item>
           </div>
         </Card>
       ),
@@ -235,42 +240,55 @@ function DurationField({ name, label, minSeconds }: { name: keyof SettingsForm; 
     { value: 's', label: '秒' },
     { value: 'm', label: '分钟' },
     { value: 'h', label: '小时' },
-  ]
+  ] satisfies Array<{ value: DurationUnit; label: string }>
   return (
     <Form.Item
+      name={name}
       label={label}
       required
-      shouldUpdate={(prev, cur) => prev[name] !== cur[name]}
+      validateStatus={undefined}
+      rules={[
+        {
+          validator: (_, value: DurationInputValue) => {
+            if (toSeconds(value) < minSeconds) {
+              return Promise.reject(new Error(`不能小于 ${formatMinSeconds(minSeconds)}`))
+            }
+            return Promise.resolve()
+          },
+        },
+      ]}
     >
-      {({ getFieldValue, setFieldValue }) => {
-        const value = (getFieldValue(name) || {}) as DurationInputValue
-        const seconds = toSeconds(value)
-        const invalid = seconds < minSeconds
-        const help = invalid ? `不能小于 ${formatMinSeconds(minSeconds)}` : undefined
-        return (
-          <>
-            <Space.Compact block>
-              <InputNumber
-                min={1}
-                precision={0}
-                value={value.amount}
-                status={invalid ? 'error' : undefined}
-                onChange={(amount) => setFieldValue(name, { ...value, amount: amount || undefined })}
-                style={{ width: '65%' }}
-              />
-              <Select
-                value={value.unit || 's'}
-                options={unitOptions}
-                status={invalid ? 'error' : undefined}
-                onChange={(unit) => setFieldValue(name, { ...value, unit })}
-                style={{ width: '35%' }}
-              />
-            </Space.Compact>
-            {help ? <Typography.Text type="danger">{help}</Typography.Text> : null}
-          </>
-        )
-      }}
+      <DurationInput unitOptions={unitOptions} />
     </Form.Item>
+  )
+}
+
+function DurationInput({
+  value,
+  onChange,
+  unitOptions,
+}: {
+  value?: DurationInputValue
+  onChange?: (value: DurationInputValue) => void
+  unitOptions: Array<{ value: DurationUnit; label: string }>
+}) {
+  const current = value || { amount: undefined, unit: 's' as DurationUnit }
+  return (
+    <Space.Compact block>
+      <InputNumber
+        min={1}
+        precision={0}
+        value={current.amount}
+        onChange={(amount) => onChange?.({ ...current, amount: amount || undefined })}
+        style={{ width: '65%' }}
+      />
+      <Select
+        value={current.unit || 's'}
+        options={unitOptions}
+        onChange={(unit) => onChange?.({ ...current, unit })}
+        style={{ width: '35%' }}
+      />
+    </Space.Compact>
   )
 }
 
@@ -298,11 +316,11 @@ function formToSettings(values: SettingsForm): Settings {
 
 function validateDurationValues(values: SettingsForm): string {
   const checks: Array<[keyof SettingsForm, string, number]> = [
-    ['peer_ttl', 'Peer TTL', 10],
-    ['pair_ttl', 'Pair TTL', 10],
-    ['relay_idle_timeout', 'Relay Idle Timeout', 10],
-    ['client_upnp_timeout', 'UPnP Timeout', 1],
-    ['client_punch_timeout', 'Punch Timeout', 1],
+    ['peer_ttl', '设备心跳有效期', 10],
+    ['pair_ttl', '配对请求有效期', 10],
+    ['relay_idle_timeout', '中继空闲超时', 10],
+    ['client_upnp_timeout', '端口映射超时', 1],
+    ['client_punch_timeout', '打洞超时', 1],
   ]
   for (const [key, label, minSeconds] of checks) {
     const seconds = toSeconds(values[key] as DurationInputValue)

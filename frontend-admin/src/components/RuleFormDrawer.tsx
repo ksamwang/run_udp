@@ -1,4 +1,4 @@
-import { Drawer, Form, Input, InputNumber, Select, Segmented, Switch } from 'antd'
+import { Button, Drawer, Form, Input, InputNumber, Select, Segmented, Switch } from 'antd'
 import { useEffect } from 'react'
 import type { Device, ForwardRule, ForwardRulePayload } from '../types/api'
 
@@ -42,7 +42,11 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
       onClose={onClose}
       width={520}
       destroyOnClose
-      extra={<a onClick={() => form.submit()}>{submitting ? '保存中...' : '保存'}</a>}
+      extra={
+        <Button type="primary" loading={submitting} disabled={submitting} onClick={() => form.submit()}>
+          保存
+        </Button>
+      }
     >
       <Form form={form} layout="vertical" onFinish={onSubmit}>
         <Form.Item name="name" label="规则名" rules={[{ required: true, message: '请输入规则名' }]}>
@@ -51,8 +55,8 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
         <Form.Item name="enabled" label="启用" valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Form.Item name="profile" label="Profile" rules={[{ required: true }]}>
-          <Segmented block options={[{ label: 'Interactive', value: 'interactive' }, { label: 'Bulk', value: 'bulk' }]} />
+        <Form.Item name="profile" label="连接模式" rules={[{ required: true }]}>
+          <Segmented block options={[{ label: '交互优先', value: 'interactive' }, { label: '吞吐优先', value: 'bulk' }]} />
         </Form.Item>
         <Form.Item
           name="source_id"
