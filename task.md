@@ -132,20 +132,20 @@ internal/
 
 ## 阶段 2：服务端 LAN API
 
-- [ ] `POST /api/lan/bootstrap`
-- [ ] `GET /api/admin/lan/networks`
-- [ ] `POST /api/admin/lan/networks`
-- [ ] `PATCH /api/admin/lan/networks/{id}`
-- [ ] `DELETE /api/admin/lan/networks/{id}`
-- [ ] `GET /api/admin/lan/addresses`
-- [ ] `PATCH /api/admin/lan/addresses/{device_id}`
-- [ ] `GET /api/admin/lan/acl`
-- [ ] `POST /api/admin/lan/acl`
-- [ ] `PATCH /api/admin/lan/acl/{id}`
-- [ ] `DELETE /api/admin/lan/acl/{id}`
-- [ ] `POST /api/lan/status`
-- [ ] LAN bootstrap 返回协议版本 `version` 和客户端能力 `capabilities`。
-- [ ] LAN bootstrap 返回服务端配置版本，便于客户端判断是否需要刷新网络、ACL、peer 信息。
+- [x] `POST /api/lan/bootstrap`
+- [x] `GET /api/admin/lan/networks`
+- [x] `POST /api/admin/lan/networks`
+- [x] `PATCH /api/admin/lan/networks/{id}`
+- [x] `DELETE /api/admin/lan/networks/{id}`
+- [x] `GET /api/admin/lan/addresses`
+- [x] `PATCH /api/admin/lan/addresses/{device_id}`
+- [x] `GET /api/admin/lan/acl`
+- [x] `POST /api/admin/lan/acl`
+- [x] `PATCH /api/admin/lan/acl/{id}`
+- [x] `DELETE /api/admin/lan/acl/{id}`
+- [x] `POST /api/lan/status`
+- [x] LAN bootstrap 返回协议版本 `version` 和客户端能力 `capabilities`。
+- [x] LAN bootstrap 返回服务端配置版本，便于客户端判断是否需要刷新网络、ACL、peer 信息。
 
 验收：
 

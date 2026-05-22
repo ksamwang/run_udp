@@ -86,6 +86,146 @@ func TestCORSAllowsAnyOriginAndHeaders(t *testing.T) {
 	}
 }
 
+func TestLANAdminAPIs(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+
+	unauth := doJSON(t, a.httpMux(), http.MethodGet, "/api/admin/lan/networks", nil, nil)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d body=%s", unauth.Code, unauth.Body.String())
+	}
+
+	createNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
+		"name": "office", "cidr": "172.16.30.0/24", "enabled": true,
+	})
+	if createNet.Code != http.StatusOK {
+		t.Fatalf("create network status=%d body=%s", createNet.Code, createNet.Body.String())
+	}
+	var network store.VirtualNetwork
+	if err := json.Unmarshal(createNet.Body.Bytes(), &network); err != nil {
+		t.Fatal(err)
+	}
+	if network.ID == 0 || network.CIDR != "172.16.30.0/24" {
+		t.Fatalf("bad network: %+v", network)
+	}
+
+	patchNet := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/networks/"+strconv.FormatInt(network.ID, 10), map[string]any{
+		"name": "office-2", "cidr": "172.16.31.0/24", "enabled": false,
+	})
+	if patchNet.Code != http.StatusOK {
+		t.Fatalf("patch network status=%d body=%s", patchNet.Code, patchNet.Body.String())
+	}
+
+	addrRec := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/addresses/dev-a", map[string]any{
+		"network_id": network.ID, "virtual_ip": "172.16.31.10", "hostname": "office-a", "dns_enabled": true,
+	})
+	if addrRec.Code != http.StatusOK {
+		t.Fatalf("patch address status=%d body=%s", addrRec.Code, addrRec.Body.String())
+	}
+	listAddr := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/addresses?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if listAddr.Code != http.StatusOK {
+		t.Fatalf("list address status=%d body=%s", listAddr.Code, listAddr.Body.String())
+	}
+	var addresses []store.VirtualAddress
+	if err := json.Unmarshal(listAddr.Body.Bytes(), &addresses); err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0].VirtualIP != "172.16.31.10" {
+		t.Fatalf("bad addresses: %+v", addresses)
+	}
+
+	aclRec := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/acl", map[string]any{
+		"network_id": network.ID, "source_device_id": "dev-a", "target_device_id": "dev-b",
+		"protocol": "tcp", "port_start": 3389, "port_end": 3389, "action": "deny", "enabled": true,
+	})
+	if aclRec.Code != http.StatusOK {
+		t.Fatalf("create acl status=%d body=%s", aclRec.Code, aclRec.Body.String())
+	}
+	var acl store.VirtualACLRule
+	if err := json.Unmarshal(aclRec.Body.Bytes(), &acl); err != nil {
+		t.Fatal(err)
+	}
+	if acl.ID == 0 || acl.Action != "deny" {
+		t.Fatalf("bad acl: %+v", acl)
+	}
+	patchACL := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/acl/"+strconv.FormatInt(acl.ID, 10), map[string]any{
+		"network_id": network.ID, "source_device_id": "dev-a", "target_device_id": "dev-b",
+		"protocol": "tcp", "port_start": 22, "port_end": 22, "action": "allow", "enabled": false,
+	})
+	if patchACL.Code != http.StatusOK {
+		t.Fatalf("patch acl status=%d body=%s", patchACL.Code, patchACL.Body.String())
+	}
+	delACL := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/acl/"+strconv.FormatInt(acl.ID, 10), nil)
+	if delACL.Code != http.StatusOK {
+		t.Fatalf("delete acl status=%d body=%s", delACL.Code, delACL.Body.String())
+	}
+
+	badNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
+		"name": "bad", "cidr": "not-cidr", "enabled": true,
+	})
+	if badNet.Code != http.StatusBadRequest {
+		t.Fatalf("bad network status=%d body=%s", badNet.Code, badNet.Body.String())
+	}
+}
+
+func TestLANBootstrapAndStatusAPIs(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	network, err := a.db.EnsureDefaultVirtualNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "dev-a", NetworkID: network.ID, VirtualIP: "172.16.10.10", Hostname: "office-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "dev-b", NetworkID: network.ID, VirtualIP: "172.16.10.11", Hostname: "office-b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.CreateVirtualACLRule(ctx, store.VirtualACLRule{
+		NetworkID: network.ID, SourceDeviceID: "dev-a", TargetDeviceID: "dev-b",
+		Protocol: "tcp", PortStart: 3389, PortEnd: 3389, Action: "allow", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
+		"device_id": "dev-a", "device_name": "Office A", "public_key": "pub-a", "capabilities": []string{"ipv4"},
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp lanBootstrapResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Version != lanBootstrapVersion || resp.ConfigVersion == "" || resp.Address.VirtualIP != "172.16.10.10" {
+		t.Fatalf("bad bootstrap response: %+v", resp)
+	}
+	if len(resp.Peers) != 1 || resp.Peers[0].DeviceID != "dev-b" {
+		t.Fatalf("bad bootstrap peers: %+v", resp.Peers)
+	}
+
+	statusRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{
+		"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID,
+		"state": "connected", "path": "p2p", "rtt_ms": 12, "tx_bytes": 100, "rx_bytes": 200,
+	}, nil)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("status status=%d body=%s", statusRec.Code, statusRec.Body.String())
+	}
+	states, err := a.db.ListVirtualPeerStates(ctx, network.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].Path != "p2p" || states[0].RTTMs != 12 {
+		t.Fatalf("bad peer states: %+v", states)
+	}
+}
+
 func TestHandleForwardsLocalPortConflict(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

@@ -38,6 +38,12 @@ func (a *App) httpMux() http.Handler {
 	admin.Any("/metrics", ginWrap(a.requireAdmin(a.handleMetrics)))
 	admin.Any("/settings", ginWrap(a.requireAdmin(a.handleSettings)))
 	admin.POST("/password", ginWrap(a.requireAdmin(a.handleChangePassword)))
+	admin.Any("/lan/networks", ginWrap(a.requireAdmin(a.handleAdminLANNetworks)))
+	admin.Any("/lan/networks/:id", ginWrap(a.requireAdmin(a.handleAdminLANNetwork)))
+	admin.Any("/lan/addresses", ginWrap(a.requireAdmin(a.handleAdminLANAddresses)))
+	admin.Any("/lan/addresses/:device_id", ginWrap(a.requireAdmin(a.handleAdminLANAddress)))
+	admin.Any("/lan/acl", ginWrap(a.requireAdmin(a.handleAdminLANACLRules)))
+	admin.Any("/lan/acl/:id", ginWrap(a.requireAdmin(a.handleAdminLANACLRule)))
 
 	agent := r.Group("/api/agent")
 	agent.POST("/bootstrap", ginWrap(a.handleAgentBootstrap))
@@ -45,6 +51,10 @@ func (a *App) httpMux() http.Handler {
 	agent.POST("/heartbeat", ginWrap(a.requireAgent(a.handleAgentHeartbeat)))
 	agent.POST("/tunnel-status", ginWrap(a.requireAgent(a.handleAgentTunnelStatus)))
 	agent.GET("/rules", ginWrap(a.requireAgent(a.handleAgentRules)))
+
+	lan := r.Group("/api/lan")
+	lan.POST("/bootstrap", ginWrap(a.handleLANBootstrap))
+	lan.POST("/status", ginWrap(a.handleLANStatus))
 
 	r.GET("/api/client/release", ginWrap(a.requireAgent(a.handleClientRelease)))
 	r.GET("/downloads/client/installer", ginWrap(a.handleClientInstaller))
