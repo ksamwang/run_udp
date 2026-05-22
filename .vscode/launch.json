@@ -8,25 +8,7 @@
       "mode": "debug",
       "program": "${workspaceFolder}/cmd/server",
       "cwd": "${workspaceFolder}",
-      "args": ["-env", ".env"]
-    },
-    {
-      "name": "Go: 调试客户端 Agent",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "${workspaceFolder}/cmd/client",
-      "cwd": "${workspaceFolder}",
-      "args": ["-config", "client.json", "-agent"]
-    },
-    {
-      "name": "Go: 调试客户端配置页",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "${workspaceFolder}/cmd/client",
-      "cwd": "${workspaceFolder}",
-      "args": ["-config", "client.json", "-config-ui"]
+      "args": ["-env", "${workspaceFolder}/.env"]
     },
     {
       "name": "Chrome: 调试管理后台",
@@ -35,24 +17,12 @@
       "url": "http://127.0.0.1:5173",
       "webRoot": "${workspaceFolder}/frontend-admin/src",
       "preLaunchTask": "frontend-admin: dev"
-    },
-    {
-      "name": "Chrome: 调试管理后台（已启动）",
-      "type": "chrome",
-      "request": "launch",
-      "url": "http://127.0.0.1:5173",
-      "webRoot": "${workspaceFolder}/frontend-admin/src"
     }
   ],
   "compounds": [
     {
       "name": "全栈调试：服务端 + 管理后台",
       "configurations": ["Go: 调试服务端", "Chrome: 调试管理后台"],
-      "stopAll": true
-    },
-    {
-      "name": "全栈调试：已启动前端",
-      "configurations": ["Go: 调试服务端", "Chrome: 调试管理后台（已启动）"],
       "stopAll": true
     }
   ]

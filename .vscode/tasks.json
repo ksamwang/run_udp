@@ -4,7 +4,7 @@
     {
       "label": "server: run",
       "type": "shell",
-      "command": "go run ./cmd/server -env .env",
+      "command": "go run ./cmd/server -env \"${workspaceFolder}/.env\"",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -40,42 +40,6 @@
           "endsPattern": ".*Local:.*http://127\\.0\\.0\\.1:5173"
         }
       }
-    },
-    {
-      "label": "go: test",
-      "type": "shell",
-      "command": "go test ./...",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": "$go"
-    },
-    {
-      "label": "go: test controlstore mysql",
-      "type": "shell",
-      "command": "go test ./internal/controlstore",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": "$go"
-    },
-    {
-      "label": "frontend-admin: build",
-      "type": "shell",
-      "command": "npm run build",
-      "options": {
-        "cwd": "${workspaceFolder}/frontend-admin"
-      },
-      "problemMatcher": "$tsc"
-    },
-    {
-      "label": "build: all",
-      "type": "shell",
-      "command": ".\\build-all.bat",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": ["$go", "$tsc"]
     }
   ]
 }
