@@ -471,6 +471,12 @@ func (s *MySQLStore) RevokeAdminRefreshToken(ctx context.Context, tokenHash stri
 		Update("revoked_at", nowString()).Error
 }
 
+func (s *MySQLStore) RevokeAdminRefreshTokensByUser(ctx context.Context, userID string) error {
+	return s.db.WithContext(ctx).Model(&AdminRefreshToken{}).
+		Where("user_id = ? AND revoked_at = ''", userID).
+		Update("revoked_at", nowString()).Error
+}
+
 func (s *MySQLStore) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff time.Time) error {
 	return s.db.WithContext(ctx).Model(&AdminRefreshToken{}).
 		Where("revoked_at = '' AND expires_at < ?", cutoff.Format(time.RFC3339)).

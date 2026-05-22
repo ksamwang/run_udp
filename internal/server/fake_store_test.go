@@ -446,6 +446,18 @@ func (s *fakeStore) RevokeAdminRefreshToken(ctx context.Context, tokenHash strin
 	return nil
 }
 
+func (s *fakeStore) RevokeAdminRefreshTokensByUser(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, token := range s.refreshTokens {
+		if token.UserID == userID && token.RevokedAt == "" {
+			token.RevokedAt = nowTestString()
+			s.refreshTokens[hash] = token
+		}
+	}
+	return nil
+}
+
 func (s *fakeStore) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

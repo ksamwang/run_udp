@@ -568,6 +568,38 @@ func TestChangePasswordClearsForceFlag(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRevokesExistingRefreshTokens(t *testing.T) {
+	a := newTestApp(t)
+	pass := "secret-pass"
+	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
+		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", ForcePasswordChange: true, PasswordHash: string(hash),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.CreateAdminRefreshToken(context.Background(), "admin", "old-refresh", time.Now().Add(time.Hour), "ua", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/password", map[string]any{
+		"current_password": pass,
+		"new_password":     "new-secret-pass",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change password status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	token, err := a.db.GetAdminRefreshToken(context.Background(), "old-refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.RevokedAt == "" {
+		t.Fatalf("refresh token not revoked after password change: %+v", token)
+	}
+}
+
 func TestAdminConsoleAPISmoke(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

@@ -44,5 +44,6 @@ type Store interface {
 	GetAdminRefreshToken(ctx context.Context, tokenHash string) (store.AdminRefreshToken, error)
 	TouchAdminRefreshToken(ctx context.Context, id int64) error
 	RevokeAdminRefreshToken(ctx context.Context, tokenHash string) error
+	RevokeAdminRefreshTokensByUser(ctx context.Context, userID string) error
 	RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff time.Time) error
 }
