@@ -67,6 +67,7 @@ type agentBootstrapResponse struct {
 	DeviceName   string `json:"device_name"`
 	Server       string `json:"server"`
 	ServerHTTP   string `json:"server_http"`
+	PSK          string `json:"psk"`
 	STUNAltPort  int    `json:"stun_alt_port"`
 	NoUPnP       bool   `json:"no_upnp"`
 	UPnPTimeout  string `json:"upnp_timeout"`

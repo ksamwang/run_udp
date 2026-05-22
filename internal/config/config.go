@@ -99,7 +99,6 @@ func (c *Client) UnmarshalJSON(b []byte) error {
 		ServerHTTP   string       `json:"server_http"`
 		DeviceName   string       `json:"device_name"`
 		PeerID       string       `json:"peer_id"`
-		PSK          string       `json:"psk"`
 		NoUPnP       *bool        `json:"no_upnp"`
 		UPnPTimeout  durationJSON `json:"upnp_timeout"`
 		LogLevel     string       `json:"log_level"`
@@ -117,7 +116,6 @@ func (c *Client) UnmarshalJSON(b []byte) error {
 	c.ServerHTTP = x.ServerHTTP
 	c.DeviceName = x.DeviceName
 	c.PeerID = x.PeerID
-	c.PSK = x.PSK
 	if x.NoUPnP != nil {
 		c.NoUPnP = *x.NoUPnP
 	}
@@ -320,11 +318,9 @@ func SaveClientLocalJSON(path string, cfg Client) error {
 	local := struct {
 		ServerHTTP string `json:"server_http"`
 		DeviceName string `json:"device_name,omitempty"`
-		PSK        string `json:"psk"`
 	}{
 		ServerHTTP: cfg.ServerHTTP,
 		DeviceName: cfg.DeviceName,
-		PSK:        cfg.PSK,
 	}
 	b, err := json.Marshal(local)
 	if err != nil {

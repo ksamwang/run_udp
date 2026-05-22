@@ -119,6 +119,7 @@ type bootstrapResponse struct {
 	DeviceName   string `json:"device_name"`
 	Server       string `json:"server"`
 	ServerHTTP   string `json:"server_http"`
+	PSK          string `json:"psk"`
 	STUNAltPort  int    `json:"stun_alt_port"`
 	NoUPnP       bool   `json:"no_upnp"`
 	UPnPTimeout  string `json:"upnp_timeout"`
@@ -395,7 +396,7 @@ func main() {
 
 func runServiceAgent(ctx context.Context, cfg config.Client, configPath string, altPort int) {
 	if needsBootstrapConfig(cfg, false, false) {
-		log.Printf("[%s] service config incomplete: server_http=%q psk_set=%v", cfg.DeviceID, cfg.ServerHTTP, cfg.PSK != "")
+		log.Printf("[%s] service config incomplete: server_http=%q", cfg.DeviceID, cfg.ServerHTTP)
 		<-ctx.Done()
 		return
 	}
@@ -443,7 +444,7 @@ func needsBootstrapConfig(cfg config.Client, probeMode bool, explicitPeer bool) 
 	if explicitPeer && cfg.ServerHTTP == "" {
 		return false
 	}
-	return strings.TrimSpace(cfg.ServerHTTP) == "" || strings.TrimSpace(cfg.PSK) == ""
+	return strings.TrimSpace(cfg.ServerHTTP) == ""
 }
 
 func runBootstrapConfigMode(cfg *config.Client, configPath string) {
@@ -457,7 +458,7 @@ func runBootstrapConfigMode(cfg *config.Client, configPath string) {
 	} else {
 		log.Printf("[%s] bootstrap config required; local settings page could not start", cfg.DeviceID)
 	}
-	log.Printf("[%s] missing local bootstrap config: server_http=%q psk_set=%v", cfg.DeviceID, cfg.ServerHTTP, cfg.PSK != "")
+	log.Printf("[%s] missing local bootstrap config: server_http=%q", cfg.DeviceID, cfg.ServerHTTP)
 	waitForSignal(cfg.DeviceID)
 }
 
@@ -1421,7 +1422,6 @@ func agentBootstrap(cfg config.Client) (bootstrapResponse, error) {
 		return bootstrapResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-UDP-Tunnel-PSK", cfg.PSK)
 	res, err := doAgentHTTPRequest(req)
 	if err != nil {
 		return bootstrapResponse{}, err
@@ -1434,7 +1434,7 @@ func agentBootstrap(cfg config.Client) (bootstrapResponse, error) {
 	return resp, json.NewDecoder(res.Body).Decode(&resp)
 }
 
-func doAgentHTTPRequest(req *http.Request) (*http.Response, error) {
+var doAgentHTTPRequest = func(req *http.Request) (*http.Response, error) {
 	res, err := http.DefaultClient.Do(req)
 	if err == nil || !shouldRetryDirect(err) {
 		return res, err
@@ -1464,6 +1464,7 @@ func mergeBootstrap(local config.Client, resp bootstrapResponse) (config.Client,
 	cfg := local
 	cfg.Server = resp.Server
 	cfg.ServerHTTP = resp.ServerHTTP
+	cfg.PSK = resp.PSK
 	if resp.DeviceID != "" {
 		cfg.DeviceID = resp.DeviceID
 	}

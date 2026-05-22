@@ -53,7 +53,6 @@ type clientConfigState struct {
 type clientLocalConfigView struct {
 	ServerHTTP string `json:"server_http"`
 	DeviceName string `json:"device_name"`
-	PSK        string `json:"psk"`
 }
 
 func (s *clientConfigState) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +68,6 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 		writeClientJSON(w, clientLocalConfigView{
 			ServerHTTP: s.cfg.ServerHTTP,
 			DeviceName: s.cfg.DeviceName,
-			PSK:        s.cfg.PSK,
 		})
 	case http.MethodPost:
 		var req clientLocalConfigView
@@ -83,7 +81,6 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 		if s.cfg.DeviceName == "" {
 			s.cfg.DeviceName = defaultDeviceName()
 		}
-		s.cfg.PSK = req.PSK
 		s.clearServerManagedConfig()
 		elevated := false
 		var err error
@@ -118,6 +115,7 @@ func (s *clientConfigState) handleConfig(w http.ResponseWriter, r *http.Request)
 func (s *clientConfigState) clearServerManagedConfig() {
 	s.cfg.Server = ""
 	s.cfg.PeerID = ""
+	s.cfg.PSK = ""
 	s.cfg.NoUPnP = false
 	s.cfg.UPnPTimeout = 0
 	s.cfg.LogLevel = ""
@@ -199,7 +197,6 @@ const clientConfigHTML = `<!doctype html>
   <form id="form">
     <label>控制面地址<input name="server_http" placeholder="http://tunnel.example.com"><small>客户端唯一必填入口，启动后会从这里拉取运行配置。</small></label>
     <label>设备显示名<input name="device_name" placeholder="默认使用 Windows 计算机名"><small>Web 管理页优先显示这个名称。</small></label>
-    <label>预共享密钥<input name="psk"><small>必须和服务端 PSK 一致。</small></label>
     <div class="full">
       <button type="submit">保存配置</button>
       <button type="button" id="restart-service">重启服务</button>

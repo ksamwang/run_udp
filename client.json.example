@@ -1,5 +1,4 @@
 {
   "server_http": "http://tunnel.example.com",
-  "device_name": "",
-  "psk": "change-this-deployment-secret"
+  "device_name": ""
 }

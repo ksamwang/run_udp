@@ -40,10 +40,10 @@ func (a *App) httpMux() http.Handler {
 	admin.POST("/password", ginWrap(a.requireAdmin(a.handleChangePassword)))
 
 	agent := r.Group("/api/agent")
+	agent.POST("/bootstrap", ginWrap(a.handleAgentBootstrap))
 	agent.POST("/register", ginWrap(a.requireAgent(a.handleAgentRegister)))
 	agent.POST("/heartbeat", ginWrap(a.requireAgent(a.handleAgentHeartbeat)))
 	agent.POST("/tunnel-status", ginWrap(a.requireAgent(a.handleAgentTunnelStatus)))
-	agent.POST("/bootstrap", ginWrap(a.requireAgent(a.handleAgentBootstrap)))
 	agent.GET("/rules", ginWrap(a.requireAgent(a.handleAgentRules)))
 
 	r.GET("/api/client/release", ginWrap(a.requireAgent(a.handleClientRelease)))

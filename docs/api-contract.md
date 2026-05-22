@@ -7,7 +7,7 @@
 - 管理后台接口前缀：`/api/admin`
 - Agent 接口前缀：`/api/agent`
 - 管理后台认证：`Authorization: Bearer <access_token>`
-- Agent 认证：`X-UDP-Tunnel-PSK: <psk>`
+- Agent 认证：`POST /api/agent/bootstrap` 不需要本地 PSK；其他 Agent 接口使用 bootstrap 下发的 `X-UDP-Tunnel-PSK: <psk>`
 - 请求体和响应体均为 JSON，文件下载接口除外
 - 错误响应统一返回 JSON。`code` 给前端分支处理，`error` 给用户提示或日志展示：
 
@@ -236,7 +236,7 @@
 
 客户端启动时拉取服务端下发配置。
 
-本地 `client.json` 只保留 `server_http`、`device_name`、`psk` 三个引导字段。下面响应中的运行期字段由服务端 MySQL `system_settings` 统一下发，客户端不应长期保存在配置样例里。
+本地 `client.json` 只保留 `server_http`、`device_name` 两个引导字段。下面响应中的 PSK 和运行期字段由服务端 MySQL `system_settings` 统一下发，客户端不应长期保存在配置样例里。
 
 请求：
 
@@ -255,6 +255,7 @@
   "device_name": "Office PC",
   "server": "tunnel.example.com:7000",
   "server_http": "http://tunnel.example.com:7001",
+  "psk": "change-this-deployment-secret",
   "stun_alt_port": 7002,
   "no_upnp": true,
   "upnp_timeout": "3s",
@@ -274,7 +275,7 @@
 
 ### `GET /api/client/release`
 
-返回客户端发布信息，需要 Agent PSK。
+返回客户端发布信息，需要 bootstrap 下发的 Agent PSK。
 
 ### `GET /downloads/client/installer`
 
@@ -295,8 +296,7 @@ CONTROL_DATABASE_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&pa
 ```json
 {
   "server_http": "http://tunnel.example.com",
-  "device_name": "",
-  "psk": "change-this-deployment-secret"
+  "device_name": ""
 }
 ```
 

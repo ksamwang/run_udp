@@ -25,7 +25,7 @@ UDP Tunnel 是一个自托管远程 TCP 访问工具。服务端提供 Rendezvou
 2. 配置好 `.env`，至少确认 `PSK`、`ADMIN_JWT_SECRET` 和 `CONTROL_DATABASE_DSN`
 3. 启动服务端并确认 `http://<server>:7001/health` 正常
 4. 在每台 Windows 客户端旁放置 `client.exe` 和最小 `client.json`
-5. 在 `client.json` 中填写 `server_http` 和 `psk`
+5. 在 `client.json` 中填写 `server_http`，可选填写 `device_name`
 6. 启动客户端 agent，确认设备出现在 React 管理后台
 7. 在 React 管理后台创建转发规则
 8. 在入口设备访问 `127.0.0.1:<local_port>` 验证连通性
@@ -141,8 +141,7 @@ copy client.json.example client.json
 ```json
 {
   "server_http": "http://tunnel.example.com",
-  "device_name": "",
-  "psk": "change-this-deployment-secret"
+  "device_name": ""
 }
 ```
 
@@ -150,12 +149,11 @@ copy client.json.example client.json
 
 - `server_http`：客户端唯一必填入口，启动后会从这里拉取运行配置
 - `device_name`：可选，留空时默认使用 Windows 计算机名
-- `psk`：必须与服务端一致
 
-`client.json.example` 只保留以上三项本机引导配置。不要再把 UDP 地址、打洞超时、端口映射、中继策略、日志等级、托盘开关、客户端发布信息写入客户端配置样例；这些配置都由服务端数据库统一管理。
+`client.json.example` 只保留以上两项本机引导配置。不要再把 PSK、UDP 地址、打洞超时、端口映射、中继策略、日志等级、托盘开关、客户端发布信息写入客户端配置样例；这些配置都由服务端统一下发或由服务端数据库统一管理。
 
 客户端启动时会从本机 UUID 自动推导稳定 `device_id`，不会从 `client.json` 读取，也不会写入 `client.json`。
-运行期的 UDP 地址、打洞、UPnP、relay 默认项会从 MySQL 配置读取，并通过 `POST /api/agent/bootstrap` 由服务端统一下发。
+运行期的 PSK、UDP 地址、打洞、UPnP、relay 默认项会从 MySQL 配置读取，并通过 `POST /api/agent/bootstrap` 由服务端统一下发。
 客户端启动时会自动做一次 NAT 探测；如果判定为 `Symmetric NAT`，本进程会直接优先走 relay。
 
 启动客户端：
@@ -188,7 +186,7 @@ client.exe -config client.json -agent
 客户端启动后可从 Windows 托盘打开：
 
 - `打开管理后台`：打开 Web 管理后台
-- `客户端配置`：打开本机引导配置页，只维护 `server_http`、`device_name`、`psk`
+- `客户端配置`：打开本机引导配置页，只维护 `server_http`、`device_name`
 - `打开日志目录`：打开客户端日志目录
 - `重启服务`：重启 Windows 服务
 - `检查更新`：立即检查客户端更新
@@ -248,7 +246,7 @@ Agent 接口：
 
 - `GET /api/admin/tunnel-states`
 
-管理后台 API 使用 JWT Bearer Token。Agent API 使用 `X-UDP-Tunnel-PSK` header。
+管理后台 API 使用 JWT Bearer Token。Agent bootstrap 不需要本地 PSK；其他 Agent API 使用 bootstrap 下发的 `X-UDP-Tunnel-PSK` header。
 错误响应统一为 JSON：`{"code":"bad_rule","error":"target_port must be 1-65535"}`。
 
 ### 验证
@@ -288,7 +286,7 @@ UDP Tunnel is a self-hosted remote TCP access tool. The server provides Rendezvo
 2. Configure `.env`, at minimum setting `PSK`, `ADMIN_JWT_SECRET`, and `CONTROL_DATABASE_DSN`
 3. Start the server and verify `http://<server>:7001/health` is healthy
 4. Place `client.exe` and a minimal `client.json` on each Windows client
-5. Fill in `server_http` and `psk` in `client.json`
+5. Fill in `server_http` in `client.json`; `device_name` is optional
 6. Start the client agent and confirm the device appears in the Web UI
 7. Create forwarding rules in the control plane
 8. Validate connectivity from the source device using `127.0.0.1:<local_port>`
@@ -404,8 +402,7 @@ Edit `client.json`:
 ```json
 {
   "server_http": "http://tunnel.example.com",
-  "device_name": "",
-  "psk": "change-this-deployment-secret"
+  "device_name": ""
 }
 ```
 
@@ -413,12 +410,11 @@ Notes:
 
 - `server_http`: the only required local bootstrap entry
 - `device_name`: optional; defaults to the Windows hostname
-- `psk`: must match the server
 
-`client.json.example` intentionally contains only these three local bootstrap fields. Do not add UDP addresses, punch timeouts, port mapping, relay policy, log level, tray settings, or client release metadata back into the sample client config; those values are centrally managed in the server database.
+`client.json.example` intentionally contains only these two local bootstrap fields. Do not add PSK, UDP addresses, punch timeouts, port mapping, relay policy, log level, tray settings, or client release metadata back into the sample client config; those values are delivered by the server or centrally managed in the server database.
 
 On startup, the client derives a stable `device_id` from the local machine UUID; it is neither read from nor written to `client.json`.
-Runtime settings such as UDP rendezvous address, punching, UPnP, and relay defaults are read from MySQL settings and delivered by the server through `POST /api/agent/bootstrap`.
+Runtime settings such as PSK, UDP rendezvous address, punching, UPnP, and relay defaults are read from MySQL settings and delivered by the server through `POST /api/agent/bootstrap`.
 The client also performs automatic NAT probing at startup; if it detects a symmetric NAT, it will prefer relay immediately.
 
 Start the client:
@@ -451,7 +447,7 @@ Then connect from the source device to:
 Once started, the Windows tray provides:
 
 - `打开管理后台`: opens the Web admin console
-- `客户端配置`: opens the local bootstrap settings page for `server_http`, `device_name`, and `psk`
+- `客户端配置`: opens the local bootstrap settings page for `server_http` and `device_name`
 - `打开日志目录`: opens the client log directory
 - `重启服务`: restarts the Windows service
 - `检查更新`: checks for client updates
@@ -511,7 +507,7 @@ Agent endpoints:
 
 - `GET /api/admin/tunnel-states`
 
-Admin APIs use JWT Bearer tokens. Agent APIs use the `X-UDP-Tunnel-PSK` header.
+Admin APIs use JWT Bearer tokens. Agent bootstrap does not require a local PSK; other Agent APIs use the bootstrap-issued `X-UDP-Tunnel-PSK` header.
 Error responses use JSON consistently: `{"code":"bad_rule","error":"target_port must be 1-65535"}`.
 
 ### Verification

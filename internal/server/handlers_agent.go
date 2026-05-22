@@ -232,6 +232,7 @@ func (a *App) bootstrapConfig(r *http.Request, deviceID, deviceName string) agen
 		DeviceName:   deviceName,
 		Server:       externalUDPAddr(r, a.cfg.UDPListen),
 		ServerHTTP:   requestBaseURL(r),
+		PSK:          a.cfg.PSK,
 		STUNAltPort:  portFromAddr(a.cfg.StunAltListen, 7002),
 		NoUPnP:       a.cfg.ClientNoUPnP,
 		UPnPTimeout:  a.cfg.ClientUPnPTimeout.String(),

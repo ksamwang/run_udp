@@ -82,8 +82,11 @@ func TestSaveClientLocalJSONWritesMinimalBootstrapConfig(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["server_http"] != "http://tunnel.example.com" || got["device_name"] != "office-pc" || got["psk"] != "secret" {
+	if got["server_http"] != "http://tunnel.example.com" || got["device_name"] != "office-pc" {
 		t.Fatalf("unexpected saved config: %v", got)
+	}
+	if _, ok := got["psk"]; ok {
+		t.Fatalf("psk should not be persisted: %v", got)
 	}
 	if _, ok := got["device_id"]; ok {
 		t.Fatalf("device_id should not be persisted: %v", got)

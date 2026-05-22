@@ -746,6 +746,9 @@ func TestEndToEndAdminAgentBootstrapFlow(t *testing.T) {
 	if !bootstrap.NoUPnP || bootstrap.UPnPTimeout != "3s" || bootstrap.LogLevel != "debug" || !bootstrap.ForceRelay {
 		t.Fatalf("bootstrap did not use stored settings: %+v", bootstrap)
 	}
+	if bootstrap.PSK != a.cfg.PSK {
+		t.Fatalf("bootstrap should include server psk: %+v", bootstrap)
+	}
 
 	bootstrapRec = doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{
 		"device_id":   "dev-b",
@@ -834,7 +837,7 @@ func TestErrorResponsesUseJSONContract(t *testing.T) {
 	}{
 		{
 			name:   "agent unauthorized",
-			rec:    doJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{"device_id": "dev-a"}, nil),
+			rec:    doJSON(t, a.httpMux(), http.MethodPost, "/api/agent/register", map[string]any{"device_id": "dev-a"}, nil),
 			status: http.StatusUnauthorized,
 			code:   "unauthorized",
 		},

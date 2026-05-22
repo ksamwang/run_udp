@@ -113,7 +113,10 @@ func TestClientConfigUIOnlyExposesBootstrapFields(t *testing.T) {
 	if _, ok := got["device_id"]; ok {
 		t.Fatalf("device_id should not be exposed in local config UI: %+v", got)
 	}
-	if got["server_http"] != cfg.ServerHTTP || got["device_name"] != cfg.DeviceName || got["psk"] != cfg.PSK {
+	if _, ok := got["psk"]; ok {
+		t.Fatalf("psk should not be exposed in local config UI: %+v", got)
+	}
+	if got["server_http"] != cfg.ServerHTTP || got["device_name"] != cfg.DeviceName {
 		t.Fatalf("bootstrap fields missing: %+v", got)
 	}
 }
@@ -144,7 +147,7 @@ func TestClientConfigUIPostClearsServerManagedFields(t *testing.T) {
 			},
 		},
 	}
-	body := bytes.NewBufferString(`{"server_http":"http://new.example.com","device_name":"","psk":"new-secret","no_upnp":true,"log_level":"debug"}`)
+	body := bytes.NewBufferString(`{"server_http":"http://new.example.com","device_name":"","psk":"ignored-secret","no_upnp":true,"log_level":"debug"}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/config", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -152,11 +155,89 @@ func TestClientConfigUIPostClearsServerManagedFields(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if saved.ServerHTTP != "http://new.example.com" || saved.PSK != "new-secret" || saved.DeviceName == "" {
+	if saved.ServerHTTP != "http://new.example.com" || saved.DeviceName == "" {
 		t.Fatalf("bootstrap fields not saved: %+v", saved)
 	}
-	if saved.Server != "" || saved.PeerID != "" || saved.NoUPnP || saved.UPnPTimeout != 0 || saved.LogLevel != "" || saved.TrayEnabled || saved.PunchTimeout != 0 || saved.ForceRelay || saved.AllowLegacy || len(saved.Forwards) != 0 {
+	if saved.Server != "" || saved.PeerID != "" || saved.PSK != "" || saved.NoUPnP || saved.UPnPTimeout != 0 || saved.LogLevel != "" || saved.TrayEnabled || saved.PunchTimeout != 0 || saved.ForceRelay || saved.AllowLegacy || len(saved.Forwards) != 0 {
 		t.Fatalf("server-managed fields should be cleared before save: %+v", saved)
+	}
+}
+
+func TestNeedsBootstrapConfigDoesNotRequireLocalPSK(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	cfg.PSK = ""
+	if needsBootstrapConfig(cfg, false, false) {
+		t.Fatal("local psk should not be required for bootstrap config")
+	}
+}
+
+func TestMergeBootstrapAppliesServerPSK(t *testing.T) {
+	local := config.DefaultClient()
+	local.ServerHTTP = "http://old.example.com"
+	local.PSK = ""
+	merged, err := mergeBootstrap(local, bootstrapResponse{
+		DeviceID:     "DEV-1234",
+		Server:       "1.2.3.4:7000",
+		ServerHTTP:   "http://tunnel.example.com",
+		PSK:          "server-secret",
+		UPnPTimeout:  "3s",
+		PunchTimeout: "15s",
+		LogLevel:     "debug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.PSK != "server-secret" || merged.Server != "1.2.3.4:7000" || merged.ServerHTTP != "http://tunnel.example.com" {
+		t.Fatalf("bootstrap fields not merged: %+v", merged)
+	}
+}
+
+func TestAgentBootstrapDoesNotSendLocalPSK(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	cfg.DeviceID = "DEV-1234"
+	cfg.PSK = "local-secret"
+
+	var gotHeader string
+	var gotPath string
+	oldDo := doAgentHTTPRequest
+	doAgentHTTPRequest = func(req *http.Request) (*http.Response, error) {
+		gotHeader = req.Header.Get("X-UDP-Tunnel-PSK")
+		gotPath = req.URL.Path
+		rec := httptest.NewRecorder()
+		_ = json.NewEncoder(rec).Encode(bootstrapResponse{PSK: "server-secret"})
+		return rec.Result(), nil
+	}
+	defer func() { doAgentHTTPRequest = oldDo }()
+
+	resp, err := agentBootstrap(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/agent/bootstrap" || gotHeader != "" || resp.PSK != "server-secret" {
+		t.Fatalf("unexpected bootstrap request path=%q header=%q resp=%+v", gotPath, gotHeader, resp)
+	}
+}
+
+func TestAgentPostSendsBootstrapPSK(t *testing.T) {
+	cfg := config.DefaultClient()
+	cfg.ServerHTTP = "http://tunnel.example.com"
+	cfg.PSK = "server-secret"
+
+	var gotHeader string
+	oldDo := doAgentHTTPRequest
+	doAgentHTTPRequest = func(req *http.Request) (*http.Response, error) {
+		gotHeader = req.Header.Get("X-UDP-Tunnel-PSK")
+		return httptest.NewRecorder().Result(), nil
+	}
+	defer func() { doAgentHTTPRequest = oldDo }()
+
+	if err := agentPost(cfg, "/api/agent/register", map[string]any{"device_id": "DEV-1234"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "server-secret" {
+		t.Fatalf("agent post should send bootstrap psk, got %q", gotHeader)
 	}
 }
 
