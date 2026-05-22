@@ -1,4 +1,4 @@
-import { DashboardOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined } from '@ant-design/icons'
+import { DashboardOutlined, HistoryOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined } from '@ant-design/icons'
 import { Button, Layout, Menu, Space, Typography } from 'antd'
 import type { ReactNode } from 'react'
 
@@ -28,6 +28,7 @@ export function AppLayout({ children, activePage, pageTitle, onPageChange, onLog
             { key: 'dashboard', icon: <DashboardOutlined />, label: '总览' },
             { key: 'devices', icon: <TeamOutlined />, label: '设备' },
             { key: 'rules', icon: <SwapOutlined />, label: '转发规则' },
+            { key: 'sessions', icon: <HistoryOutlined />, label: '会话' },
             { key: 'settings', icon: <SettingOutlined />, label: '设置' },
           ]}
         />

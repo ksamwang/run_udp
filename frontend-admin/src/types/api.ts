@@ -91,3 +91,43 @@ export type TunnelState = {
   last_transition_at: string
   updated_at: string
 }
+
+export type Session = {
+  id: number
+  source_id: string
+  target_id: string
+  profile: string
+  path: string
+  relay_bytes: number
+  started_at: string
+  last_seen: string
+  ended_at?: string
+}
+
+export type Settings = {
+  udp_listen: string
+  stun_alt_listen: string
+  http_listen: string
+  database_path: string
+  psk_configured: boolean
+  peer_ttl: string
+  pair_ttl: string
+  relay_idle_timeout: string
+  allow_relay: boolean
+  allow_legacy: boolean
+  client_no_upnp: boolean
+  client_upnp_timeout: string
+  client_log_level: string
+  client_tray_enabled: boolean
+  client_punch_timeout: string
+  client_force_relay: boolean
+  client_allow_legacy: boolean
+  client_release_version: string
+  client_release_url: string
+  client_release_sha256: string
+  client_release_published_at: string
+  client_release_notes: string
+  client_release_minimum_supported_version: string
+  client_release_file: string
+  restart_only_fields?: string[]
+}

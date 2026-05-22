@@ -106,6 +106,16 @@ body {
   margin: 0 0 4px;
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 0 16px;
+}
+
+.settings-wide {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 760px) {
   .login-panel {
     grid-template-columns: 1fr;
@@ -113,5 +123,9 @@ body {
 
   .login-copy h1 {
     font-size: 34px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 }
