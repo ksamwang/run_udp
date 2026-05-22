@@ -23,9 +23,18 @@
 - 默认网段：`172.16.10.0/24`，由服务端配置并通过 LAN bootstrap 下发。
 - 设备 ID：LAN 和当前端口转发共用同一个设备 ID。
 - LAN 密钥：使用独立设备密钥，私钥保存在本地，公钥保存在服务端。
+- LAN 设备身份密钥使用 Ed25519，用于设备身份签名和服务端公钥登记。
+- LAN peer 会话密钥使用 X25519 临时密钥协商，通过 HKDF 派生 packet session key。
+- LAN 数据面加密单独设计 packet session crypto，不直接复用当前基于部署级 PSK 的 `internal/secure.Codec`。
+- LAN packet AEAD 优先使用 ChaCha20-Poly1305，复用现有安全帧的加密算法思路，不复用其 PSK 边界。
 - 隔离模型：组即虚拟网络，一个组一个网段。
 - 多网络：数据模型支持多虚拟网络，第一版 UI 只开放一个默认网络。
+- 一个设备允许同时加入多个虚拟网络，所有地址、路由、ACL、peer session 必须按 `network_id` 隔离。
 - 验收优先级：直接以 TCP/RDP 验收，最终以 RDP 可用作为产品验收标准。
+- 第一版实现 TCP MSS clamp，配合固定 TUN MTU 降低 RDP 黑洞和分片风险。
+- 默认虚拟网段冲突时由服务端自动分配新的可用网段，并通过 LAN bootstrap 下发。
+- 第一版预留 Magic DNS 数据模型，管理后台 UI 暂不开放。
+- ACL 默认策略为同组设备互通，显式拒绝规则优先级高于默认允许。
 - 安装形态：`UDPTunnelLAN` 使用独立安装包。
 - 默认启动：LAN 服务默认开机启动。
 - 默认启用：LAN 功能默认启用。
@@ -91,6 +100,7 @@ internal/
   - `network_id`
   - `virtual_ip`
   - `hostname`
+  - `dns_enabled`
 - [ ] 新增虚拟 ACL 模型 `virtual_acl_rules`：
   - `source_device_id`
   - `source_group_id`
@@ -110,12 +120,15 @@ internal/
 - [ ] 新增虚拟会话/状态模型 `virtual_sessions` 或 `virtual_peer_states`。
 - [ ] 默认创建一个虚拟网络，CIDR 为 `172.16.10.0/24`。
 - [ ] 数据模型支持多个虚拟网络，但第一版业务默认只使用一个网络。
+- [ ] 预留 Magic DNS 所需的 `hostname`、`dns_enabled`、网络内唯一约束。
 
 验收：
 
 - MySQL 5.5 兼容。
 - Gorm AutoMigrate 正常。
 - store 层单元测试覆盖增删改查和唯一约束。
+- 同一个设备可拥有多个 `network_id` 下的虚拟地址。
+- 同一个虚拟网络内 `virtual_ip` 和 `hostname` 不允许重复。
 
 ## 阶段 2：服务端 LAN API
 
@@ -157,19 +170,23 @@ internal/
 
 ## 阶段 3.5：LAN 安全协议设计
 
-- [ ] 明确设备私钥算法和公钥格式。
+- [ ] 设备身份密钥使用 Ed25519，明确私钥本地存储格式和公钥上报格式。
+- [ ] peer 会话使用 X25519 临时密钥协商。
 - [ ] 设计 peer 握手流程。
-- [ ] 设计会话密钥派生流程。
-- [ ] 设计 packet frame 加密和认证格式。
+- [ ] 设计会话密钥派生流程，使用 HKDF 派生方向独立的 tx/rx key。
+- [ ] 设计 packet frame 加密和认证格式，使用独立 LAN packet session crypto。
+- [ ] packet AEAD 优先使用 ChaCha20-Poly1305。
 - [ ] 增加 nonce、sequence 或时间窗口，防止重放。
 - [ ] 明确 key rotation 后新旧 session 的兼容和失效策略。
 - [ ] 明确 ACL 在发送端、接收端、服务端控制面的执行边界。
+- [ ] ACL 默认允许同组互通，显式拒绝规则优先。
 
 验收：
 
 - 数据面 packet 不以明文裸传。
 - 接收端必须二次校验来源设备、目标设备、网络 ID 和 ACL。
 - 重放 packet 不应被接收端接受。
+- 不依赖部署级 PSK 作为 LAN packet 数据面安全边界。
 
 ## 阶段 4：Wintun PoC
 
@@ -194,14 +211,18 @@ internal/
 
 - [ ] 检测本机路由表是否和虚拟网段冲突。
 - [ ] 冲突时上报服务端，并在管理后台展示冲突状态。
-- [ ] 明确虚拟网段变更后的客户端路由更新策略。
-- [ ] 明确 MTU、MSS clamp、IPv4 分片和超大 packet 的处理策略。
+- [ ] 服务端在默认网段冲突时自动分配新的可用网段。
+- [ ] 明确虚拟网段自动变更后的客户端路由更新策略。
+- [ ] 实现 TCP MSS clamp，第一版建议 clamp 到不超过 `1200`。
+- [ ] 明确 MTU、IPv4 分片和超大 packet 的处理策略。
 - [ ] 明确系统睡眠唤醒、网络切换、网卡禁用/启用后的恢复流程。
 - [ ] 明确异常退出、服务停止、卸载时的路由和虚拟网卡清理流程。
 
 验收：
 
 - 发现 `172.16.10.0/24` 路由冲突时不应静默覆盖用户现有路由。
+- 路由冲突后客户端应使用服务端重新下发的可用网段恢复 LAN。
+- TCP SYN 包的 MSS 能按 LAN MTU 策略被正确限制。
 - RDP 长连接在合理网络抖动后可重新建立。
 - 卸载后不残留 LAN 服务、托盘自启动、虚拟网卡或虚拟路由。
 
@@ -328,10 +349,4 @@ internal/
 
 ## 当前未决问题
 
-- 设备私钥算法使用 Ed25519、X25519，还是复用现有安全帧里的算法？
-- LAN 数据面 packet 加密是直接复用 `internal/secure`，还是单独设计 packet session crypto？
-- 是否要在第一版实现 MSS clamp，还是先通过固定 MTU 和 drop 日志处理？
-- 默认虚拟网段冲突时，是自动换网段，还是只上报冲突并要求管理员手动修改？
-- 一个设备未来是否允许同时加入多个虚拟网络？
-- 第一版是否需要提供 Magic DNS 的数据模型预留，但 UI 暂不开放？
-- ACL 默认策略是默认拒绝，还是默认允许同组设备互通？
+- 暂无。
