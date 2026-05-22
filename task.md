@@ -176,16 +176,22 @@ internal/
 
 ## 阶段 3.5：LAN 安全协议设计
 
-- [ ] 设备身份密钥使用 Ed25519，明确私钥本地存储格式和公钥上报格式。
-- [ ] peer 会话使用 X25519 临时密钥协商。
-- [ ] 设计 peer 握手流程。
-- [ ] 设计会话密钥派生流程，使用 HKDF 派生方向独立的 tx/rx key。
-- [ ] 设计 packet frame 加密和认证格式，使用独立 LAN packet session crypto。
-- [ ] packet AEAD 优先使用 ChaCha20-Poly1305。
-- [ ] 增加 nonce、sequence 或时间窗口，防止重放。
-- [ ] 明确 key rotation 后新旧 session 的兼容和失效策略。
-- [ ] 明确 ACL 在发送端、接收端、服务端控制面的执行边界。
-- [ ] ACL 默认允许同组互通，显式拒绝规则优先。
+- [x] 设备身份密钥使用 Ed25519，明确私钥本地存储格式和公钥上报格式。
+- [x] peer 会话使用 X25519 临时密钥协商。
+- [x] 设计 peer 握手流程。
+- [x] 设计会话密钥派生流程，使用 HKDF 派生方向独立的 tx/rx key。
+- [x] 设计 packet frame 加密和认证格式，使用独立 LAN packet session crypto。
+- [x] packet AEAD 优先使用 ChaCha20-Poly1305。
+- [x] 增加 nonce、sequence 或时间窗口，防止重放。
+- [x] 明确 key rotation 后新旧 session 的兼容和失效策略。
+- [x] 明确 ACL 在发送端、接收端、服务端控制面的执行边界。
+- [x] ACL 默认允许同组互通，显式拒绝规则优先。
+
+说明：
+
+- 协议设计记录在 `docs/lan-security-protocol.md`。
+- 当前实现边界为 packet session frame、HKDF 方向密钥派生、ChaCha20-Poly1305 加密认证、sequence replay window。
+- X25519 握手消息结构和 transcript 已设计，实际 peer 握手传输接入放到 P2P/Relay Packet Link 阶段。
 
 验收：
 
