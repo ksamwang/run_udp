@@ -35,6 +35,10 @@ type Store interface {
 	ListTunnelStates(ctx context.Context) ([]store.TunnelState, error)
 	LocalPortConflict(ctx context.Context, sourceID string, localPort int, excludeID int64) (bool, error)
 	Audit(ctx context.Context, kind, detail string) error
+	UpsertAdminUser(ctx context.Context, user store.AdminUser) error
+	GetAdminUserByUsername(ctx context.Context, username string) (store.AdminUser, error)
+	GetAdminUserByID(ctx context.Context, id string) (store.AdminUser, error)
+	UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error
 	CreateAdminRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent, ip string) error
 	GetAdminRefreshToken(ctx context.Context, tokenHash string) (store.AdminRefreshToken, error)
 	TouchAdminRefreshToken(ctx context.Context, id int64) error

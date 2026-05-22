@@ -2,11 +2,16 @@ package server
 
 import (
 	"crypto/subtle"
+	"database/sql"
+	"errors"
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"udp_tunnel_demo/internal/store"
 )
 
+const defaultAdminUsername = "admin"
 const defaultAdminPassword = "admin"
 
 func (a *App) requireAgent(next http.HandlerFunc) http.HandlerFunc {
@@ -19,13 +24,34 @@ func (a *App) requireAgent(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (a *App) ensureAdminPassword() error {
-	if existing, _ := a.db.GetMeta(rctx(), "admin_password_hash"); existing != "" {
+func (a *App) ensureAdminUser() error {
+	ctx := rctx()
+	if _, err := a.db.GetAdminUserByUsername(ctx, defaultAdminUsername); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if legacy, _ := a.db.GetMeta(ctx, "admin_password_hash"); legacy != "" {
+		if err := a.db.UpsertAdminUser(ctx, store.AdminUser{
+			ID:           defaultAdminUsername,
+			Username:     defaultAdminUsername,
+			Name:         "Administrator",
+			Role:         "admin",
+			PasswordHash: legacy,
+		}); err != nil {
+			return err
+		}
 		return nil
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	return a.db.PutMeta(rctx(), "admin_password_hash", string(hash))
+	return a.db.UpsertAdminUser(ctx, store.AdminUser{
+		ID:           defaultAdminUsername,
+		Username:     defaultAdminUsername,
+		Name:         "Administrator",
+		Role:         "admin",
+		PasswordHash: string(hash),
+	})
 }

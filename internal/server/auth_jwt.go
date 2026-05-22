@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-)
 
-const adminUserID = "admin"
+	"udp_tunnel_demo/internal/store"
+)
 
 type tokenResponse struct {
 	AccessToken      string         `json:"access_token"`
@@ -33,18 +33,23 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	hash, _ := a.db.GetMeta(r.Context(), "admin_password_hash")
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = defaultAdminUsername
+	}
+	user, err := a.db.GetAdminUserByUsername(r.Context(), username)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	resp, err := a.issueAdminTokenPair(r.Context(), r)
+	resp, err := a.issueAdminTokenPair(r.Context(), r, user)
 	writeJSONOrError(w, resp, err)
 }
 
@@ -74,7 +79,12 @@ func (a *App) handleAdminRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.db.TouchAdminRefreshToken(r.Context(), stored.ID)
 	_ = a.db.RevokeAdminRefreshToken(r.Context(), hash)
-	resp, err := a.issueAdminTokenPair(r.Context(), r)
+	user, err := a.db.GetAdminUserByID(r.Context(), stored.UserID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	resp, err := a.issueAdminTokenPair(r.Context(), r, user)
 	writeJSONOrError(w, resp, err)
 }
 
@@ -101,7 +111,7 @@ func (a *App) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		claims, err := a.verifyAccessToken(token)
-		if err != nil || claims.Subject != adminUserID {
+		if err != nil || claims.Subject == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -109,7 +119,7 @@ func (a *App) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request) (tokenResponse, error) {
+func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request, user store.AdminUser) (tokenResponse, error) {
 	accessTTL := a.cfg.AdminAccessTokenTTL
 	if accessTTL <= 0 {
 		accessTTL = time.Hour
@@ -121,8 +131,8 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request) (tokenRe
 	accessExp := time.Now().Add(accessTTL)
 	refreshExp := time.Now().Add(refreshTTL)
 	access, err := a.signAccessToken(adminClaims{
-		Subject: adminUserID,
-		Role:    "admin",
+		Subject: user.ID,
+		Role:    user.Role,
 		Issued:  time.Now().Unix(),
 		Expires: accessExp.Unix(),
 	})
@@ -133,7 +143,7 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request) (tokenRe
 	if err != nil {
 		return tokenResponse{}, err
 	}
-	if err := a.db.CreateAdminRefreshToken(ctx, adminUserID, hashRefreshToken(refresh), refreshExp, r.UserAgent(), requestIP(r)); err != nil {
+	if err := a.db.CreateAdminRefreshToken(ctx, user.ID, hashRefreshToken(refresh), refreshExp, r.UserAgent(), requestIP(r)); err != nil {
 		return tokenResponse{}, err
 	}
 	return tokenResponse{
@@ -141,7 +151,7 @@ func (a *App) issueAdminTokenPair(ctx context.Context, r *http.Request) (tokenRe
 		AccessExpiresAt:  accessExp.Format(time.RFC3339),
 		RefreshToken:     refresh,
 		RefreshExpiresAt: refreshExp.Format(time.RFC3339),
-		User:             adminUser(),
+		User:             adminUser(user),
 	}, nil
 }
 
@@ -239,8 +249,12 @@ func hashRefreshToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func adminUser() map[string]any {
-	return map[string]any{"id": adminUserID, "name": "admin", "role": "admin"}
+func adminUser(user store.AdminUser) map[string]any {
+	name := user.Name
+	if name == "" {
+		name = user.Username
+	}
+	return map[string]any{"id": user.ID, "username": user.Username, "name": name, "role": user.Role}
 }
 
 func requestIP(r *http.Request) string {
@@ -258,5 +272,11 @@ func requestIP(r *http.Request) string {
 }
 
 func (a *App) handleAdminMe(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"user": adminUser()})
+	claims, _ := r.Context().Value(adminClaimsKey{}).(adminClaims)
+	user, err := a.db.GetAdminUserByID(r.Context(), claims.Subject)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": adminUser(user)})
 }

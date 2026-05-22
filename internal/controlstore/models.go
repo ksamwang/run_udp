@@ -100,3 +100,15 @@ type AdminRefreshToken struct {
 }
 
 func (AdminRefreshToken) TableName() string { return "admin_refresh_tokens" }
+
+type AdminUser struct {
+	ID           string `gorm:"primaryKey;size:191;column:id"`
+	Username     string `gorm:"uniqueIndex;size:191;not null;column:username"`
+	Name         string `gorm:"size:255;not null;default:'';column:name"`
+	Role         string `gorm:"size:64;not null;default:'admin';column:role"`
+	PasswordHash string `gorm:"size:191;not null;column:password_hash"`
+	CreatedAt    string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt    string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (AdminUser) TableName() string { return "admin_users" }

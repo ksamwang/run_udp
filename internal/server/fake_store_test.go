@@ -20,6 +20,7 @@ type fakeStore struct {
 	nextSessionID int64
 	tunnelStates  map[string]store.TunnelState
 	refreshTokens map[string]store.AdminRefreshToken
+	adminUsers    map[string]store.AdminUser
 	auditEvents   []string
 }
 
@@ -31,6 +32,7 @@ func newFakeStore() *fakeStore {
 		sessions:      map[int64]store.Session{},
 		tunnelStates:  map[string]store.TunnelState{},
 		refreshTokens: map[string]store.AdminRefreshToken{},
+		adminUsers:    map[string]store.AdminUser{},
 	}
 }
 
@@ -341,6 +343,51 @@ func (s *fakeStore) Audit(ctx context.Context, kind, detail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.auditEvents = append(s.auditEvents, kind+":"+detail)
+	return nil
+}
+
+func (s *fakeStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if user.CreatedAt == "" {
+		user.CreatedAt = nowTestString()
+	}
+	user.UpdatedAt = nowTestString()
+	s.adminUsers[user.ID] = user
+	return nil
+}
+
+func (s *fakeStore) GetAdminUserByUsername(ctx context.Context, username string) (store.AdminUser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, user := range s.adminUsers {
+		if user.Username == username {
+			return user, nil
+		}
+	}
+	return store.AdminUser{}, sql.ErrNoRows
+}
+
+func (s *fakeStore) GetAdminUserByID(ctx context.Context, id string) (store.AdminUser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.adminUsers[id]
+	if !ok {
+		return store.AdminUser{}, sql.ErrNoRows
+	}
+	return user, nil
+}
+
+func (s *fakeStore) UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.adminUsers[userID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	user.PasswordHash = passwordHash
+	user.UpdatedAt = nowTestString()
+	s.adminUsers[userID] = user
 	return nil
 }
 

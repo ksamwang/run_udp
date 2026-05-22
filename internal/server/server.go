@@ -114,7 +114,7 @@ func New(cfg config.Server) (*App, error) {
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
 	}
-	if err := a.ensureAdminPassword(); err != nil {
+	if err := a.ensureAdminUser(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

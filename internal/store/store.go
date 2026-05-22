@@ -88,6 +88,16 @@ type AdminRefreshToken struct {
 	IP         string `json:"ip,omitempty"`
 }
 
+type AdminUser struct {
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	PasswordHash string `json:"-"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
 const (
 	ProfileInteractive = "interactive"
 	ProfileBulk        = "bulk"

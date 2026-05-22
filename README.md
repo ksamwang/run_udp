@@ -121,6 +121,13 @@ PSK=change-this-deployment-secret
 
 服务端 HTTP API 已切换到 Gin。控制库为 MySQL 5.5，`internal/controlstore` 按 MySQL 5.5 兼容方式配置 Gorm 连接和模型。API 契约见 [docs/api-contract.md](docs/api-contract.md)。
 
+如需在开发机验证 MySQL 自动建表和读写路径，可设置 `UDP_TUNNEL_MYSQL_DSN` 后运行：
+
+```bat
+set UDP_TUNNEL_MYSQL_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
+go test ./internal/controlstore
+```
+
 #### 3. 部署客户端
 
 复制配置样例：
@@ -370,6 +377,13 @@ Open the deployed React admin console and log in with the initial account `admin
 `.env` only stores values required before the service can start: listen addresses, database connection, JWT secret, and PSK. The database is fixed to MySQL, and Gorm auto-migrates tables on startup. Tunnel policy, client defaults, and client release metadata are stored in the MySQL `system_settings` table and managed from the admin settings page.
 
 The server HTTP API now runs on Gin. The control database is MySQL 5.5; `internal/controlstore` configures Gorm with MySQL 5.5 compatible options and models. See [docs/api-contract.md](docs/api-contract.md) for the API contract.
+
+To verify MySQL auto-migration and store behavior during development, set `UDP_TUNNEL_MYSQL_DSN` and run:
+
+```bat
+set UDP_TUNNEL_MYSQL_DSN=user:pass@tcp(127.0.0.1:3306)/udp_tunnel?charset=utf8mb4&parseTime=True&loc=Local
+go test ./internal/controlstore
+```
 
 #### 3. Deploy the client
 

@@ -58,6 +58,7 @@ func (s *MySQLStore) AutoMigrate() error {
 		&Session{},
 		&AuditEvent{},
 		&TunnelState{},
+		&AdminUser{},
 		&AdminRefreshToken{},
 	)
 }
@@ -374,6 +375,62 @@ func (s *MySQLStore) Audit(ctx context.Context, kind, detail string) error {
 	return s.db.WithContext(ctx).Create(&AuditEvent{Kind: kind, Detail: detail, CreatedAt: nowString()}).Error
 }
 
+func (s *MySQLStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) error {
+	now := nowString()
+	if user.CreatedAt == "" {
+		user.CreatedAt = now
+	}
+	user.UpdatedAt = now
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"username":      user.Username,
+			"name":          user.Name,
+			"role":          user.Role,
+			"password_hash": user.PasswordHash,
+			"updated_at":    user.UpdatedAt,
+		}),
+	}).Create(&AdminUser{
+		ID:           user.ID,
+		Username:     user.Username,
+		Name:         user.Name,
+		Role:         user.Role,
+		PasswordHash: user.PasswordHash,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+	}).Error
+}
+
+func (s *MySQLStore) GetAdminUserByUsername(ctx context.Context, username string) (store.AdminUser, error) {
+	var row AdminUser
+	err := s.db.WithContext(ctx).First(&row, "username = ?", username).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return store.AdminUser{}, sql.ErrNoRows
+	}
+	return row.toStore(), err
+}
+
+func (s *MySQLStore) GetAdminUserByID(ctx context.Context, id string) (store.AdminUser, error) {
+	var row AdminUser
+	err := s.db.WithContext(ctx).First(&row, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return store.AdminUser{}, sql.ErrNoRows
+	}
+	return row.toStore(), err
+}
+
+func (s *MySQLStore) UpdateAdminPassword(ctx context.Context, userID, passwordHash string) error {
+	tx := s.db.WithContext(ctx).Model(&AdminUser{}).Where("id = ?", userID).
+		Updates(map[string]any{"password_hash": passwordHash, "updated_at": nowString()})
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *MySQLStore) CreateAdminRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent, ip string) error {
 	return s.db.WithContext(ctx).Create(&AdminRefreshToken{
 		UserID: userID, TokenHash: tokenHash, ExpiresAt: expiresAt.Format(time.RFC3339),
@@ -464,6 +521,18 @@ func (t AdminRefreshToken) toStore() store.AdminRefreshToken {
 		ID: t.ID, UserID: t.UserID, TokenHash: t.TokenHash, ExpiresAt: t.ExpiresAt,
 		RevokedAt: t.RevokedAt, CreatedAt: t.CreatedAt, LastUsedAt: t.LastUsedAt,
 		UserAgent: t.UserAgent, IP: t.IP,
+	}
+}
+
+func (u AdminUser) toStore() store.AdminUser {
+	return store.AdminUser{
+		ID:           u.ID,
+		Username:     u.Username,
+		Name:         u.Name,
+		Role:         u.Role,
+		PasswordHash: u.PasswordHash,
+		CreatedAt:    u.CreatedAt,
+		UpdatedAt:    u.UpdatedAt,
 	}
 }
 

@@ -16,11 +16,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   return readJSON<T>(retry)
 }
 
-export async function login(password: string) {
+export async function login(username: string, password: string) {
   const res = await fetch(`${API_BASE}/api/admin/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   })
   const data = await readJSON<AuthResponse>(res)
   saveAuth(data)

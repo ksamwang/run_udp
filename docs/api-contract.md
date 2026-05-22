@@ -36,7 +36,8 @@
 
 ```json
 {
-  "password": "change-me"
+  "username": "admin",
+  "password": "admin"
 }
 ```
 
@@ -50,7 +51,8 @@
   "refresh_expires_at": "2026-06-21T12:00:00+08:00",
   "user": {
     "id": "admin",
-    "name": "admin",
+    "username": "admin",
+    "name": "Administrator",
     "role": "admin"
   }
 }

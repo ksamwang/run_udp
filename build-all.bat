@@ -48,6 +48,7 @@ set CGO_ENABLED=0
 go build -trimpath -ldflags "%LDFLAGS% -H=windowsgui -s -w" -o "%DIST%\client.exe" .\cmd\client
 if errorlevel 1 goto :fail
 copy /Y client.json.example "%DIST%\client.json.example" >nul
+copy /Y .env.example "%DIST%\.env.example" >nul
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
   echo === Building installer ^(Inno Setup^) ===
   "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=%VERSION% /DMySourceDir="%DIST%" installer\client.iss

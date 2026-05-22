@@ -1,4 +1,4 @@
-import { LockOutlined } from '@ant-design/icons'
+import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Form, Input, Typography } from 'antd'
 import { useState } from 'react'
 import { login } from '../api/client'
@@ -11,11 +11,11 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function submit(values: { password: string }) {
+  async function submit(values: { username: string; password: string }) {
     setError('')
     setLoading(true)
     try {
-      await login(values.password)
+      await login(values.username, values.password)
       onLoggedIn()
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
@@ -35,9 +35,12 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
         </div>
         <Card className="login-card" title="管理员登录">
           {error && <Alert type="error" message={error} showIcon className="form-alert" />}
-          <Form layout="vertical" onFinish={submit}>
+          <Form layout="vertical" initialValues={{ username: 'admin' }} onFinish={submit}>
+            <Form.Item name="username" label="管理员账号" rules={[{ required: true, message: '请输入管理员账号' }]}>
+              <Input prefix={<UserOutlined />} autoFocus />
+            </Form.Item>
             <Form.Item name="password" label="管理员密码" rules={[{ required: true, message: '请输入管理员密码' }]}>
-              <Input.Password prefix={<LockOutlined />} autoFocus />
+              <Input.Password prefix={<LockOutlined />} />
             </Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>
               登录

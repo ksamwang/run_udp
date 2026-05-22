@@ -464,11 +464,13 @@ func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.PutMeta(context.Background(), "admin_password_hash", string(hash)); err != nil {
+	if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
+		ID: "admin", Username: "admin", Name: "Administrator", Role: "admin", PasswordHash: string(hash),
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"password": pass}, nil)
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": "admin", "password": pass}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -500,11 +502,31 @@ func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 
 func TestEnsureAdminPasswordCreatesDefaultAdmin(t *testing.T) {
 	a := newTestApp(t)
-	if err := a.ensureAdminPassword(); err != nil {
+	if err := a.ensureAdminUser(); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"password": defaultAdminPassword}, nil)
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": defaultAdminUsername, "password": defaultAdminPassword}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnsureAdminUserMigratesLegacyPasswordHash(t *testing.T) {
+	a := newTestApp(t)
+	pass := "legacy-pass"
+	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutMeta(context.Background(), "admin_password_hash", string(hash)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ensureAdminUser(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/admin/auth/login", map[string]any{"username": defaultAdminUsername, "password": pass}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -584,8 +606,19 @@ func mustUpsertDevice(t *testing.T, a *App, ctx context.Context, id string, enab
 
 func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	if _, err := a.db.GetAdminUserByID(context.Background(), defaultAdminUsername); err != nil {
+		hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.db.UpsertAdminUser(context.Background(), store.AdminUser{
+			ID: defaultAdminUsername, Username: defaultAdminUsername, Name: "Administrator", Role: "admin", PasswordHash: string(hash),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	token, err := a.signAccessToken(adminClaims{
-		Subject: adminUserID,
+		Subject: defaultAdminUsername,
 		Role:    "admin",
 		Issued:  time.Now().Unix(),
 		Expires: time.Now().Add(time.Hour).Unix(),

@@ -1,5 +1,5 @@
 import { SaveOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Form, Input, message, Select, Space, Switch, Typography } from 'antd'
+import { Alert, Button, Card, Descriptions, Form, Input, message, Select, Space, Switch, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { changePassword, getSettings, updateSettings } from '../api/settings'
@@ -48,6 +48,15 @@ export function SettingsPage() {
         </Button>
       </div>
       <Alert type="info" showIcon message="监听地址、数据库路径、PSK 等启动参数仍需要修改配置文件并重启服务。" />
+      <Card title="启动配置">
+        <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} size="small">
+          <Descriptions.Item label="UDP 监听">{settings.data?.udp_listen || '-'}</Descriptions.Item>
+          <Descriptions.Item label="备用 STUN">{settings.data?.stun_alt_listen || '-'}</Descriptions.Item>
+          <Descriptions.Item label="HTTP 监听">{settings.data?.http_listen || '-'}</Descriptions.Item>
+          <Descriptions.Item label="MySQL">{settings.data?.control_database_configured ? '已配置' : '未配置'}</Descriptions.Item>
+          <Descriptions.Item label="PSK">{settings.data?.psk_configured ? '已配置' : '未配置'}</Descriptions.Item>
+        </Descriptions>
+      </Card>
       <Form form={form} layout="vertical" onFinish={(values) => saveMutation.mutate(values)}>
         <Card title="隧道策略">
           <div className="settings-grid">

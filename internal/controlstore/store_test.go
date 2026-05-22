@@ -149,6 +149,28 @@ func exerciseStore(ctx context.Context, s Store) error {
 	if err := s.Audit(ctx, "codex-test", "ok"); err != nil {
 		return err
 	}
+	if err := s.UpsertAdminUser(ctx, store.AdminUser{
+		ID: "codex-test-admin", Username: "codex-admin", Name: "Codex Admin", Role: "admin", PasswordHash: "hash",
+	}); err != nil {
+		return err
+	}
+	admin, err := s.GetAdminUserByUsername(ctx, "codex-admin")
+	if err != nil {
+		return err
+	}
+	if admin.ID != "codex-test-admin" || admin.PasswordHash != "hash" {
+		return failf("bad admin user: %+v", admin)
+	}
+	if err := s.UpdateAdminPassword(ctx, "codex-test-admin", "next-hash"); err != nil {
+		return err
+	}
+	admin, err = s.GetAdminUserByID(ctx, "codex-test-admin")
+	if err != nil {
+		return err
+	}
+	if admin.PasswordHash != "next-hash" {
+		return failf("admin password not updated: %+v", admin)
+	}
 	if err := s.SetDeviceEnabled(ctx, "codex-test-B", false); err != nil {
 		return err
 	}
@@ -166,6 +188,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 	t.Helper()
 	statements := []string{
 		"DELETE FROM admin_refresh_tokens WHERE user_id = ? OR token_hash = ?",
+		"DELETE FROM admin_users WHERE id = ? OR username = ?",
 		"DELETE FROM audit_events WHERE kind = ?",
 		"DELETE FROM tunnel_states WHERE device_id LIKE ? OR peer_id LIKE ?",
 		"DELETE FROM sessions WHERE source_id LIKE ? OR target_id LIKE ?",
@@ -176,6 +199,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 	}
 	args := [][]any{
 		{"codex-test-admin", "codex-test-token-hash"},
+		{"codex-test-admin", "codex-admin"},
 		{"codex-test"},
 		{"codex-test-%", "codex-test-%"},
 		{"codex-test-%", "codex-test-%"},

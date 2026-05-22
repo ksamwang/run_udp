@@ -308,8 +308,13 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "new password must be at least 8 chars", http.StatusBadRequest)
 		return
 	}
-	hash, _ := a.db.GetMeta(r.Context(), "admin_password_hash")
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)) != nil {
+	claims, _ := r.Context().Value(adminClaimsKey{}).(adminClaims)
+	user, err := a.db.GetAdminUserByID(r.Context(), claims.Subject)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)) != nil {
 		http.Error(w, "current password is wrong", http.StatusUnauthorized)
 		return
 	}
@@ -318,7 +323,7 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := a.db.PutMeta(r.Context(), "admin_password_hash", string(next)); err != nil {
+	if err := a.db.UpdateAdminPassword(r.Context(), user.ID, string(next)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
