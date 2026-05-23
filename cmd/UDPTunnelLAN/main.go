@@ -168,16 +168,65 @@ func bootstrapAndReport(ctx context.Context, cfg lan.Config, identity lan.Identi
 	if len(resp.Peers) == 0 {
 		log.Printf("LAN peer list is empty; no other virtual IP is currently assigned in this network")
 	}
+	adapterState := "not_configured"
+	lastError := ""
+	selectedCIDR := resp.Network.CIDR
+	mtu := wintun.DefaultMTU
+	mss := 1200
+	if resp.Address.VirtualIP != "" {
+		state, err := configureLANAdapter(resp.Address.VirtualIP, resp.Network.CIDR, mtu)
+		if err != nil {
+			adapterState = "error"
+			lastError = err.Error()
+			log.Printf("LAN adapter configure failed: %v", err)
+		} else {
+			adapterState = "up"
+			selectedCIDR = state.SelectedCIDR
+			mss = state.MSS
+			log.Printf("LAN adapter up: name=%q ip=%s cidr=%s mtu=%d mss=%d route_conflict=%v",
+				wintun.DefaultAdapterName, resp.Address.VirtualIP, selectedCIDR, mtu, mss, state.Conflict.Conflicts)
+		}
+	}
 	state := store.VirtualPeerState{
-		DeviceID: deviceID, NetworkID: resp.Network.ID, State: "bootstrap", AdapterState: "not_configured",
-		SelectedCIDR: resp.Network.CIDR, MTU: wintun.DefaultMTU, MSS: 1200,
-		LastError: "", LastTransitionAt: time.Now().Format(time.RFC3339),
+		DeviceID: deviceID, NetworkID: resp.Network.ID, State: "bootstrap", AdapterState: adapterState,
+		SelectedCIDR: selectedCIDR, MTU: mtu, MSS: mss,
+		LastError: lastError, LastTransitionAt: time.Now().Format(time.RFC3339),
 	}
 	if err := reportLANStatus(ctx, cfg.ServerHTTP, state); err != nil {
 		return err
 	}
 	log.Printf("LAN status reported: state=%s adapter=%s selected_cidr=%s", state.State, state.AdapterState, state.SelectedCIDR)
 	return nil
+}
+
+func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, error) {
+	state, err := wintun.InspectSystem(cidr, mtu)
+	if err != nil {
+		return state, err
+	}
+	selectedCIDR := state.SelectedCIDR
+	if selectedCIDR == "" {
+		selectedCIDR = cidr
+	}
+	adapter, err := wintun.OpenOrCreate(wintun.Config{
+		Name: wintun.DefaultAdapterName,
+		IP:   net.ParseIP(virtualIP),
+		CIDR: selectedCIDR,
+		MTU:  mtu,
+	})
+	if err != nil {
+		return state, err
+	}
+	if err := adapter.Configure(wintun.Config{
+		Name: wintun.DefaultAdapterName,
+		IP:   net.ParseIP(virtualIP),
+		CIDR: selectedCIDR,
+		MTU:  mtu,
+	}); err != nil {
+		_ = adapter.Close()
+		return state, err
+	}
+	return state, nil
 }
 
 func runWintunPOC(ip, cidr string, mtu int) error {

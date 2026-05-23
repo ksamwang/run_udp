@@ -255,6 +255,34 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 }
 
+func TestLANBootstrapAutoAssignsVirtualIP(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	network, err := a.db.EnsureDefaultVirtualNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "used", NetworkID: network.ID, VirtualIP: "172.16.10.1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
+		"device_id": "dev-new", "device_name": "Office New", "public_key": "pub-new",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp lanBootstrapResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Address.DeviceID != "dev-new" || resp.Address.VirtualIP != "172.16.10.2" {
+		t.Fatalf("bad auto assigned address: %+v", resp.Address)
+	}
+}
+
 func TestHandleForwardsLocalPortConflict(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

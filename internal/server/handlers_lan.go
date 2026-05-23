@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -198,7 +199,11 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	address, err := a.db.GetVirtualAddress(r.Context(), network.ID, req.DeviceID)
 	if errors.Is(err, sql.ErrNoRows) {
-		address = store.VirtualAddress{DeviceID: req.DeviceID, NetworkID: network.ID}
+		address, err = a.allocateVirtualAddress(r.Context(), network, req.DeviceID, strings.TrimSpace(req.DeviceName))
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
 	} else if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -243,6 +248,73 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		ConfigVersion: lanConfigVersion(network, addresses, acl, routes), DeviceID: req.DeviceID,
 		DeviceName: strings.TrimSpace(req.DeviceName), Network: network, Address: address, Routes: routes, ACL: acl, Peers: peers,
 	})
+}
+
+type virtualAddressStore interface {
+	ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error)
+	UpsertVirtualAddress(ctx context.Context, address store.VirtualAddress) error
+}
+
+func (a *App) allocateVirtualAddress(ctx context.Context, network store.VirtualNetwork, deviceID, hostname string) (store.VirtualAddress, error) {
+	return allocateVirtualAddress(ctx, a.db, network, deviceID, hostname)
+}
+
+func allocateVirtualAddress(ctx context.Context, db virtualAddressStore, network store.VirtualNetwork, deviceID, hostname string) (store.VirtualAddress, error) {
+	_, ipNet, err := net.ParseCIDR(network.CIDR)
+	if err != nil {
+		return store.VirtualAddress{}, err
+	}
+	base := ipNet.IP.To4()
+	if base == nil {
+		return store.VirtualAddress{}, badRequest("bad_network", "only ipv4 network is supported")
+	}
+	addresses, err := db.ListVirtualAddresses(ctx, network.ID)
+	if err != nil {
+		return store.VirtualAddress{}, err
+	}
+	used := make(map[string]bool, len(addresses))
+	for _, address := range addresses {
+		used[strings.TrimSpace(address.VirtualIP)] = true
+	}
+	for ip := nextIPv4(base); ipNet.Contains(ip); ip = nextIPv4(ip) {
+		if isIPv4Broadcast(ipNet, ip) || used[ip.String()] {
+			continue
+		}
+		address := store.VirtualAddress{
+			DeviceID: deviceID, NetworkID: network.ID, VirtualIP: ip.String(),
+			Hostname: hostname, DNSEnabled: false,
+		}
+		if err := db.UpsertVirtualAddress(ctx, address); err != nil {
+			return store.VirtualAddress{}, err
+		}
+		return address, nil
+	}
+	return store.VirtualAddress{}, badRequest("lan_network_full", "no available virtual ip")
+}
+
+func nextIPv4(ip net.IP) net.IP {
+	out := append(net.IP(nil), ip.To4()...)
+	for i := len(out) - 1; i >= 0; i-- {
+		out[i]++
+		if out[i] != 0 {
+			break
+		}
+	}
+	return out
+}
+
+func isIPv4Broadcast(n *net.IPNet, ip net.IP) bool {
+	v := ip.To4()
+	base := n.IP.To4()
+	if v == nil || base == nil {
+		return false
+	}
+	for i := range v {
+		if v[i] != base[i]|^n.Mask[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) handleLANStatus(w http.ResponseWriter, r *http.Request) {
