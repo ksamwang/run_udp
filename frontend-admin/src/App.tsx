@@ -1,7 +1,7 @@
 import { App as AntApp, Spin } from 'antd'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { clearAuth, hasAuth } from './api/auth'
 import { getMe } from './api/metrics'
 import { AUTH_EXPIRED_EVENT, AuthExpiredError, logout } from './api/client'
@@ -19,9 +19,9 @@ const pageTitles: Record<string, string> = {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <AdminApp />
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 

@@ -1,7 +1,7 @@
 import { ExclamationCircleOutlined, SaveOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Form, Input, InputNumber, Modal, message, Select, Space, Switch, Tabs, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { changePassword, getSettings, updateSettings } from '../api/settings'
 import type { Settings } from '../types/api'
 
@@ -27,6 +27,7 @@ type SettingsForm = Omit<Settings, 'peer_ttl' | 'pair_ttl' | 'relay_idle_timeout
 export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
   const [form] = Form.useForm<SettingsForm>()
   const [passwordForm] = Form.useForm<{ current_password: string; new_password: string; confirm_password: string }>()
+  const [changedValues, setChangedValues] = useState<Partial<SettingsForm>>({})
   const queryClient = useQueryClient()
   const settings = useQuery({
     queryKey: ['settings'],
@@ -71,6 +72,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         const values = {
           ...settingsToForm(settings.data),
           ...form.getFieldsValue(true),
+          ...changedValues,
         } as SettingsForm
         saveSettings(values)
       })
@@ -107,6 +109,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
   useEffect(() => {
     if (settings.data) {
       form.setFieldsValue(settingsToForm(settings.data))
+      setChangedValues({})
     }
   }, [form, settings.data])
 
@@ -251,7 +254,12 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           message="当前账号是默认管理员，首次登录后需要先修改密码。"
         />
       ) : null}
-      <Form form={form} layout="vertical" component={false}>
+      <Form
+        form={form}
+        layout="vertical"
+        component={false}
+        onValuesChange={(changed) => setChangedValues((prev) => ({ ...prev, ...changed }))}
+      >
         <Tabs items={tabs} />
       </Form>
     </div>
