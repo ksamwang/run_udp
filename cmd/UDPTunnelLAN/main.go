@@ -10,9 +10,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"udp_tunnel_demo/internal/lan"
+	"udp_tunnel_demo/internal/store"
 	"udp_tunnel_demo/internal/wintun"
 )
 
@@ -130,6 +132,13 @@ func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bo
 		return fmt.Errorf("LAN identity failed: %w", err)
 	}
 	log.Printf("lan_identity_algorithm=%s public_key=%s", identity.Algorithm, identity.PublicKey)
+	if strings.TrimSpace(cfg.ServerHTTP) == "" {
+		log.Printf("LAN bootstrap skipped: server_http is empty; open LAN tray settings to configure it")
+	} else {
+		if err := bootstrapAndReport(ctx, cfg, identity); err != nil {
+			log.Printf("LAN bootstrap failed: %v", err)
+		}
+	}
 	if wintunPOC {
 		if err := runWintunPOC(wintunIP, wintunCIDR, wintunMTU); err != nil {
 			return fmt.Errorf("Wintun PoC failed: %w", err)
@@ -138,6 +147,36 @@ func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bo
 	log.Printf("virtual LAN runtime is not implemented yet; service remains alive for installer/runtime validation")
 	<-ctx.Done()
 	log.Printf("LAN runtime shutdown requested")
+	return nil
+}
+
+func bootstrapAndReport(ctx context.Context, cfg lan.Config, identity lan.Identity) error {
+	deviceID := lan.DeviceID()
+	resp, err := requestLANBootstrap(ctx, cfg.ServerHTTP, lanBootstrapRequest{
+		DeviceID: deviceID, DeviceName: defaultDeviceName(), PublicKey: identity.PublicKey,
+		Capabilities: []string{"ipv4", "tcp", "rdp", "wintun"},
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf("LAN bootstrap ok: version=%d config_version=%q network=%s cidr=%s enabled=%v address=%s peers=%d acl=%d routes=%d",
+		resp.Version, resp.ConfigVersion, resp.Network.Name, resp.Network.CIDR, resp.Network.Enabled,
+		valueOrDash(resp.Address.VirtualIP), len(resp.Peers), len(resp.ACL), len(resp.Routes))
+	if resp.Address.VirtualIP == "" {
+		log.Printf("LAN virtual IP is not assigned yet; configure it in admin console")
+	}
+	if len(resp.Peers) == 0 {
+		log.Printf("LAN peer list is empty; no other virtual IP is currently assigned in this network")
+	}
+	state := store.VirtualPeerState{
+		DeviceID: deviceID, NetworkID: resp.Network.ID, State: "bootstrap", AdapterState: "not_configured",
+		SelectedCIDR: resp.Network.CIDR, MTU: wintun.DefaultMTU, MSS: 1200,
+		LastError: "", LastTransitionAt: time.Now().Format(time.RFC3339),
+	}
+	if err := reportLANStatus(ctx, cfg.ServerHTTP, state); err != nil {
+		return err
+	}
+	log.Printf("LAN status reported: state=%s adapter=%s selected_cidr=%s", state.State, state.AdapterState, state.SelectedCIDR)
 	return nil
 }
 
@@ -174,6 +213,21 @@ func runWintunPOC(ip, cidr string, mtu int) error {
 	log.Printf("Wintun PoC ready: adapter=%q ip=%s cidr=%s mtu=%d", wintun.DefaultAdapterName, ip, cidr, mtu)
 	time.Sleep(3 * time.Second)
 	return wintun.Cleanup(wintun.Config{Name: wintun.DefaultAdapterName, CIDR: cidr})
+}
+
+func defaultDeviceName() string {
+	name, err := os.Hostname()
+	if err != nil || strings.TrimSpace(name) == "" {
+		return lan.DeviceID()
+	}
+	return strings.TrimSpace(name)
+}
+
+func valueOrDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return strings.TrimSpace(value)
 }
 
 func setupLogging() string {
