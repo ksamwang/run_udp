@@ -178,6 +178,7 @@ type lanP2PPeer struct {
 	x25519Pub string
 	addr      atomic.Pointer[net.UDPAddr]
 	punched   atomic.Bool
+	punching  atomic.Bool
 	tx        *packet.Codec
 	rx        *packet.Codec
 }
@@ -298,6 +299,36 @@ func (p *lanP2P) writeLANRegister(identity lan.Identity, peerID string) {
 	p.writeControl(p.server, msg)
 }
 
+func (p *lanP2P) startPunchLoop(ctx context.Context, peer *lanP2PPeer) {
+	if peer == nil || !peer.punching.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		t := time.NewTicker(500 * time.Millisecond)
+		defer t.Stop()
+		attempts := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if peer.punched.Load() {
+				return
+			}
+			addr := peer.addr.Load()
+			if addr == nil {
+				continue
+			}
+			p.writeControl(addr, &protocol.Message{Type: protocol.MsgPunch, From: p.deviceID, Profile: store.ProfileLANPacket})
+			attempts++
+			if attempts%6 == 0 {
+				log.Printf("LAN P2P punching: peer=%s sent=%d target=%s", peer.id, attempts, addr)
+			}
+		}
+	}()
+}
+
 func (p *lanP2P) writeControl(dst *net.UDPAddr, msg *protocol.Message) {
 	b, _ := protocol.Encode(msg)
 	if _, err := p.conn.WriteToUDP(b, dst); err != nil {
@@ -317,7 +348,7 @@ func (p *lanP2P) readLoop(ctx context.Context, adapter *wintun.Adapter, router *
 		}
 		data := append([]byte(nil), buf[:n]...)
 		if len(data) > 0 && data[0] == '{' {
-			p.handleControl(data, src, link)
+			p.handleControl(ctx, data, src, link)
 			continue
 		}
 		peerID := p.peerIDByAddr(src)
@@ -401,7 +432,7 @@ func newX25519Keypair() ([32]byte, string, error) {
 	return priv, base64.StdEncoding.EncodeToString(pub), nil
 }
 
-func (p *lanP2P) handleControl(data []byte, src *net.UDPAddr, link *packet.LinkManager) {
+func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAddr, link *packet.LinkManager) {
 	msg, err := protocol.Decode(data)
 	if err != nil {
 		return
@@ -413,6 +444,7 @@ func (p *lanP2P) handleControl(data []byte, src *net.UDPAddr, link *packet.LinkM
 		}
 		peer := p.peer(msg.Peer)
 		if peer == nil {
+			log.Printf("LAN P2P peer info ignored: unknown peer=%s addr=%s", msg.Peer, msg.Addr)
 			return
 		}
 		peer.x25519Pub = msg.Payload
@@ -426,17 +458,21 @@ func (p *lanP2P) handleControl(data []byte, src *net.UDPAddr, link *packet.LinkM
 		if peer.tx != nil && peer.rx != nil {
 			_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: addr.String()}, packet.PeerEndpoint{Addr: "http-relay"}, true)
 		}
-		p.writeControl(addr, &protocol.Message{Type: protocol.MsgPunch, From: p.deviceID, Profile: store.ProfileLANPacket})
+		log.Printf("LAN P2P peer info: peer=%s addr=%s codec_ready=%v", peer.id, addr, peer.tx != nil && peer.rx != nil)
+		p.startPunchLoop(ctx, peer)
 	case protocol.MsgPunch:
 		if store.NormalizeProfile(msg.Profile) != store.ProfileLANPacket {
 			return
 		}
 		peer := p.peer(msg.From)
 		if peer == nil {
+			log.Printf("LAN P2P punch ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
 		peer.addr.Store(cloneUDPAddr(src))
-		peer.punched.Store(true)
+		if peer.punched.CompareAndSwap(false, true) {
+			log.Printf("LAN P2P punched via incoming punch: peer=%s addr=%s", peer.id, src)
+		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "http-relay"}, true)
 		p.writeControl(src, &protocol.Message{Type: protocol.MsgPunchAck, From: p.deviceID, Profile: store.ProfileLANPacket})
 	case protocol.MsgPunchAck:
@@ -445,10 +481,13 @@ func (p *lanP2P) handleControl(data []byte, src *net.UDPAddr, link *packet.LinkM
 		}
 		peer := p.peer(msg.From)
 		if peer == nil {
+			log.Printf("LAN P2P punch ack ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
 		peer.addr.Store(cloneUDPAddr(src))
-		peer.punched.Store(true)
+		if peer.punched.CompareAndSwap(false, true) {
+			log.Printf("LAN P2P punched via ack: peer=%s addr=%s", peer.id, src)
+		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "http-relay"}, true)
 	}
 }
