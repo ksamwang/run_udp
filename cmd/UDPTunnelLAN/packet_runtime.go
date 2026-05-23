@@ -394,6 +394,11 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 	case <-t.C:
 	}
 	peer := p.peer(peerID)
+	p.peerMu.Lock()
+	if p.relayTimers != nil {
+		p.relayTimers[peerID] = false
+	}
+	p.peerMu.Unlock()
 	if peer == nil || peer.punched.Load() {
 		return
 	}
@@ -405,6 +410,20 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 	peer.punched.Store(true)
 	log.Printf("LAN P2P relay mode: peer=%s reason=punch timeout %s", peer.id, lanPunchTimeout)
 	go p.openTunnel(ctx, p.adapter, p.router, p.link, peer)
+}
+
+func (p *lanP2P) resetRelayTimer(ctx context.Context, peerID string) {
+	p.peerMu.Lock()
+	if p.relayTimers == nil {
+		p.relayTimers = map[string]bool{}
+	}
+	if p.relayTimers[peerID] {
+		p.peerMu.Unlock()
+		return
+	}
+	p.relayTimers[peerID] = true
+	p.peerMu.Unlock()
+	go p.relayFallbackTimer(ctx, peerID)
 }
 
 func (p *lanP2P) readLoop(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager) {
@@ -596,6 +615,10 @@ func (p *lanP2P) readTunnelFrames(ctx context.Context, adapter *wintun.Adapter, 
 			if peer.kcp == conn {
 				peer.kcp = nil
 				peer.connected.Store(false)
+				peer.punched.Store(false)
+				peer.punching.Store(false)
+				peer.isRelay.Store(false)
+				p.resetRelayTimer(ctx, peer.id)
 			}
 			peer.kcpMu.Unlock()
 			_ = conn.Close()
@@ -676,6 +699,10 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P peer info ignored: unknown peer=%s addr=%s", msg.Peer, msg.Addr)
 			return
 		}
+		if peer.isRelay.Load() {
+			log.Printf("LAN P2P peer info ignored in relay mode: peer=%s addr=%s", msg.Peer, msg.Addr)
+			return
+		}
 		peer.x25519Pub = msg.Payload
 		p.ensurePeerCodecs(peer)
 		addr, err := net.ResolveUDPAddr("udp", msg.Addr)
@@ -712,7 +739,9 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P punch ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
-		peer.addr.Store(cloneUDPAddr(src))
+		if !peer.isRelay.Load() {
+			peer.addr.Store(cloneUDPAddr(src))
+		}
 		if peer.punched.CompareAndSwap(false, true) {
 			log.Printf("LAN P2P punched via incoming punch: peer=%s addr=%s", peer.id, src)
 			go p.openTunnel(ctx, adapter, router, link, peer)
@@ -728,7 +757,9 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P punch ack ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
-		peer.addr.Store(cloneUDPAddr(src))
+		if !peer.isRelay.Load() {
+			peer.addr.Store(cloneUDPAddr(src))
+		}
 		if peer.punched.CompareAndSwap(false, true) {
 			log.Printf("LAN P2P punched via ack: peer=%s addr=%s", peer.id, src)
 			go p.openTunnel(ctx, adapter, router, link, peer)

@@ -231,6 +231,25 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 	expectPunch(upnpConn, "upnp")
 }
 
+func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
+	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{
+			"dev-b": {id: "dev-b"},
+		},
+	}
+	peer := p.peers["dev-b"]
+	peer.addr.Store(relayAddr)
+	peer.isRelay.Store(true)
+	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: "203.0.113.10:40000"}
+	b, _ := protocol.Encode(msg)
+	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
+	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
+		t.Fatalf("relay addr overwritten by peer info: %v", got)
+	}
+}
+
 func TestLANKCPFrameRoundTrip(t *testing.T) {
 	var buf strings.Builder
 	if err := writeLANFrame(&buf, []byte{1, 2, 3}); err != nil {
