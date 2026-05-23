@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"udp_tunnel_demo/internal/vnet"
 
+	"golang.org/x/sys/windows"
 	wintunlib "golang.zx2c4.com/wintun"
 )
 
@@ -72,6 +74,10 @@ func (a *windowsAdapter) Configure(cfg Config) error {
 func (a *windowsAdapter) ReadPacket() ([]byte, error) {
 	packet, err := a.session.ReceivePacket()
 	if err != nil {
+		if isNoPacketAvailable(err) {
+			waitForWintunPacket(a.session.ReadWaitEvent(), 500*time.Millisecond)
+			return nil, err
+		}
 		return nil, err
 	}
 	out := append([]byte(nil), packet...)
@@ -152,4 +158,23 @@ func cleanup(cfg Config) error {
 func isMissingRouteError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "element not found") || strings.Contains(msg, "找不到") || strings.Contains(msg, "不存在")
+}
+
+func isNoPacketAvailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errno, ok := err.(syscall.Errno); ok {
+		return errno == windows.ERROR_NO_MORE_ITEMS
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no more data") || strings.Contains(msg, "没有更多数据")
+}
+
+func waitForWintunPacket(handle windows.Handle, timeout time.Duration) {
+	if handle == 0 {
+		time.Sleep(timeout)
+		return
+	}
+	_, _ = windows.WaitForSingleObject(handle, uint32(timeout/time.Millisecond))
 }

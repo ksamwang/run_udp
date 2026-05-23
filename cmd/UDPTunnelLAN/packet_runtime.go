@@ -65,13 +65,18 @@ func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *pac
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("LAN packet read failed: %v", err)
+			if !isWintunNoPacketError(err) {
+				log.Printf("LAN packet read failed: %v", err)
+			}
 			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if !isSupportedTunPacket(pkt) {
 			continue
 		}
 		frame, err := router.RouteOutbound(pkt)
 		if err != nil {
-			if !errors.Is(err, packet.ErrRouteMiss) {
+			if !errors.Is(err, packet.ErrRouteMiss) && !errors.Is(err, packet.ErrUnsupportedProtocol) && !errors.Is(err, packet.ErrInvalidIPv4) {
 				log.Printf("LAN packet dropped: %v", err)
 			}
 			continue
@@ -84,6 +89,22 @@ func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *pac
 			log.Printf("LAN outbound queue full; drop dst=%s bytes=%d", frame.DstDevice, len(frame.Payload))
 		}
 	}
+}
+
+func isSupportedTunPacket(pkt []byte) bool {
+	if len(pkt) == 0 {
+		return false
+	}
+	version := pkt[0] >> 4
+	return version == 4
+}
+
+func isWintunNoPacketError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no more data") || strings.Contains(msg, "没有更多数据")
 }
 
 func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManager, p2p *lanP2P, outbound <-chan packet.RoutedFrame) {
