@@ -179,6 +179,7 @@ type lanP2PPeer struct {
 	addr      atomic.Pointer[net.UDPAddr]
 	punched   atomic.Bool
 	punching  atomic.Bool
+	registers atomic.Uint64
 	tx        *packet.Codec
 	rx        *packet.Codec
 }
@@ -239,6 +240,7 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 		}
 		p.peerMu.Unlock()
 		if shouldRegister {
+			log.Printf("LAN P2P register loop starting: peer=%s virtual_ip=%s public_key_set=%v", peerID, peer.VirtualIP, strings.TrimSpace(peer.PublicKey) != "")
 			go p.registerLoop(ctx, identity, peerID)
 		}
 	}
@@ -285,6 +287,10 @@ func (p *lanP2P) registerLoop(ctx context.Context, identity lan.Identity, peerID
 }
 
 func (p *lanP2P) writeLANRegister(identity lan.Identity, peerID string) {
+	peer := p.peer(peerID)
+	if peer == nil {
+		return
+	}
 	ts := time.Now().Unix()
 	profile := store.ProfileLANPacket
 	sig, err := lan.SignRegisterPayload(identity, p.deviceID, peerID, profile, ts, p.x25519Pub)
@@ -295,6 +301,10 @@ func (p *lanP2P) writeLANRegister(identity lan.Identity, peerID string) {
 	msg := &protocol.Message{
 		Type: protocol.MsgLANRegister, From: p.deviceID, Peer: peerID, Profile: profile,
 		Payload: p.x25519Pub, Timestamp: ts, Signature: sig,
+	}
+	sent := peer.registers.Add(1)
+	if sent == 1 || sent%10 == 0 {
+		log.Printf("LAN P2P registering: peer=%s server=%s sent=%d", peerID, p.server, sent)
 	}
 	p.writeControl(p.server, msg)
 }
@@ -353,6 +363,9 @@ func (p *lanP2P) readLoop(ctx context.Context, adapter *wintun.Adapter, router *
 		}
 		peerID := p.peerIDByAddr(src)
 		if peerID == "" {
+			if src.String() == p.server.String() {
+				log.Printf("LAN P2P ignored non-json control from server: bytes=%d", len(data))
+			}
 			continue
 		}
 		peer := p.peer(peerID)

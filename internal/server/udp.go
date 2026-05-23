@@ -70,6 +70,8 @@ func (a *App) runUDP() {
 		if !ok {
 			if msg, err := protocol.Decode(data); err == nil && msg.Type == protocol.MsgLANRegister {
 				a.handleLANRegister(conn, src, msg)
+			} else if len(data) > 0 && data[0] == '{' {
+				log.Printf("plain UDP control ignored from %s: %v", src, err)
 			}
 			continue
 		}
@@ -253,10 +255,13 @@ func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protoc
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("LAN register key lookup failed: device=%s err=%v", msg.From, err)
+		} else {
+			log.Printf("LAN register rejected: missing device key device=%s peer=%s", msg.From, msg.Peer)
 		}
 		return
 	}
 	if key.Algorithm != lan.IdentityKeyAlgorithm {
+		log.Printf("LAN register rejected: unsupported key algorithm device=%s algorithm=%s", msg.From, key.Algorithm)
 		return
 	}
 	if err := lan.VerifyRegisterPayload(key.PublicKey, msg.From, msg.Peer, profile, msg.Timestamp, msg.Payload, msg.Signature); err != nil {
@@ -281,7 +286,7 @@ func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protoc
 	byWant[peerSlotKey(msg.Peer, profile)] = self
 	other, ok := a.lookupLANPeerLocked(msg.Peer, msg.From, profile)
 	if !ok {
-		log.Printf("  waiting for LAN peer %s to register want=%s...", msg.Peer, msg.From)
+		log.Printf("  waiting for LAN peer %s to register want=%s profile=%s known_lan_devices=%d...", msg.Peer, msg.From, profile, len(a.lanPeers))
 		return
 	}
 	a.sendLANPeer(conn, self, other)
