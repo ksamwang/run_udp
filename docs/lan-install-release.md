@@ -26,6 +26,14 @@ The existing port-forwarding client keeps using `%ProgramFiles%\UDP Tunnel`, ser
 
 ## Service Lifecycle
 
+During interactive installation, the LAN installer asks for the control-plane HTTP address and writes it to `lan.json` on first install. Existing `lan.json` is not overwritten during upgrade.
+
+Silent installs can pass the same value through an Inno Setup define:
+
+```powershell
+udp-tunnel-lan-1.0.0-setup.exe /SILENT /DLANServerHTTP=http://139.199.3.45:7001
+```
+
 The LAN installer runs:
 
 ```powershell
