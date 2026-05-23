@@ -36,6 +36,9 @@ func DetectConflict(targetCIDR string, routes []Route) (Conflict, error) {
 		if err != nil {
 			continue
 		}
+		if isDefaultRoute(existing) {
+			continue
+		}
 		if cidrOverlap(target, existing) {
 			return Conflict{CIDR: targetCIDR, Existing: route, Conflicts: true}, nil
 		}
@@ -76,6 +79,11 @@ func MSSForMTU(mtu int) int {
 
 func cidrOverlap(a, b *net.IPNet) bool {
 	return a.Contains(b.IP) || b.Contains(a.IP) || ipNetLast(a).Equal(b.IP) || ipNetLast(b).Equal(a.IP)
+}
+
+func isDefaultRoute(n *net.IPNet) bool {
+	ones, bits := n.Mask.Size()
+	return bits == 32 && ones == 0
 }
 
 func ipNetLast(n *net.IPNet) net.IP {
