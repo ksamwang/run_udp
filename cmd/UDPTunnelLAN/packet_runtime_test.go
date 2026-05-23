@@ -143,7 +143,7 @@ func TestLANP2PUpsertPeersRegistersNewPeer(t *testing.T) {
 	}
 	p := &lanP2P{
 		conn: client, server: server.LocalAddr().(*net.UDPAddr), deviceID: "dev-a",
-		peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, x25519Pub: pub,
+		peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, x25519Pub: pub, upnpAddr: "203.0.113.9:40000",
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -157,6 +157,9 @@ func TestLANP2PUpsertPeersRegistersNewPeer(t *testing.T) {
 	}
 	if !strings.Contains(string(buf[:n]), `"t":"lan_register"`) || !strings.Contains(string(buf[:n]), `"p":"dev-b"`) {
 		t.Fatalf("bad register payload: %s", string(buf[:n]))
+	}
+	if !strings.Contains(string(buf[:n]), `"u":"203.0.113.9:40000"`) {
+		t.Fatalf("register must include upnp addr: %s", string(buf[:n]))
 	}
 }
 
@@ -199,6 +202,60 @@ func TestLANP2PStartsRepeatedPunchAfterPeerInfo(t *testing.T) {
 	if !strings.Contains(string(buf[:n]), `"t":"punch"`) {
 		t.Fatalf("expected punch, got %s", string(buf[:n]))
 	}
+}
+
+func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
+	observedConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observedConn.Close()
+	upnpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upnpConn.Close()
+	clientConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+	privA, _, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &lanP2P{
+		conn: clientConn, deviceID: "dev-a", x25519Priv: privA,
+		peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b"}}, registering: map[string]bool{},
+	}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	msg := &protocol.Message{
+		Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet",
+		Addr: observedConn.LocalAddr().String(), UpnpAddr: upnpConn.LocalAddr().String(), Payload: pubB,
+	}
+	b, _ := protocol.Encode(msg)
+	p.handleControl(ctx, b, observedConn.LocalAddr().(*net.UDPAddr), link)
+
+	expectPunch := func(conn *net.UDPConn, label string) {
+		t.Helper()
+		buf := make([]byte, 1024)
+		_ = conn.SetReadDeadline(testDeadline())
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			t.Fatalf("%s did not receive punch: %v", label, err)
+		}
+		if !strings.Contains(string(buf[:n]), `"t":"punch"`) {
+			t.Fatalf("%s expected punch, got %s", label, string(buf[:n]))
+		}
+	}
+	expectPunch(observedConn, "observed")
+	expectPunch(upnpConn, "upnp")
 }
 
 func testDeadline() time.Time {
