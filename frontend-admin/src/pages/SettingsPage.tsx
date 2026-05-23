@@ -62,9 +62,25 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
     passwordMutation.mutate({ current_password: values.current_password, new_password: values.new_password })
   }
   function submitSettings() {
+    if (!settings.data) {
+      message.warning('设置尚未加载完成')
+      return
+    }
     form.validateFields()
-      .then((values) => saveSettings(values as SettingsForm))
-      .catch(() => undefined)
+      .then(() => {
+        const values = {
+          ...settingsToForm(settings.data),
+          ...form.getFieldsValue(true),
+        } as SettingsForm
+        saveSettings(values)
+      })
+      .catch((err) => {
+        const first = err?.errorFields?.[0]?.name
+        if (first) {
+          form.scrollToField(first)
+        }
+        message.error('请检查设置项后再保存')
+      })
   }
 
   function saveSettings(values: SettingsForm) {
@@ -182,6 +198,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           <Form
             form={passwordForm}
             layout="vertical"
+            component={false}
             onFinish={() => submitPassword()}
           >
             <div className="settings-grid">
@@ -211,7 +228,13 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           <Typography.Title level={3}>设置</Typography.Title>
           <Typography.Text type="secondary">管理隧道策略、客户端默认参数和发布信息。</Typography.Text>
         </div>
-        <Button type="primary" icon={<SaveOutlined />} loading={saveMutation.isPending} onClick={submitSettings}>
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          loading={saveMutation.isPending}
+          disabled={settings.isLoading || !settings.data}
+          onClick={submitSettings}
+        >
           保存设置
         </Button>
       </div>
@@ -228,7 +251,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
           message="当前账号是默认管理员，首次登录后需要先修改密码。"
         />
       ) : null}
-      <Form form={form} layout="vertical">
+      <Form form={form} layout="vertical" component={false}>
         <Tabs items={tabs} />
       </Form>
     </div>
