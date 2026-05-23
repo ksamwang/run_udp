@@ -11,8 +11,9 @@ import (
 )
 
 type trayActions struct {
-	OpenLogs func() error
-	Restart  func() error
+	OpenConfig func()
+	OpenLogs   func() error
+	Restart    func() error
 }
 
 func runTray(deviceID, controlURL, configURL string, actions trayActions, quit func()) {
@@ -23,6 +24,7 @@ func runTray(deviceID, controlURL, configURL string, actions trayActions, quit f
 		status.Disable()
 		version := systray.AddMenuItem("版本："+Version, "当前 LAN 客户端版本")
 		version.Disable()
+		config := systray.AddMenuItem("LAN 配置", "打开本机 LAN 配置页")
 		logs := systray.AddMenuItem("打开日志目录", "打开 LAN 日志目录")
 		restart := systray.AddMenuItem("重启 LAN 服务", "重启 Windows 服务")
 		systray.AddSeparator()
@@ -30,6 +32,10 @@ func runTray(deviceID, controlURL, configURL string, actions trayActions, quit f
 		go func() {
 			for {
 				select {
+				case <-config.ClickedCh:
+					if actions.OpenConfig != nil {
+						actions.OpenConfig()
+					}
 				case <-logs.ClickedCh:
 					if actions.OpenLogs != nil {
 						if err := actions.OpenLogs(); err != nil {

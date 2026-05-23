@@ -27,6 +27,7 @@ func main() {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	configPath := fs.String("config", "lan.json", "LAN client config file")
 	serverHTTP := fs.String("server-http", "", "control plane HTTP URL")
+	applyLANConfig := fs.String("apply-lan-config", "", "internal elevated LAN config source")
 	serviceMode := fs.Bool("service", false, "run as Windows service")
 	trayMode := fs.Bool("tray", false, "run tray helper")
 	installService := fs.Bool("install-service", false, "install Windows service")
@@ -46,6 +47,24 @@ func main() {
 	}
 
 	configAbs := resolveConfigPath(*configPath)
+	if *applyLANConfig != "" {
+		next, err := lan.LoadConfig(*applyLANConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := lan.SaveConfig(configAbs, next); err != nil {
+			log.Fatal(err)
+		}
+		_ = os.Remove(*applyLANConfig)
+		return
+	}
+	cfg, err := lan.LoadConfig(configAbs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *serverHTTP != "" {
+		cfg.ServerHTTP = *serverHTTP
+	}
 	if *installService || *uninstallService || *startServiceFlag || *stopServiceFlag || *restartServiceFlag {
 		exePath := currentExePath()
 		switch {
@@ -68,17 +87,26 @@ func main() {
 
 	logPath := setupLogging()
 	if *trayMode {
-		logStartup(configAbs, *serverHTTP, logPath, "tray")
-		runTray(lan.DeviceID(), *serverHTTP, "", trayActions{
-			OpenLogs: openLogs,
-			Restart:  func() error { return spawnServiceCommand("-restart-service") },
+		logStartup(configAbs, cfg.ServerHTTP, logPath, "tray")
+		configURL := startLANConfigServer(&cfg, configAbs, lanConfigHooks{
+			Runtime:        currentLANRuntimeInfo,
+			SaveConfig:     func(next lan.Config) (bool, error) { return saveLANConfigWithElevation(configAbs, next) },
+			RestartService: restartWindowsServiceWithElevation,
+		})
+		if configURL != "" {
+			openBrowser(configURL)
+		}
+		runTray(lan.DeviceID(), cfg.ServerHTTP, configURL, trayActions{
+			OpenConfig: func() { openBrowser(configURL) },
+			OpenLogs:   openLogs,
+			Restart:    restartWindowsServiceWithElevation,
 		}, func() {})
 		return
 	}
 
 	run := func(ctx context.Context) {
-		logStartup(configAbs, *serverHTTP, logPath, modeName(*serviceMode))
-		if err := runLAN(ctx, configAbs, *serverHTTP, *wintunPOC, *wintunIP, *wintunCIDR, *wintunMTU); err != nil {
+		logStartup(configAbs, cfg.ServerHTTP, logPath, modeName(*serviceMode))
+		if err := runLAN(ctx, configAbs, cfg, *wintunPOC, *wintunIP, *wintunCIDR, *wintunMTU); err != nil {
 			log.Printf("LAN runtime stopped: %v", err)
 		}
 	}
@@ -92,10 +120,10 @@ func main() {
 	run(ctx)
 }
 
-func runLAN(ctx context.Context, configPath, serverHTTP string, wintunPOC bool, wintunIP, wintunCIDR string, wintunMTU int) error {
+func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bool, wintunIP, wintunCIDR string, wintunMTU int) error {
 	log.Printf("%s runtime starting", lan.ServiceName)
 	log.Printf("service=%s tray=%q", lan.ServiceName, lan.TrayName)
-	log.Printf("config=%s server_http=%s version=%s commit=%s build_time=%s", configPath, serverHTTP, Version, Commit, BuildTime)
+	log.Printf("config=%s server_http=%s version=%s commit=%s build_time=%s", configPath, cfg.ServerHTTP, Version, Commit, BuildTime)
 	log.Printf("device_id=%s", lan.DeviceID())
 	identity, err := lan.LoadOrCreateIdentity(configPath)
 	if err != nil {
@@ -174,6 +202,18 @@ func logStartup(configPath, serverHTTP, logPath, mode string) {
 	log.Printf("====== %s startup ======", lan.ServiceName)
 	log.Printf("mode=%s os=%s/%s config=%s log=%s", mode, runtime.GOOS, runtime.GOARCH, configPath, logPath)
 	log.Printf("server_http=%q version=%s commit=%s build_time=%s", serverHTTP, Version, Commit, BuildTime)
+}
+
+func currentLANRuntimeInfo() lanRuntimeInfo {
+	installPath := ""
+	if dir, err := exeDir(); err == nil {
+		installPath = dir
+	}
+	status, _ := queryWindowsServiceStatus()
+	return lanRuntimeInfo{
+		Version: Version, Commit: Commit, BuildTime: BuildTime,
+		InstallPath: installPath, LogPath: runtimeLogPath(), ServiceStatus: status,
+	}
 }
 
 func modeName(service bool) string {
