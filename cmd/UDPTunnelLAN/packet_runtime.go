@@ -37,8 +37,13 @@ const (
 	lanUPnPTimeout        = 4 * time.Second
 	lanPunchTimeout       = 30 * time.Second
 	lanTunnelRetryDelay   = 3 * time.Second
+	lanRelayRotateAfter   = 3
+	lanRelayMaxAge        = 60 * time.Second
+	lanRotationCooldown   = 60 * time.Second
 	lanKCPFrameMax        = 64 * 1024
 )
+
+var tryLANUPnPFunc = tryLANUPnP
 
 type lanRelayFrame struct {
 	NetworkID int64  `json:"network_id"`
@@ -166,38 +171,46 @@ func sendPackets(ctx context.Context, link *packet.LinkManager, p2p *lanP2P, out
 }
 
 type lanP2P struct {
-	conn        *net.UDPConn
-	peers       map[string]*lanP2PPeer
-	peerMu      sync.RWMutex
-	server      *net.UDPAddr
-	deviceID    string
-	adapter     *wintun.Adapter
-	router      *packet.Router
-	link        *packet.LinkManager
-	x25519Priv  [32]byte
-	x25519Pub   string
-	upnpAddr    string
-	registering map[string]bool
-	relayTimers map[string]bool
-	openRetries map[string]bool
+	conn         *net.UDPConn
+	connMu       sync.RWMutex
+	upnpMapping  *upnp.Mapping
+	peers        map[string]*lanP2PPeer
+	peerMu       sync.RWMutex
+	server       *net.UDPAddr
+	deviceID     string
+	identity     lan.Identity
+	adapter      *wintun.Adapter
+	router       *packet.Router
+	link         *packet.LinkManager
+	x25519Priv   [32]byte
+	x25519Pub    string
+	upnpAddr     string
+	registering  map[string]bool
+	relayTimers  map[string]bool
+	openRetries  map[string]bool
+	readLoopGen  atomic.Uint64
+	rotating     atomic.Bool
+	lastRotation atomic.Int64
 }
 
 type lanP2PPeer struct {
-	id        string
-	publicKey string
-	x25519Pub string
-	addr      atomic.Pointer[net.UDPAddr]
-	upnpAddr  atomic.Pointer[net.UDPAddr]
-	punched   atomic.Bool
-	punching  atomic.Bool
-	connected atomic.Bool
-	isRelay   atomic.Bool
-	registers atomic.Uint64
-	tx        *packet.Codec
-	rx        *packet.Codec
-	pc        *tunnel.PacketConn
-	kcp       net.Conn
-	kcpMu     sync.Mutex
+	id           string
+	publicKey    string
+	x25519Pub    string
+	addr         atomic.Pointer[net.UDPAddr]
+	upnpAddr     atomic.Pointer[net.UDPAddr]
+	punched      atomic.Bool
+	punching     atomic.Bool
+	connected    atomic.Bool
+	isRelay      atomic.Bool
+	registers    atomic.Uint64
+	openFailures atomic.Uint64
+	relaySince   atomic.Int64
+	tx           *packet.Codec
+	rx           *packet.Codec
+	pc           *tunnel.PacketConn
+	kcp          net.Conn
+	kcpMu        sync.Mutex
 }
 
 func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string) *lanP2P {
@@ -217,23 +230,61 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 		_ = conn.Close()
 		return nil
 	}
-	upnpMapping, upnpAddr := tryLANUPnP(ctx, conn, deviceID)
+	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
-		conn: conn, server: server, deviceID: deviceID, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
+		conn: conn, upnpMapping: upnpMapping, server: server, deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
 		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
 	go func() {
 		<-ctx.Done()
-		_ = upnpMapping.Close()
-		_ = conn.Close()
+		p.closeCurrentSocket()
 	}()
 	if upnpMapping != nil {
-		go refreshLANUPnPMapping(ctx, deviceID, upnpMapping)
+		go p.refreshCurrentUPnPMapping(ctx)
 	}
-	go p.readLoop(ctx, adapter, router, link)
+	p.startReadLoop(ctx)
 	p.UpsertPeers(ctx, identity, resp.Peers)
 	log.Printf("LAN P2P started: socket=%s server=%s upnp=%q peers=%d", conn.LocalAddr(), server, upnpAddr, len(resp.Peers))
 	return p
+}
+
+func (p *lanP2P) currentConn() *net.UDPConn {
+	p.connMu.RLock()
+	defer p.connMu.RUnlock()
+	return p.conn
+}
+
+func (p *lanP2P) currentSocketAddr() string {
+	conn := p.currentConn()
+	if conn == nil || conn.LocalAddr() == nil {
+		return "-"
+	}
+	return conn.LocalAddr().String()
+}
+
+func (p *lanP2P) closeCurrentSocket() {
+	p.connMu.Lock()
+	conn := p.conn
+	mapping := p.upnpMapping
+	p.conn = nil
+	p.upnpMapping = nil
+	p.upnpAddr = ""
+	p.connMu.Unlock()
+	if mapping != nil {
+		_ = mapping.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (p *lanP2P) startReadLoop(ctx context.Context) {
+	conn := p.currentConn()
+	if conn == nil {
+		return
+	}
+	gen := p.readLoopGen.Add(1)
+	go p.readLoop(ctx, conn, gen, p.adapter, p.router, p.link)
 }
 
 func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers []lanBootstrapPeer) {
@@ -337,9 +388,12 @@ func (p *lanP2P) writeLANRegister(identity lan.Identity, peerID string) {
 		log.Printf("LAN P2P register sign failed: peer=%s err=%v", peerID, err)
 		return
 	}
+	p.connMu.RLock()
+	upnpAddr := p.upnpAddr
+	p.connMu.RUnlock()
 	msg := &protocol.Message{
 		Type: protocol.MsgLANRegister, From: p.deviceID, Peer: peerID, Profile: profile,
-		UpnpAddr: p.upnpAddr, Payload: p.x25519Pub, Timestamp: ts, Signature: sig,
+		UpnpAddr: upnpAddr, Payload: p.x25519Pub, Timestamp: ts, Signature: sig,
 	}
 	sent := peer.registers.Add(1)
 	if sent == 1 || sent%10 == 0 {
@@ -384,8 +438,13 @@ func (p *lanP2P) startPunchLoop(ctx context.Context, peer *lanP2PPeer) {
 }
 
 func (p *lanP2P) writeControl(dst *net.UDPAddr, msg *protocol.Message) {
+	conn := p.currentConn()
+	if conn == nil {
+		log.Printf("LAN P2P control send skipped: socket unavailable dst=%s", dst)
+		return
+	}
 	b, _ := protocol.Encode(msg)
-	if _, err := p.conn.WriteToUDP(b, dst); err != nil {
+	if _, err := conn.WriteToUDP(b, dst); err != nil {
 		log.Printf("LAN P2P control send failed: dst=%s err=%v", dst, err)
 	}
 }
@@ -409,8 +468,9 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 	}
 	peer.addr.Store(cloneUDPAddr(p.server))
 	peer.isRelay.Store(true)
+	peer.relaySince.Store(time.Now().UnixNano())
 	if peer.pc == nil {
-		peer.pc = tunnel.NewPacketConn(p.conn, &peer.addr)
+		peer.pc = p.newPeerPacketConn(&peer.addr)
 	}
 	peer.punched.Store(true)
 	log.Printf("LAN P2P relay mode: peer=%s reason=punch timeout %s", peer.id, lanPunchTimeout)
@@ -467,6 +527,144 @@ func (p *lanP2P) scheduleOpenRetry(ctx context.Context, peer *lanP2PPeer) {
 	}(peer.id)
 }
 
+func (p *lanP2P) maybeRotateSocketAfterRelayFailure(ctx context.Context, peer *lanP2PPeer, reason string) bool {
+	if p == nil || peer == nil || !peer.isRelay.Load() {
+		return false
+	}
+	failures := peer.openFailures.Add(1)
+	relaySinceRaw := peer.relaySince.Load()
+	relayAge := time.Duration(0)
+	if relaySinceRaw > 0 {
+		relayAge = time.Since(time.Unix(0, relaySinceRaw))
+	}
+	if failures < lanRelayRotateAfter && relayAge < lanRelayMaxAge {
+		return false
+	}
+	if p.hasReadyPeer(peer.id) {
+		log.Printf("LAN P2P socket rotation skipped: reason=%s peer=%s failures=%d ready_peer_exists=true", reason, peer.id, failures)
+		return false
+	}
+	go p.rotateSocketAndRestartPunch(ctx, fmt.Sprintf("%s peer=%s failures=%d relay_age=%s", reason, peer.id, failures, relayAge.Round(time.Second)))
+	return true
+}
+
+func (p *lanP2P) hasReadyPeer(except string) bool {
+	p.peerMu.RLock()
+	defer p.peerMu.RUnlock()
+	for id, peer := range p.peers {
+		if id == except || peer == nil {
+			continue
+		}
+		if peer.connected.Load() {
+			peer.kcpMu.Lock()
+			ready := peer.kcp != nil
+			peer.kcpMu.Unlock()
+			if ready {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *lanP2P) rotateSocketAndRestartPunch(ctx context.Context, reason string) {
+	if p == nil {
+		return
+	}
+	if !p.rotating.CompareAndSwap(false, true) {
+		return
+	}
+	defer p.rotating.Store(false)
+	now := time.Now()
+	last := time.Unix(0, p.lastRotation.Load())
+	if !last.IsZero() && now.Sub(last) < lanRotationCooldown {
+		log.Printf("LAN P2P socket rotation skipped: reason=%s cooldown_remaining=%s", reason, (lanRotationCooldown - now.Sub(last)).Round(time.Second))
+		return
+	}
+	oldAddr := p.currentSocketAddr()
+	log.Printf("LAN P2P rotating UDP socket: reason=%s old=%s", reason, oldAddr)
+	newConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		log.Printf("LAN P2P socket rotation failed: listen udp: %v", err)
+		return
+	}
+	newMapping, newUPnP := tryLANUPnPFunc(ctx, newConn, p.deviceID)
+
+	p.connMu.Lock()
+	oldConn := p.conn
+	oldMapping := p.upnpMapping
+	p.conn = newConn
+	p.upnpMapping = newMapping
+	p.upnpAddr = newUPnP
+	p.lastRotation.Store(now.UnixNano())
+	p.connMu.Unlock()
+
+	if oldMapping != nil {
+		_ = oldMapping.Close()
+	}
+	if oldConn != nil {
+		_ = oldConn.Close()
+	}
+	p.resetAllPeersAfterSocketRotation(ctx)
+	p.startReadLoop(ctx)
+	if newMapping != nil {
+		go p.refreshCurrentUPnPMapping(ctx)
+	}
+	log.Printf("LAN P2P socket rotated: new=%s upnp=%q", newConn.LocalAddr(), newUPnP)
+	p.reregisterAllPeers(ctx)
+}
+
+func (p *lanP2P) resetAllPeersAfterSocketRotation(ctx context.Context) {
+	p.peerMu.RLock()
+	peers := make([]*lanP2PPeer, 0, len(p.peers))
+	for _, peer := range p.peers {
+		peers = append(peers, peer)
+	}
+	p.peerMu.RUnlock()
+	p.peerMu.Lock()
+	p.relayTimers = map[string]bool{}
+	p.openRetries = map[string]bool{}
+	p.peerMu.Unlock()
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		peer.kcpMu.Lock()
+		if peer.kcp != nil {
+			_ = peer.kcp.Close()
+			peer.kcp = nil
+		}
+		if peer.pc != nil {
+			_ = peer.pc.Close()
+			peer.pc = nil
+		}
+		peer.connected.Store(false)
+		peer.punched.Store(false)
+		peer.punching.Store(false)
+		peer.isRelay.Store(false)
+		peer.openFailures.Store(0)
+		peer.relaySince.Store(0)
+		peer.addr.Store(nil)
+		peer.upnpAddr.Store(nil)
+		peer.kcpMu.Unlock()
+		log.Printf("LAN P2P peer reset after socket rotation: peer=%s", peer.id)
+		p.resetRelayTimer(ctx, peer.id)
+	}
+}
+
+func (p *lanP2P) reregisterAllPeers(ctx context.Context) {
+	p.peerMu.RLock()
+	ids := make([]string, 0, len(p.peers))
+	for id := range p.peers {
+		ids = append(ids, id)
+	}
+	p.peerMu.RUnlock()
+	log.Printf("LAN P2P re-registering peers after socket rotation: peers=%d", len(ids))
+	for _, id := range ids {
+		p.writeLANRegister(p.identity, id)
+	}
+}
+
 func (p *lanP2P) resetPeerAfterOpenFailure(ctx context.Context, peer *lanP2PPeer, kcpConn net.Conn) {
 	if kcpConn != nil {
 		_ = kcpConn.Close()
@@ -483,7 +681,7 @@ func (p *lanP2P) resetPeerAfterOpenFailure(ctx context.Context, peer *lanP2PPeer
 	}
 	if relay {
 		peer.addr.Store(cloneUDPAddr(p.server))
-		peer.pc = tunnel.NewPacketConn(p.conn, &peer.addr)
+		peer.pc = p.newPeerPacketConn(&peer.addr)
 		peer.punched.Store(true)
 		peer.punching.Store(false)
 	} else {
@@ -493,17 +691,21 @@ func (p *lanP2P) resetPeerAfterOpenFailure(ctx context.Context, peer *lanP2PPeer
 	}
 	peer.kcpMu.Unlock()
 	if relay {
-		p.scheduleOpenRetry(ctx, peer)
+		if !p.maybeRotateSocketAfterRelayFailure(ctx, peer, "relay_open_failed") {
+			p.scheduleOpenRetry(ctx, peer)
+		}
 	}
 }
 
-func (p *lanP2P) readLoop(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager) {
+func (p *lanP2P) readLoop(ctx context.Context, conn *net.UDPConn, gen uint64, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager) {
 	buf := make([]byte, 65535)
 	for {
-		n, src, err := p.conn.ReadFromUDP(buf)
+		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("LAN P2P read stopped: %v", err)
+				if p.readLoopGen.Load() == gen {
+					log.Printf("LAN P2P read stopped: %v", err)
+				}
 			}
 			return
 		}
@@ -606,7 +808,7 @@ func tryLANUPnP(ctx context.Context, conn *net.UDPConn, deviceID string) (*upnp.
 	return mapping, mapping.External()
 }
 
-func refreshLANUPnPMapping(ctx context.Context, deviceID string, mapping *upnp.Mapping) {
+func (p *lanP2P) refreshCurrentUPnPMapping(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -615,15 +817,29 @@ func refreshLANUPnPMapping(ctx context.Context, deviceID string, mapping *upnp.M
 			return
 		case <-t.C:
 		}
+		p.connMu.RLock()
+		mapping := p.upnpMapping
+		p.connMu.RUnlock()
+		if mapping == nil {
+			return
+		}
 		refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		err := mapping.Refresh(refreshCtx)
 		cancel()
 		if err != nil {
-			log.Printf("LAN P2P UPnP refresh failed: device=%s err=%v", deviceID, err)
+			log.Printf("LAN P2P UPnP refresh failed: device=%s err=%v", p.deviceID, err)
 			continue
 		}
-		log.Printf("LAN P2P UPnP mapping refreshed: device=%s external=%s", deviceID, mapping.External())
+		log.Printf("LAN P2P UPnP mapping refreshed: device=%s external=%s", p.deviceID, mapping.External())
 	}
+}
+
+func (p *lanP2P) newPeerPacketConn(peerAddr *atomic.Pointer[net.UDPAddr]) *tunnel.PacketConn {
+	conn := p.currentConn()
+	if conn == nil {
+		return nil
+	}
+	return tunnel.NewPacketConn(conn, peerAddr)
 }
 
 func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
@@ -635,7 +851,7 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 		return
 	}
 	if peer.pc == nil {
-		peer.pc = tunnel.NewPacketConn(p.conn, &peer.addr)
+		peer.pc = p.newPeerPacketConn(&peer.addr)
 	}
 	isListener := p.deviceID < peer.id
 	role := "dialer"
@@ -660,6 +876,8 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 	peer.kcpMu.Lock()
 	peer.kcp = kcpConn
 	peer.kcpMu.Unlock()
+	peer.openFailures.Store(0)
+	peer.relaySince.Store(0)
 	readyPath := !peer.isRelay.Load()
 	_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: valueOrDash(peerAddrString(&peer.addr))}, packet.PeerEndpoint{Addr: "udp-relay"}, readyPath)
 	path := packet.LinkPathP2P
@@ -782,7 +1000,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		}
 		peer.addr.Store(addr)
 		if peer.pc == nil {
-			peer.pc = tunnel.NewPacketConn(p.conn, &peer.addr)
+			peer.pc = p.newPeerPacketConn(&peer.addr)
 		}
 		if strings.TrimSpace(msg.UpnpAddr) != "" {
 			upnpAddr, err := net.ResolveUDPAddr("udp", msg.UpnpAddr)

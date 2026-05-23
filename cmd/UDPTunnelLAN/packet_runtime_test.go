@@ -14,6 +14,7 @@ import (
 	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/tunnel"
+	"udp_tunnel_demo/internal/upnp"
 )
 
 func TestPostAndPollRelayFrames(t *testing.T) {
@@ -317,6 +318,122 @@ func TestLANP2POpenFailureResetsDirectPunch(t *testing.T) {
 	}
 	if !p.relayTimers[peer.id] {
 		t.Fatal("direct open failure must restart relay fallback timer")
+	}
+}
+
+func TestLANP2PSocketRotationResetsPeersAndRegistersFromNewPort(t *testing.T) {
+	oldTryUPnP := tryLANUPnPFunc
+	tryLANUPnPFunc = func(context.Context, *net.UDPConn, string) (*upnp.Mapping, string) { return nil, "" }
+	defer func() { tryLANUPnPFunc = oldTryUPnP }()
+	server, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	identity, err := lan.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pub, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.connected.Store(true)
+	peer.punched.Store(true)
+	peer.punching.Store(true)
+	peer.isRelay.Store(true)
+	peer.openFailures.Store(lanRelayRotateAfter)
+	peer.relaySince.Store(time.Now().Add(-2 * lanRelayMaxAge).UnixNano())
+	peer.addr.Store(server.LocalAddr().(*net.UDPAddr))
+	peer.pc = tunnel.NewPacketConn(client, &peer.addr)
+	left, right := net.Pipe()
+	defer right.Close()
+	peer.kcp = left
+	p := &lanP2P{
+		conn: client, server: server.LocalAddr().(*net.UDPAddr), deviceID: "dev-a", identity: identity, x25519Pub: pub,
+		peers: map[string]*lanP2PPeer{"dev-b": peer}, registering: map[string]bool{"dev-b": true},
+		relayTimers: map[string]bool{}, openRetries: map[string]bool{},
+	}
+	oldPort := client.LocalAddr().(*net.UDPAddr).Port
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p.rotateSocketAndRestartPunch(ctx, "test")
+
+	newConn := p.currentConn()
+	if newConn == nil {
+		t.Fatal("rotation did not install new socket")
+	}
+	defer newConn.Close()
+	newPort := newConn.LocalAddr().(*net.UDPAddr).Port
+	if newPort == oldPort {
+		t.Fatalf("expected new local port, still %d", oldPort)
+	}
+	if peer.connected.Load() || peer.punched.Load() || peer.punching.Load() || peer.isRelay.Load() {
+		t.Fatalf("peer state not reset: connected=%v punched=%v punching=%v relay=%v", peer.connected.Load(), peer.punched.Load(), peer.punching.Load(), peer.isRelay.Load())
+	}
+	if peer.pc != nil || peer.kcp != nil {
+		t.Fatalf("peer connection state not cleared: pc=%v kcp=%v", peer.pc, peer.kcp)
+	}
+	if !p.relayTimers["dev-b"] {
+		t.Fatal("relay timer must restart after rotation")
+	}
+
+	buf := make([]byte, 2048)
+	_ = server.SetReadDeadline(testDeadline())
+	n, src, err := server.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.Port != newPort {
+		t.Fatalf("register must come from new port: got=%d want=%d payload=%s", src.Port, newPort, string(buf[:n]))
+	}
+	if !strings.Contains(string(buf[:n]), `"t":"lan_register"`) {
+		t.Fatalf("expected immediate lan_register after rotation, got %s", string(buf[:n]))
+	}
+}
+
+func TestLANP2PSocketRotationCooldown(t *testing.T) {
+	oldTryUPnP := tryLANUPnPFunc
+	tryLANUPnPFunc = func(context.Context, *net.UDPConn, string) (*upnp.Mapping, string) { return nil, "" }
+	defer func() { tryLANUPnPFunc = oldTryUPnP }()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	p := &lanP2P{conn: client, deviceID: "dev-a"}
+	p.lastRotation.Store(time.Now().UnixNano())
+	oldPort := client.LocalAddr().(*net.UDPAddr).Port
+	p.rotateSocketAndRestartPunch(context.Background(), "test")
+	got := p.currentConn()
+	if got == nil || got.LocalAddr().(*net.UDPAddr).Port != oldPort {
+		t.Fatal("cooldown should keep existing socket")
+	}
+}
+
+func TestLANP2PRelayFailureDoesNotRotateWhenAnotherPeerReady(t *testing.T) {
+	failed := &lanP2PPeer{id: "failed"}
+	failed.isRelay.Store(true)
+	failed.relaySince.Store(time.Now().Add(-2 * lanRelayMaxAge).UnixNano())
+	readyLeft, readyRight := net.Pipe()
+	defer readyLeft.Close()
+	defer readyRight.Close()
+	ready := &lanP2PPeer{id: "ready", kcp: readyLeft}
+	ready.connected.Store(true)
+	p := &lanP2P{peers: map[string]*lanP2PPeer{"failed": failed, "ready": ready}}
+
+	if p.maybeRotateSocketAfterRelayFailure(context.Background(), failed, "test") {
+		t.Fatal("must not rotate socket while another peer has ready KCP")
+	}
+	if got := failed.openFailures.Load(); got != 1 {
+		t.Fatalf("failure count should still increment, got %d", got)
 	}
 }
 

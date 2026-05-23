@@ -319,6 +319,77 @@ internal/
 - A 能使用 `mstsc /v:172.16.10.x` 连接 B。
 - 中断恢复后应用层可重新连接。
 
+## 阶段 7.5：失败后重开 socket 并重新注册/打洞
+
+目标：
+
+- `UDPTunnelLAN` 仍然保持全局只有一个 LAN UDP socket，不做多个 socket 或 ICE candidate。
+- 当当前 UDP NAT 映射长期无法建立可用 KCP tunnel 时，关闭旧 socket，重开新 socket，获得新的本地端口和公网映射。
+- socket 重开后重新注册所有 peer，触发服务端下发新的 `peer_info`，重新走 direct punch 和 relay fallback。
+- 不影响当前端口转发产品线，不改 `cmd/client`。
+
+触发条件：
+
+- [x] relay mode 下 KCP open/handshake 连续失败达到阈值，第一版建议 3 次。
+- [x] relay mode 进入后持续超过超时时间仍没有可用 tunnel，第一版建议 60 秒。
+- [x] direct punch 失败只先进入现有 relay fallback，不立即重开 socket。
+- [x] 已经 `KCP tunnel ready` 的 peer 不主动触发 socket rotation，避免打断可用连接。
+- [x] socket rotation 设置冷却时间，第一版建议 60 秒内最多一次，防止网络抖动时频繁轮换。
+
+开发任务：
+
+- [x] 为 `lanP2P` 增加 socket 生命周期管理：
+  - `connMu` 或等价锁保护当前 `*net.UDPConn`。
+  - 所有控制包发送统一通过当前 socket。
+  - `readLoop` 能在旧 socket 关闭后退出，并由 rotation 启动新的 readLoop。
+  - rotation 期间不允许同时存在两个可用 LAN socket。
+- [x] 为 peer 增加建链失败状态：
+  - 记录连续 KCP open/handshake 失败次数。
+  - KCP tunnel ready 后清零失败次数。
+  - 记录最近一次进入 relay 的时间。
+  - 记录最近一次 socket rotation 的时间。
+- [x] 实现 `rotateSocketAndRestartPunch(reason)`：
+  - 关闭旧 UDP socket。
+  - 创建新的 UDP socket，端口仍由系统分配。
+  - 重新尝试 UPnP 映射。
+  - 更新 `lanP2P.conn`。
+  - 重启 P2P readLoop。
+  - 清理全部 peer 的 `PacketConn`、KCP conn 和建链状态。
+  - 重启所有 peer 的注册和 relay fallback timer。
+- [x] 实现 peer 状态清理：
+  - `connected=false`
+  - `punched=false`
+  - `punching=false`
+  - `isRelay=false`
+  - `pc=nil`
+  - `kcp=nil`
+  - 清理 open retry / relay timer 的旧状态。
+- [x] 让已有 registerLoop 在 socket rotation 后继续使用新 socket，或显式重启 registerLoop，避免服务端继续保留旧公网端口。
+- [x] socket rotation 后立即向服务端重新发送 LAN register，而不是等待下一个 3 秒 tick。
+- [x] socket rotation 后重新接受服务端下发的 `peer_info`，不应因为旧 relay mode 状态继续忽略新的 direct 地址。
+- [x] 日志增加明确状态：
+  - `LAN P2P rotating UDP socket: reason=... old=...`
+  - `LAN P2P socket rotated: new=... upnp=...`
+  - `LAN P2P peer reset after socket rotation: peer=...`
+  - `LAN P2P re-registering peers after socket rotation: peers=...`
+
+测试任务：
+
+- [x] relay KCP open 连续失败达到阈值后会触发 socket rotation。
+- [x] socket rotation 后 peer 状态全部回到 direct punch 初始状态。
+- [x] socket rotation 后旧 `PacketConn` 被丢弃，新 `PacketConn` 使用新 socket。
+- [x] socket rotation 后 register 使用新 socket 发出，服务端可看到新的来源端口。
+- [x] socket rotation 冷却时间生效，短时间内不会反复轮换。
+- [x] 已经 ready 的 KCP tunnel 不会被无关 peer 的失败触发误关闭。
+
+验收：
+
+- 日志中能看到 socket 从旧端口切换到新端口。
+- 服务端能收到来自新公网端口的 LAN register。
+- 对端能收到新的 `peer_info` 并重新打洞。
+- 在某个 NAT 映射卡死时，客户端能自动换端口重试，而不是永久停在旧端口和 relay mode。
+- 不引入多个并发 LAN UDP socket。
+
 ## 阶段 8：管理后台
 
 - [x] 新增菜单：虚拟局域网。
