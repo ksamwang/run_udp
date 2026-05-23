@@ -65,6 +65,9 @@ func (a *windowsAdapter) Configure(cfg Config) error {
 	if err := runNetsh("interface", "ipv4", "set", "subinterface", cfg.Name, "mtu="+fmt.Sprint(cfg.MTU), "store=persistent"); err != nil {
 		return err
 	}
+	if err := runNetsh("interface", "ipv4", "delete", "route", cfg.CIDR, cfg.Name); err != nil && !isMissingRouteError(err) {
+		return err
+	}
 	if err := runNetsh("interface", "ipv4", "add", "route", cfg.CIDR, cfg.Name, cfg.IP.String(), "store=active"); err != nil && !isDuplicateRouteError(err) {
 		return err
 	}
@@ -119,7 +122,11 @@ func runNetsh(args ...string) error {
 
 func isDuplicateRouteError(err error) bool {
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "object already exists") || strings.Contains(msg, "已存在")
+	return strings.Contains(msg, "object already exists") ||
+		strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "file exists") ||
+		strings.Contains(msg, "已存在") ||
+		strings.Contains(msg, "�Ѵ���")
 }
 
 func listRoutes() ([]vnet.Route, error) {
