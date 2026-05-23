@@ -71,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '
 if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\client.exe','%DIST%\client.json.example' -DestinationPath '%CLIENT_ZIP%' -Force"
 if errorlevel 1 exit /b 1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\UDPTunnelLAN.exe','%DIST%\lan.json.example' -DestinationPath '%LAN_ZIP%' -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DIST%\UDPTunnelLAN.exe','%DIST%\wintun.dll','%DIST%\lan.json.example' -DestinationPath '%LAN_ZIP%' -Force"
 if errorlevel 1 exit /b 1
 
 set ASSETS="%FRONTEND_ZIP%" "%SERVER_ZIP%" "%CLIENT_ZIP%" "%LAN_ZIP%"

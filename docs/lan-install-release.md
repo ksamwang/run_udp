@@ -5,11 +5,14 @@
 `build-all.bat` builds these LAN artifacts:
 
 - `dist\UDPTunnelLAN.exe`
+- `dist\wintun.dll`
 - `dist\lan.json.example`
 - `dist\UDPTunnelLAN-windows-amd64-<tag>.zip` during release packaging
 - `dist\udp-tunnel-lan-<version>-setup.exe` when Inno Setup is installed
 
 `release.bat <version>` uploads the LAN zip and LAN installer when they exist.
+
+`wintun.dll` is required by `UDPTunnelLAN.exe` when creating the virtual adapter. It must be in the same install directory as `UDPTunnelLAN.exe`.
 
 ## Windows Install Layout
 

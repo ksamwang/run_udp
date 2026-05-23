@@ -56,6 +56,9 @@ set CGO_ENABLED=0
 go build -trimpath -ldflags "%LDFLAGS% -H=windowsgui -s -w" -o "%DIST%\UDPTunnelLAN.exe" .\cmd\UDPTunnelLAN
 if errorlevel 1 goto :fail
 copy /Y lan.json.example "%DIST%\lan.json.example" >nul
+echo === Preparing Wintun runtime ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\fetch-wintun.ps1" -OutputDir "%DIST%"
+if errorlevel 1 goto :fail
 
 copy /Y .env.example "%DIST%\.env.example" >nul
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
@@ -70,8 +73,7 @@ if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
 )
 if exist "installer\Output\udp-tunnel-client-%VERSION%-setup.exe" (
   copy /Y "installer\Output\udp-tunnel-client-%VERSION%-setup.exe" "%DIST%\udp-tunnel-client-%VERSION%-setup.exe" >nul
-  for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) { (Get-FileHash '%DIST%\udp-tunnel-client-%VERSION%-setup.exe' -Algorithm SHA256).Hash.ToLower() } else { '' }"`) do set SETUP_SHA=%%i
-  if "%SETUP_SHA%"=="" echo WARN: Get-FileHash unavailable, latest.json sha256 will be empty
+  for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\file-sha256.ps1" -Path "%DIST%\udp-tunnel-client-%VERSION%-setup.exe"`) do set SETUP_SHA=%%i
   > "%DIST%\latest.json" echo {^
   "version":"%VERSION%",^
   "url":"",^

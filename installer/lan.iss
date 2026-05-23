@@ -24,6 +24,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceDir}\wintun.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MySourceDir}\lan.json.example"; DestDir: "{app}"; DestName: "lan.json"; Flags: onlyifdoesntexist
 
 [Icons]

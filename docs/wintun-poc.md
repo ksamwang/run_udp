@@ -7,18 +7,24 @@ The LAN product line uses the official Go module:
 - `golang.zx2c4.com/wintun`
 - pinned in `go.mod`
 
-This avoids manually loading `wintun.dll` in our code. The module is responsible for interacting with the Wintun runtime.
+This avoids manually calling the Wintun DLL APIs in our code. The module still loads `wintun.dll` at runtime from the application directory or `System32`.
 
 ## Distribution
 
-For the PoC, `UDPTunnelLAN.exe` links the Wintun Go module and does not bundle a separate installer yet.
+`build-all.bat` runs `scripts/fetch-wintun.ps1`, downloads the official Wintun package, verifies its SHA256, and extracts `bin/amd64/wintun.dll` into `dist`.
 
-Before production packaging, the LAN installer must verify:
+The LAN installer and release zip must include:
 
-- Wintun runtime files required by `golang.zx2c4.com/wintun`
+- `UDPTunnelLAN.exe`
+- `wintun.dll`
+- `lan.json.example`
+
+Runtime source:
+
+- Wintun package: `https://www.wintun.net/builds/wintun-0.14.1.zip`
+- SHA256: `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`
 - upstream license file
 - pinned module version
-- SHA256 of any bundled binary asset
 
 ## Privileges
 
