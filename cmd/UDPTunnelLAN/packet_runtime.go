@@ -36,6 +36,7 @@ const (
 	lanConfigRefreshEvery = 10 * time.Second
 	lanUPnPTimeout        = 4 * time.Second
 	lanPunchTimeout       = 30 * time.Second
+	lanTunnelRetryDelay   = 3 * time.Second
 	lanKCPFrameMax        = 64 * 1024
 )
 
@@ -178,6 +179,7 @@ type lanP2P struct {
 	upnpAddr    string
 	registering map[string]bool
 	relayTimers map[string]bool
+	openRetries map[string]bool
 }
 
 type lanP2PPeer struct {
@@ -218,7 +220,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	upnpMapping, upnpAddr := tryLANUPnP(ctx, conn, deviceID)
 	p := &lanP2P{
 		conn: conn, server: server, deviceID: deviceID, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
-		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, relayTimers: map[string]bool{},
+		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
 	go func() {
 		<-ctx.Done()
@@ -247,6 +249,9 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 	}
 	if p.relayTimers == nil {
 		p.relayTimers = map[string]bool{}
+	}
+	if p.openRetries == nil {
+		p.openRetries = map[string]bool{}
 	}
 	p.peerMu.Unlock()
 	for _, peer := range peers {
@@ -426,6 +431,72 @@ func (p *lanP2P) resetRelayTimer(ctx context.Context, peerID string) {
 	go p.relayFallbackTimer(ctx, peerID)
 }
 
+func (p *lanP2P) scheduleOpenRetry(ctx context.Context, peer *lanP2PPeer) {
+	if p == nil || peer == nil {
+		return
+	}
+	p.peerMu.Lock()
+	if p.openRetries == nil {
+		p.openRetries = map[string]bool{}
+	}
+	if p.openRetries[peer.id] {
+		p.peerMu.Unlock()
+		return
+	}
+	p.openRetries[peer.id] = true
+	p.peerMu.Unlock()
+	go func(peerID string) {
+		timer := time.NewTimer(lanTunnelRetryDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		p.peerMu.Lock()
+		if p.openRetries != nil {
+			p.openRetries[peerID] = false
+		}
+		p.peerMu.Unlock()
+		peer := p.peer(peerID)
+		if peer == nil || peer.connected.Load() || !peer.punched.Load() {
+			return
+		}
+		log.Printf("LAN P2P retrying KCP tunnel: peer=%s relay=%v", peer.id, peer.isRelay.Load())
+		go p.openTunnel(ctx, p.adapter, p.router, p.link, peer)
+	}(peer.id)
+}
+
+func (p *lanP2P) resetPeerAfterOpenFailure(ctx context.Context, peer *lanP2PPeer, kcpConn net.Conn) {
+	if kcpConn != nil {
+		_ = kcpConn.Close()
+	}
+	peer.kcpMu.Lock()
+	if peer.kcp == kcpConn {
+		peer.kcp = nil
+	}
+	peer.connected.Store(false)
+	relay := peer.isRelay.Load()
+	if peer.pc != nil {
+		_ = peer.pc.Close()
+		peer.pc = nil
+	}
+	if relay {
+		peer.addr.Store(cloneUDPAddr(p.server))
+		peer.pc = tunnel.NewPacketConn(p.conn, &peer.addr)
+		peer.punched.Store(true)
+		peer.punching.Store(false)
+	} else {
+		peer.punched.Store(false)
+		peer.punching.Store(false)
+		p.resetRelayTimer(ctx, peer.id)
+	}
+	peer.kcpMu.Unlock()
+	if relay {
+		p.scheduleOpenRetry(ctx, peer)
+	}
+}
+
 func (p *lanP2P) readLoop(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager) {
 	buf := make([]byte, 65535)
 	for {
@@ -575,14 +646,13 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 	log.Printf("LAN P2P opening KCP tunnel: peer=%s role=%s conv=%d", peer.id, role, convID)
 	kcpConn, err := tunnel.Open(peer.pc, isListener, convID, store.ProfileLANPacket)
 	if err != nil {
-		peer.connected.Store(false)
+		p.resetPeerAfterOpenFailure(ctx, peer, nil)
 		log.Printf("LAN P2P KCP open failed: peer=%s err=%v", peer.id, err)
 		return
 	}
 	if isListener {
 		if err := tunnel.ConsumeHandshake(kcpConn); err != nil {
-			_ = kcpConn.Close()
-			peer.connected.Store(false)
+			p.resetPeerAfterOpenFailure(ctx, peer, kcpConn)
 			log.Printf("LAN P2P KCP handshake failed: peer=%s err=%v", peer.id, err)
 			return
 		}

@@ -13,6 +13,7 @@ import (
 	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/protocol"
+	"udp_tunnel_demo/internal/tunnel"
 )
 
 func TestPostAndPollRelayFrames(t *testing.T) {
@@ -247,6 +248,75 @@ func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
 	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
 	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
 		t.Fatalf("relay addr overwritten by peer info: %v", got)
+	}
+}
+
+func TestLANP2POpenFailureKeepsRelayAndRebuildsPacketConn(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	server := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	p := &lanP2P{
+		conn: conn, server: server, deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{}, openRetries: map[string]bool{},
+	}
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.addr.Store(server)
+	peer.pc = tunnel.NewPacketConn(conn, &peer.addr)
+	oldPC := peer.pc
+	peer.connected.Store(true)
+	peer.punched.Store(true)
+	peer.punching.Store(true)
+	peer.isRelay.Store(true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.resetPeerAfterOpenFailure(ctx, peer, nil)
+
+	if peer.connected.Load() {
+		t.Fatal("connected must be cleared after open failure")
+	}
+	if !peer.punched.Load() || peer.punching.Load() || !peer.isRelay.Load() {
+		t.Fatalf("bad relay state after open failure: punched=%v punching=%v relay=%v", peer.punched.Load(), peer.punching.Load(), peer.isRelay.Load())
+	}
+	if peer.pc == nil || peer.pc == oldPC {
+		t.Fatal("packet conn must be rebuilt after open failure")
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != server.String() {
+		t.Fatalf("relay address not preserved: %v", got)
+	}
+	if !p.openRetries[peer.id] {
+		t.Fatal("relay open failure must schedule a retry")
+	}
+}
+
+func TestLANP2POpenFailureResetsDirectPunch(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	server := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	p := &lanP2P{
+		conn: conn, server: server, deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{}, relayTimers: map[string]bool{},
+	}
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.connected.Store(true)
+	peer.punched.Store(true)
+	peer.punching.Store(true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.resetPeerAfterOpenFailure(ctx, peer, nil)
+
+	if peer.connected.Load() || peer.punched.Load() || peer.punching.Load() || peer.isRelay.Load() {
+		t.Fatalf("direct failure must reset punch state: connected=%v punched=%v punching=%v relay=%v", peer.connected.Load(), peer.punched.Load(), peer.punching.Load(), peer.isRelay.Load())
+	}
+	if !p.relayTimers[peer.id] {
+		t.Fatal("direct open failure must restart relay fallback timer")
 	}
 }
 
