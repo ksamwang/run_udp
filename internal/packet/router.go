@@ -90,7 +90,7 @@ type Router struct {
 	acl            []store.VirtualACLRule
 	peerAvailable  map[string]bool
 
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	stats RouterStats
 }
 
@@ -130,7 +130,10 @@ func (r *Router) RouteOutbound(packet []byte) (RoutedFrame, error) {
 	if r == nil {
 		return RoutedFrame{}, errors.New("router is nil")
 	}
-	if len(packet) > r.mtu {
+	r.mu.RLock()
+	mtu := r.mtu
+	r.mu.RUnlock()
+	if len(packet) > mtu {
 		r.recordDrop(DropMTU)
 		return RoutedFrame{}, ErrMTUDrop
 	}
@@ -147,26 +150,32 @@ func (r *Router) RouteOutbound(packet []byte) (RoutedFrame, error) {
 		r.recordDrop(DropUnsupportedProtocol)
 		return RoutedFrame{}, ErrUnsupportedProtocol
 	}
+	r.mu.RLock()
+	networkID := r.networkID
+	sourceDeviceID := r.sourceDeviceID
 	dstDevice := r.routes[header.DestIP.String()]
+	peerAvailable, peerKnown := r.peerAvailable[dstDevice]
+	acl := append([]store.VirtualACLRule(nil), r.acl...)
+	r.mu.RUnlock()
 	if dstDevice == "" {
 		r.recordDrop(DropRouteMiss)
 		return RoutedFrame{}, ErrRouteMiss
 	}
-	if ok, exists := r.peerAvailable[dstDevice]; exists && !ok {
+	if peerKnown && !peerAvailable {
 		r.recordDrop(DropPeerUnavailable)
 		return RoutedFrame{}, ErrPeerUnavailable
 	}
-	if !r.allow(header, dstDevice) {
+	if !allowACL(acl, networkID, sourceDeviceID, dstDevice, header) {
 		r.recordDrop(DropACLDeny)
 		return RoutedFrame{}, ErrACLDeny
 	}
 	payload := append([]byte(nil), packet[:header.TotalLen]...)
 	if header.Protocol == IPv4ProtocolTCP {
-		_ = ClampTCPMSS(payload, vnet.MSSForMTU(r.mtu))
+		_ = ClampTCPMSS(payload, vnet.MSSForMTU(mtu))
 		header, _ = ParseIPv4(payload)
 	}
 	frame := RoutedFrame{
-		NetworkID: r.networkID, SrcDevice: r.sourceDeviceID, DstDevice: dstDevice,
+		NetworkID: networkID, SrcDevice: sourceDeviceID, DstDevice: dstDevice,
 		PacketType: TypeIPv4, Payload: payload, Header: header,
 	}
 	r.mu.Lock()
@@ -195,6 +204,22 @@ func (r *Router) Stats() RouterStats {
 	return r.stats
 }
 
+func (r *Router) UpdateConfig(addresses []store.VirtualAddress, acl []store.VirtualACLRule, peerAvailable map[string]bool) {
+	if r == nil {
+		return
+	}
+	routes := buildRoutes(r.networkID, addresses)
+	peers := make(map[string]bool, len(peerAvailable))
+	for id, ok := range peerAvailable {
+		peers[id] = ok
+	}
+	r.mu.Lock()
+	r.routes = routes
+	r.acl = append([]store.VirtualACLRule(nil), acl...)
+	r.peerAvailable = peers
+	r.mu.Unlock()
+}
+
 func (r *Router) recordDrop(reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -214,10 +239,10 @@ func (r *Router) recordDrop(reason string) {
 	}
 }
 
-func (r *Router) allow(header IPv4Header, dstDevice string) bool {
+func allowACL(acl []store.VirtualACLRule, networkID int64, sourceDeviceID, dstDevice string, header IPv4Header) bool {
 	allowed := true
-	for _, rule := range r.acl {
-		if !rule.Enabled || rule.NetworkID != r.networkID || !matchACLRule(rule, r.networkID, r.sourceDeviceID, dstDevice, header) {
+	for _, rule := range acl {
+		if !rule.Enabled || rule.NetworkID != networkID || !matchACLRule(rule, networkID, sourceDeviceID, dstDevice, header) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rule.Action), "deny") {
@@ -228,6 +253,21 @@ func (r *Router) allow(header IPv4Header, dstDevice string) bool {
 		}
 	}
 	return allowed
+}
+
+func buildRoutes(networkID int64, addresses []store.VirtualAddress) map[string]string {
+	routes := make(map[string]string, len(addresses))
+	for _, address := range addresses {
+		if address.NetworkID != networkID || strings.TrimSpace(address.DeviceID) == "" {
+			continue
+		}
+		ip := net.ParseIP(strings.TrimSpace(address.VirtualIP)).To4()
+		if ip == nil {
+			continue
+		}
+		routes[ip.String()] = address.DeviceID
+	}
+	return routes
 }
 
 func matchACLRule(rule store.VirtualACLRule, networkID int64, srcDevice, dstDevice string, header IPv4Header) bool {

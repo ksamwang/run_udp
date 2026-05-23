@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/packet"
 )
 
@@ -65,4 +68,97 @@ func TestRelayDisabledErrorIsVisible(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "relay_disabled") {
 		t.Fatalf("expected relay_disabled error, got %v", err)
 	}
+}
+
+func TestLANP2PSendAfterPunch(t *testing.T) {
+	dst, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	src, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, _, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rx, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := &lanP2PPeer{id: "dev-b", tx: tx}
+	peer.addr.Store(dst.LocalAddr().(*net.UDPAddr))
+	peer.punched.Store(true)
+	p := &lanP2P{conn: src, deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	err = p.Send(packet.RoutedFrame{DstDevice: "dev-b", Payload: []byte{1, 2, 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 256)
+	_ = dst.SetReadDeadline(testDeadline())
+	n, _, err := dst.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := rx.Open(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != string([]byte{1, 2, 3}) {
+		t.Fatalf("bad packet data=%v", plain)
+	}
+}
+
+func TestLANP2PUpsertPeersRegistersNewPeer(t *testing.T) {
+	server, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	identity, err := lan.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pub, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &lanP2P{
+		conn: client, server: server.LocalAddr().(*net.UDPAddr), deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, x25519Pub: pub,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.UpsertPeers(ctx, identity, []lanBootstrapPeer{{DeviceID: "dev-b"}})
+
+	buf := make([]byte, 1024)
+	_ = server.SetReadDeadline(testDeadline())
+	n, _, err := server.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(buf[:n]), `"t":"lan_register"`) || !strings.Contains(string(buf[:n]), `"p":"dev-b"`) {
+		t.Fatalf("bad register payload: %s", string(buf[:n]))
+	}
+}
+
+func testDeadline() time.Time {
+	return time.Now().Add(2 * time.Second)
 }

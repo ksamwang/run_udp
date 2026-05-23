@@ -290,7 +290,8 @@ internal/
 实现说明：
 
 - LAN 数据面使用 `lan-packet` profile 复用现有 rendezvous 和 UDP relay 通道。
-- 当前完成 packet link 会话管理与单元测试，HTTP relay API 已按 `allow_relay` 门控接入；真实 UDP P2P 端到端访问仍需后续接入。
+- 当前完成 packet link 会话管理、HTTP relay API 门控和 UDP P2P packet link 接入；服务端默认关闭 relay。
+- 当前 UDP P2P packet 使用 LAN register 携带的 X25519 临时公钥协商 packet session key，register 由 Ed25519 设备身份签名保护。
 
 验收：
 
@@ -304,7 +305,8 @@ internal/
 - [x] Packet Router 输出接入 LAN relay send API。
 - [x] LAN relay poll 写回 Wintun WritePacket。
 - [x] 服务端 LAN relay API 受 `allow_relay` 控制，默认关闭。
-- [ ] UDP P2P packet link 端到端接入。
+- [x] UDP P2P packet link 端到端接入。
+- [x] UDP P2P packet link 使用 X25519 临时密钥协商和 packet session crypto。
 - [ ] 验证 RDP：`mstsc /v:172.16.10.x`
 - [ ] 验证 SSH。
 - [ ] 验证 HTTP。

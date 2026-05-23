@@ -25,6 +25,7 @@ type lanBootstrapResponse struct {
 	Version       int                    `json:"version"`
 	Capabilities  []string               `json:"capabilities"`
 	ConfigVersion string                 `json:"config_version"`
+	Server        string                 `json:"server"`
 	DeviceID      string                 `json:"device_id"`
 	DeviceName    string                 `json:"device_name"`
 	Network       store.VirtualNetwork   `json:"network"`

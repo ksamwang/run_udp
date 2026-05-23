@@ -7,25 +7,28 @@ import (
 
 // 消息类型
 const (
-	MsgRegister  = "register" // Client -> Server: 我叫 X，我要配对 Y
-	MsgPeerInfo  = "peer"     // Server -> Client: 告诉你对方的公网地址
-	MsgPunch     = "punch"    // Client -> Client: 打洞探测包
-	MsgPunchAck  = "punchack" // Client -> Client: 打洞响应
-	MsgData      = "data"     // Client -> Client: 业务数据
-	MsgKeepAlive = "ka"       // Client -> Client: 保活
-	MsgStunReq   = "stunq"    // Client -> Server: 请求观察到的公网地址
-	MsgStunResp  = "stunr"    // Server -> Client: 你的公网地址是 X
+	MsgRegister    = "register"     // Client -> Server: 我叫 X，我要配对 Y
+	MsgPeerInfo    = "peer"         // Server -> Client: 告诉你对方的公网地址
+	MsgPunch       = "punch"        // Client -> Client: 打洞探测包
+	MsgPunchAck    = "punchack"     // Client -> Client: 打洞响应
+	MsgData        = "data"         // Client -> Client: 业务数据
+	MsgKeepAlive   = "ka"           // Client -> Client: 保活
+	MsgStunReq     = "stunq"        // Client -> Server: 请求观察到的公网地址
+	MsgStunResp    = "stunr"        // Server -> Client: 你的公网地址是 X
+	MsgLANRegister = "lan_register" // LAN Client -> Server: signed packet peer register
 )
 
 type Message struct {
-	Type     string `json:"t"`
-	From     string `json:"f,omitempty"`  // 自己的 ID
-	Name     string `json:"n,omitempty"`  // 设备显示名
-	Peer     string `json:"p,omitempty"`  // 对端 ID
-	Profile  string `json:"pr,omitempty"` // 隧道业务 profile
-	Addr     string `json:"a,omitempty"`  // 公网地址 ip:port（NAT 观察到的）
-	UpnpAddr string `json:"u,omitempty"`  // UPnP 主动映射出的公网地址 ip:port（可选）
-	Payload  string `json:"d,omitempty"`  // 业务载荷
+	Type      string `json:"t"`
+	From      string `json:"f,omitempty"`   // 自己的 ID
+	Name      string `json:"n,omitempty"`   // 设备显示名
+	Peer      string `json:"p,omitempty"`   // 对端 ID
+	Profile   string `json:"pr,omitempty"`  // 隧道业务 profile
+	Addr      string `json:"a,omitempty"`   // 公网地址 ip:port（NAT 观察到的）
+	UpnpAddr  string `json:"u,omitempty"`   // UPnP 主动映射出的公网地址 ip:port（可选）
+	Payload   string `json:"d,omitempty"`   // 业务载荷
+	Timestamp int64  `json:"ts,omitempty"`  // 签名时间戳
+	Signature string `json:"sig,omitempty"` // base64 Ed25519 signature
 }
 
 func Encode(m *Message) ([]byte, error) {

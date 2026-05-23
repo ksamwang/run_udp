@@ -17,6 +17,7 @@ type peer struct {
 	id        string
 	addr      *net.UDPAddr
 	upnpAddr  string
+	lanKey    string
 	want      string
 	profile   string
 	lastSeen  time.Time
@@ -47,6 +48,7 @@ type App struct {
 	cfgMu sync.RWMutex
 
 	lanRelay *lanPacketRelay
+	lanPeers map[string]map[string]*peer
 }
 
 type agentTunnelReport struct {
@@ -117,6 +119,7 @@ func New(cfg config.Server) (*App, error) {
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
 		lanRelay:  newLANPacketRelay(256),
+		lanPeers:  map[string]map[string]*peer{},
 	}
 	if err := a.ensureAdminUser(); err != nil {
 		_ = db.Close()

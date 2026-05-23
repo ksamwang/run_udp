@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"udp_tunnel_demo/internal/config"
+	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/store"
 )
@@ -210,6 +211,9 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if resp.Version != lanBootstrapVersion || resp.ConfigVersion == "" || resp.Address.VirtualIP != "172.16.10.10" {
 		t.Fatalf("bad bootstrap response: %+v", resp)
+	}
+	if resp.Server == "" {
+		t.Fatalf("bootstrap should return UDP rendezvous server: %+v", resp)
 	}
 	if len(resp.Peers) != 1 || resp.Peers[0].DeviceID != "dev-b" {
 		t.Fatalf("bad bootstrap peers: %+v", resp.Peers)
@@ -510,6 +514,72 @@ func TestRegisterSupportsLANPacketProfile(t *testing.T) {
 	}
 	if _, ok := a.pairByID[pairKey("dev-a", "dev-b", store.ProfileLANPacket)]; !ok {
 		t.Fatalf("missing lan packet pair session: %+v", a.pairByID)
+	}
+}
+
+func TestLANRegisterRequiresValidIdentitySignature(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	idA, err := lan.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-a", Algorithm: lan.IdentityKeyAlgorithm, PublicKey: idA.PublicKey}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 14001}
+	a.handleLANRegister(conn, src, &protocol.Message{Type: protocol.MsgLANRegister, From: "dev-a", Peer: "dev-b", Profile: store.ProfileLANPacket})
+	if len(a.lanPeers) != 0 {
+		t.Fatalf("unsigned LAN register should be rejected: %+v", a.lanPeers)
+	}
+	ts := time.Now().Unix()
+	payloadA := "x25519-a"
+	a.handleLANRegister(conn, src, &protocol.Message{
+		Type: protocol.MsgLANRegister, From: "dev-a", Peer: "dev-b", Profile: store.ProfileLANPacket,
+		Payload: payloadA, Timestamp: ts, Signature: mustSignRegisterPayload(t, idA, "dev-a", "dev-b", store.ProfileLANPacket, ts, payloadA),
+	})
+	if _, ok := a.lanPeers["dev-a"][peerSlotKey("dev-b", store.ProfileLANPacket)]; !ok {
+		t.Fatalf("signed LAN register should be stored: %+v", a.lanPeers)
+	}
+}
+
+func TestLANRegisterPairsPeers(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	idA, _ := lan.GenerateIdentity()
+	idB, _ := lan.GenerateIdentity()
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-a", Algorithm: lan.IdentityKeyAlgorithm, PublicKey: idA.PublicKey}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-b", Algorithm: lan.IdentityKeyAlgorithm, PublicKey: idB.PublicKey}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ts := time.Now().Unix()
+	payloadA := "x25519-a"
+	payloadB := "x25519-b"
+	a.handleLANRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 15001}, &protocol.Message{
+		Type: protocol.MsgLANRegister, From: "dev-a", Peer: "dev-b", Profile: store.ProfileLANPacket,
+		Payload: payloadA, Timestamp: ts, Signature: mustSignRegisterPayload(t, idA, "dev-a", "dev-b", store.ProfileLANPacket, ts, payloadA),
+	})
+	a.handleLANRegister(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 15002}, &protocol.Message{
+		Type: protocol.MsgLANRegister, From: "dev-b", Peer: "dev-a", Profile: store.ProfileLANPacket,
+		Payload: payloadB, Timestamp: ts, Signature: mustSignRegisterPayload(t, idB, "dev-b", "dev-a", store.ProfileLANPacket, ts, payloadB),
+	})
+	if _, ok := a.lanPeers["dev-a"][peerSlotKey("dev-b", store.ProfileLANPacket)]; !ok {
+		t.Fatalf("missing dev-a LAN peer: %+v", a.lanPeers)
+	}
+	if _, ok := a.lanPeers["dev-b"][peerSlotKey("dev-a", store.ProfileLANPacket)]; !ok {
+		t.Fatalf("missing dev-b LAN peer: %+v", a.lanPeers)
 	}
 }
 
@@ -1232,6 +1302,7 @@ func newTestApp(t *testing.T) *App {
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
 		lanRelay:  newLANPacketRelay(256),
+		lanPeers:  map[string]map[string]*peer{},
 	}
 }
 
@@ -1250,6 +1321,15 @@ func otherDevice(id string) string {
 		return "dev-b"
 	}
 	return "dev-a"
+}
+
+func mustSignRegisterPayload(t *testing.T, id lan.Identity, from, peer, profile string, ts int64, payload string) string {
+	t.Helper()
+	sig, err := lan.SignRegisterPayload(id, from, peer, profile, ts, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sig
 }
 
 func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {

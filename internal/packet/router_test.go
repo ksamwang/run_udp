@@ -102,6 +102,31 @@ func TestRouteOutboundDropReasons(t *testing.T) {
 	}
 }
 
+func TestRouterUpdateConfigAddsPeerRoute(t *testing.T) {
+	router := newTestRouter(t, RouterConfig{
+		NetworkID: 1, SourceDeviceID: "dev-a", MTU: 1280,
+		Addresses: []store.VirtualAddress{{NetworkID: 1, DeviceID: "dev-a", VirtualIP: "172.16.10.1"}},
+	})
+
+	_, err := router.RouteOutbound(tcpSYNPacket(t, "172.16.10.1", "172.16.10.2", 50000, 3389, 1200))
+	if !errors.Is(err, ErrRouteMiss) {
+		t.Fatalf("expected initial route miss, got %v", err)
+	}
+
+	router.UpdateConfig([]store.VirtualAddress{
+		{NetworkID: 1, DeviceID: "dev-a", VirtualIP: "172.16.10.1"},
+		{NetworkID: 1, DeviceID: "dev-b", VirtualIP: "172.16.10.2"},
+	}, nil, map[string]bool{"dev-b": true})
+
+	frame, err := router.RouteOutbound(tcpSYNPacket(t, "172.16.10.1", "172.16.10.2", 50000, 3389, 1200))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.DstDevice != "dev-b" {
+		t.Fatalf("dst device=%s", frame.DstDevice)
+	}
+}
+
 func TestParseIPv4RejectsBadPacket(t *testing.T) {
 	if _, err := ParseIPv4([]byte{0x45}); !errors.Is(err, ErrInvalidIPv4) {
 		t.Fatalf("expected invalid ipv4, got %v", err)

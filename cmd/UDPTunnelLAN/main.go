@@ -210,7 +210,7 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 	}
 	log.Printf("LAN status reported: state=%s adapter=%s selected_cidr=%s", state.State, state.AdapterState, state.SelectedCIDR)
 	if adapter != nil && router != nil && link != nil {
-		go runPacketForwarding(ctx, cfg.ServerHTTP, adapter, router, link, deviceID, resp.Network.ID)
+		go runPacketForwarding(ctx, cfg.ServerHTTP, adapter, router, link, resp, identity, deviceID, resp.Network.ID)
 	}
 	return nil
 }
@@ -246,6 +246,20 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, *
 }
 
 func buildPacketRuntime(resp lanBootstrapResponse, deviceID string, mtu int) (*packet.Router, *packet.LinkManager, error) {
+	addresses, available := runtimeAddresses(resp)
+	router, err := packet.NewRouter(packet.RouterConfig{
+		NetworkID: resp.Network.ID, SourceDeviceID: deviceID, MTU: mtu,
+		Addresses: addresses, ACLRules: resp.ACL, PeerAvailable: available,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: deviceID})
+	upsertLinkPeers(link, resp.Peers, false)
+	return router, link, nil
+}
+
+func runtimeAddresses(resp lanBootstrapResponse) ([]store.VirtualAddress, map[string]bool) {
 	addresses := make([]store.VirtualAddress, 0, len(resp.Peers)+1)
 	addresses = append(addresses, resp.Address)
 	available := map[string]bool{}
@@ -255,20 +269,15 @@ func buildPacketRuntime(resp lanBootstrapResponse, deviceID string, mtu int) (*p
 		})
 		available[peer.DeviceID] = true
 	}
-	router, err := packet.NewRouter(packet.RouterConfig{
-		NetworkID: resp.Network.ID, SourceDeviceID: deviceID, MTU: mtu,
-		Addresses: addresses, ACLRules: resp.ACL, PeerAvailable: available,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: deviceID, ForceRelay: true})
-	for _, peer := range resp.Peers {
-		if _, err := link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.DeviceID}, packet.PeerEndpoint{Addr: "http-relay"}, false); err != nil {
+	return addresses, available
+}
+
+func upsertLinkPeers(link *packet.LinkManager, peers []lanBootstrapPeer, p2pReady bool) {
+	for _, peer := range peers {
+		if _, err := link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.DeviceID}, packet.PeerEndpoint{Addr: "http-relay"}, p2pReady); err != nil {
 			log.Printf("LAN link peer skipped: peer=%s err=%v", peer.DeviceID, err)
 		}
 	}
-	return router, link, nil
 }
 
 func runWintunPOC(ip, cidr string, mtu int) error {

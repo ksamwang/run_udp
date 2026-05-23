@@ -1,10 +1,12 @@
 package server
 
 import (
+	"database/sql"
 	"log"
 	"net"
 	"time"
 
+	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/secure"
 	"udp_tunnel_demo/internal/store"
@@ -65,7 +67,13 @@ func (a *App) runUDP() {
 			continue
 		}
 		kind, payload, ok := a.openPacket(data)
-		if !ok || kind != secure.KindControl {
+		if !ok {
+			if msg, err := protocol.Decode(data); err == nil && msg.Type == protocol.MsgLANRegister {
+				a.handleLANRegister(conn, src, msg)
+			}
+			continue
+		}
+		if kind != secure.KindControl {
 			continue
 		}
 		msg, err := protocol.Decode(payload)
@@ -78,6 +86,8 @@ func (a *App) runUDP() {
 			a.writeControl(conn, src, &protocol.Message{Type: protocol.MsgStunResp, Addr: src.String()})
 		case protocol.MsgRegister:
 			a.handleRegister(conn, src, msg)
+		case protocol.MsgLANRegister:
+			a.handleLANRegister(conn, src, msg)
 		}
 	}
 }
@@ -211,7 +221,63 @@ func (a *App) sendPeer(conn *net.UDPConn, to, about *peer) {
 		Profile:  to.profile,
 		Addr:     about.addr.String(),
 		UpnpAddr: about.upnpAddr,
+		Payload:  about.lanKey,
 	})
+}
+
+func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.Message) {
+	profile := normalizeRegisterProfile(msg.Profile)
+	if profile != store.ProfileLANPacket || msg.From == "" || msg.Peer == "" || msg.Signature == "" {
+		log.Printf("bad LAN register from %s: from=%q peer=%q profile=%q", src, msg.From, msg.Peer, msg.Profile)
+		return
+	}
+	key, err := a.db.GetVirtualDeviceKey(rctx(), msg.From)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("LAN register key lookup failed: device=%s err=%v", msg.From, err)
+		}
+		return
+	}
+	if key.Algorithm != lan.IdentityKeyAlgorithm {
+		return
+	}
+	if err := lan.VerifyRegisterPayload(key.PublicKey, msg.From, msg.Peer, profile, msg.Timestamp, msg.Payload, msg.Signature); err != nil {
+		log.Printf("LAN register signature failed: device=%s peer=%s err=%v", msg.From, msg.Peer, err)
+		return
+	}
+	if age := time.Since(time.Unix(msg.Timestamp, 0)); age > 5*time.Minute || age < -5*time.Minute {
+		log.Printf("LAN register timestamp rejected: device=%s age=%s", msg.From, age)
+		return
+	}
+	log.Printf("LAN register: id=%s want=%s from=%s", msg.From, msg.Peer, src)
+	_ = a.db.UpsertDevice(rctx(), msg.From, msg.Name, src.String(), msg.UpnpAddr, msg.Peer, true)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	byWant, ok := a.lanPeers[msg.From]
+	if !ok {
+		byWant = map[string]*peer{}
+		a.lanPeers[msg.From] = byWant
+	}
+	self := &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, lanKey: msg.Payload, want: msg.Peer, profile: profile, lastSeen: time.Now()}
+	byWant[peerSlotKey(msg.Peer, profile)] = self
+	other, ok := a.lookupLANPeerLocked(msg.Peer, msg.From, profile)
+	if !ok {
+		log.Printf("  waiting for LAN peer %s to register want=%s...", msg.Peer, msg.From)
+		return
+	}
+	a.sendPeer(conn, self, other)
+	a.sendPeer(conn, other, self)
+	log.Printf("LAN paired: %s(%s) <-> %s(%s)", self.id, self.addr, other.id, other.addr)
+}
+
+func (a *App) lookupLANPeerLocked(from, want, profile string) (*peer, bool) {
+	byWant, ok := a.lanPeers[from]
+	if !ok {
+		return nil, false
+	}
+	p, ok := byWant[peerSlotKey(want, profile)]
+	return p, ok
 }
 
 func (a *App) ensurePairSession(aID, bID, profile, path string) int64 {
