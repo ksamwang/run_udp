@@ -66,7 +66,8 @@ func (a *windowsAdapter) Configure(cfg Config) error {
 		return err
 	}
 	if err := runNetsh("interface", "ipv4", "delete", "route", cfg.CIDR, cfg.Name); err != nil && !isMissingRouteError(err) {
-		return err
+		// Stale route cleanup is best-effort; netsh localizes and sometimes mojibakes
+		// "element not found", so failing here would block an otherwise valid setup.
 	}
 	if err := runNetsh("interface", "ipv4", "add", "route", cfg.CIDR, cfg.Name, cfg.IP.String(), "store=active"); err != nil && !isDuplicateRouteError(err) {
 		return err
