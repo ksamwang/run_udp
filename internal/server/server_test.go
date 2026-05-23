@@ -16,6 +16,7 @@ import (
 	"udp_tunnel_demo/internal/config"
 	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/protocol"
+	"udp_tunnel_demo/internal/secure"
 	"udp_tunnel_demo/internal/store"
 )
 
@@ -580,6 +581,40 @@ func TestLANRegisterPairsPeers(t *testing.T) {
 	}
 	if _, ok := a.lanPeers["dev-b"][peerSlotKey("dev-a", store.ProfileLANPacket)]; !ok {
 		t.Fatalf("missing dev-b LAN peer: %+v", a.lanPeers)
+	}
+}
+
+func TestLANPeerInfoIsPlainJSONWhenServerPSKConfigured(t *testing.T) {
+	a := newTestApp(t)
+	codec, err := secure.NewCodec(a.cfg.PSK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.codec = codec
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	dst := client.LocalAddr().(*net.UDPAddr)
+	a.sendLANPeer(conn, &peer{id: "dev-a", addr: dst, profile: store.ProfileLANPacket}, &peer{id: "dev-b", addr: dst, lanKey: "x25519-b"})
+	buf := make([]byte, 1024)
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := client.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg protocol.Message
+	if err := json.Unmarshal(buf[:n], &msg); err != nil {
+		t.Fatalf("LAN peer info must be plain JSON, got %x err=%v", buf[:n], err)
+	}
+	if msg.Type != protocol.MsgPeerInfo || msg.Peer != "dev-b" || msg.Payload != "x25519-b" {
+		t.Fatalf("bad peer info: %+v", msg)
 	}
 }
 

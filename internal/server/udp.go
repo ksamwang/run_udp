@@ -225,6 +225,24 @@ func (a *App) sendPeer(conn *net.UDPConn, to, about *peer) {
 	})
 }
 
+func (a *App) sendLANPeer(conn *net.UDPConn, to, about *peer) {
+	a.writePlainControl(conn, to.addr, &protocol.Message{
+		Type:     protocol.MsgPeerInfo,
+		Peer:     about.id,
+		Profile:  to.profile,
+		Addr:     about.addr.String(),
+		UpnpAddr: about.upnpAddr,
+		Payload:  about.lanKey,
+	})
+}
+
+func (a *App) writePlainControl(conn *net.UDPConn, dst *net.UDPAddr, msg *protocol.Message) {
+	b, _ := protocol.Encode(msg)
+	if _, err := conn.WriteToUDP(b, dst); err != nil {
+		log.Printf("send plain control to %s failed: %v", dst, err)
+	}
+}
+
 func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protocol.Message) {
 	profile := normalizeRegisterProfile(msg.Profile)
 	if profile != store.ProfileLANPacket || msg.From == "" || msg.Peer == "" || msg.Signature == "" {
@@ -266,8 +284,8 @@ func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protoc
 		log.Printf("  waiting for LAN peer %s to register want=%s...", msg.Peer, msg.From)
 		return
 	}
-	a.sendPeer(conn, self, other)
-	a.sendPeer(conn, other, self)
+	a.sendLANPeer(conn, self, other)
+	a.sendLANPeer(conn, other, self)
 	log.Printf("LAN paired: %s(%s) <-> %s(%s)", self.id, self.addr, other.id, other.addr)
 }
 
