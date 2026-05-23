@@ -37,8 +37,9 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "-start-service"; Flags: runhidde
 Filename: "{app}\{#MyAppExeName}"; Parameters: "-tray -config ""{app}\lan.json"""; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "-stop-service"; Flags: runhidden waituntilterminated skipifdoesntexist
-Filename: "{app}\{#MyAppExeName}"; Parameters: "-uninstall-service"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\{#MyAppExeName}"; Parameters: "-stop-service"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "StopUDPTunnelLANService"
+Filename: "{app}\{#MyAppExeName}"; Parameters: "-uninstall-service"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "UninstallUDPTunnelLANService"
+Filename: "{cmd}"; Parameters: "/C taskkill /F /T /IM {#MyAppExeName}"; Flags: runhidden waituntilterminated; RunOnceId: "KillUDPTunnelLANProcesses"
 
 [Code]
 var
