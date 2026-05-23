@@ -53,11 +53,11 @@ func (a *windowsAdapter) Configure(cfg Config) error {
 	if cfg.IP == nil || cfg.IP.To4() == nil || strings.TrimSpace(cfg.CIDR) == "" {
 		return fmt.Errorf("wintun configure requires ipv4 ip and cidr")
 	}
-	prefix, err := cidrPrefix(cfg.CIDR)
+	mask, err := cidrMask(cfg.CIDR)
 	if err != nil {
 		return err
 	}
-	if err := runNetsh("interface", "ipv4", "set", "address", "name="+cfg.Name, "static", cfg.IP.String(), prefix); err != nil {
+	if err := runNetsh("interface", "ipv4", "set", "address", "name="+cfg.Name, "static", cfg.IP.String(), mask); err != nil {
 		return err
 	}
 	if err := runNetsh("interface", "ipv4", "set", "subinterface", cfg.Name, "mtu="+fmt.Sprint(cfg.MTU), "store=persistent"); err != nil {
@@ -89,16 +89,16 @@ func (a *windowsAdapter) WritePacket(packet []byte) error {
 	return nil
 }
 
-func cidrPrefix(cidr string) (string, error) {
+func cidrMask(cidr string) (string, error) {
 	ip, network, err := net.ParseCIDR(cidr)
 	if err != nil || ip.To4() == nil {
 		return "", fmt.Errorf("bad ipv4 cidr %q", cidr)
 	}
-	ones, bits := network.Mask.Size()
+	_, bits := network.Mask.Size()
 	if bits != 32 {
 		return "", fmt.Errorf("bad ipv4 cidr %q", cidr)
 	}
-	return fmt.Sprint(ones), nil
+	return net.IP(network.Mask).String(), nil
 }
 
 func runNetsh(args ...string) error {
