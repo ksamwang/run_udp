@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/protocol"
+	"udp_tunnel_demo/internal/secure"
+	"udp_tunnel_demo/internal/store"
 	"udp_tunnel_demo/internal/tunnel"
 	"udp_tunnel_demo/internal/upnp"
 )
@@ -235,6 +238,30 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 
 func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
 	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{
+			"dev-b": {id: "dev-b", kcp: left},
+		},
+	}
+	peer := p.peers["dev-b"]
+	peer.addr.Store(relayAddr)
+	peer.isRelay.Store(true)
+	peer.connected.Store(true)
+	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: "203.0.113.10:40000"}
+	b, _ := protocol.Encode(msg)
+	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
+	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
+		t.Fatalf("relay addr overwritten by peer info: %v", got)
+	}
+}
+
+func TestLANP2PPeerInfoLeavesUnreadyRelayMode(t *testing.T) {
+	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	directAddr := "203.0.113.10:40000"
 	p := &lanP2P{
 		deviceID: "dev-a",
 		peers: map[string]*lanP2PPeer{
@@ -244,11 +271,39 @@ func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
 	peer := p.peers["dev-b"]
 	peer.addr.Store(relayAddr)
 	peer.isRelay.Store(true)
-	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: "203.0.113.10:40000"}
+	peer.punched.Store(true)
+	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: directAddr}
 	b, _ := protocol.Encode(msg)
 	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
-	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
-		t.Fatalf("relay addr overwritten by peer info: %v", got)
+	if peer.isRelay.Load() || peer.punched.Load() || !peer.punching.Load() {
+		t.Fatalf("peer must leave unready relay mode: relay=%v punched=%v punching=%v", peer.isRelay.Load(), peer.punched.Load(), peer.punching.Load())
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != directAddr {
+		t.Fatalf("peer info must install direct address, got %v", got)
+	}
+}
+
+func TestLANP2PPeerIDByPacketUsesKCPConvBeforeAddress(t *testing.T) {
+	server := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers: map[string]*lanP2PPeer{
+			"dev-b": {id: "dev-b"},
+			"dev-c": {id: "dev-c"},
+		},
+		peerConv: map[uint32]string{},
+	}
+	p.peers["dev-b"].addr.Store(server)
+	p.peers["dev-c"].addr.Store(server)
+	convB := secure.ConvID("", "dev-a", "dev-b", store.ProfileLANPacket)
+	convC := secure.ConvID("", "dev-a", "dev-c", store.ProfileLANPacket)
+	p.peerConv[convB] = "dev-b"
+	p.peerConv[convC] = "dev-c"
+
+	var pkt [4]byte
+	binary.LittleEndian.PutUint32(pkt[:], convC)
+	if got := p.peerIDByPacket(pkt[:], server); got != "dev-c" {
+		t.Fatalf("packet must be demuxed by conv id, got %q", got)
 	}
 }
 
@@ -448,6 +503,65 @@ func TestLANKCPFrameRoundTrip(t *testing.T) {
 	}
 	if string(got) != string([]byte{1, 2, 3}) {
 		t.Fatalf("bad frame: %v", got)
+	}
+}
+
+func TestWaitLANKCPReadyAckRequiresAck(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- waitLANKCPReadyAck(left)
+	}()
+	if err := writeLANFrame(right, []byte("not-ready")); err != nil {
+		t.Fatal(err)
+	}
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "unexpected ready ack") {
+		t.Fatalf("expected unexpected ready ack error, got %v", err)
+	}
+}
+
+func TestWaitLANKCPReadyAckAcceptsListenerAck(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- waitLANKCPReadyAck(left)
+	}()
+	if err := writeLANFrame(right, lanKCPReadyFrame); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfirmLANKCPReadyListenerSendsAck(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- confirmLANKCPReady(left, true)
+	}()
+	if _, err := right.Write([]byte("\x00KCP-HELLO\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLANFrame(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(lanKCPReadyFrame) {
+		t.Fatalf("bad ready ack: %q", string(got))
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

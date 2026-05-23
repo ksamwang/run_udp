@@ -41,7 +41,10 @@ const (
 	lanRelayMaxAge        = 60 * time.Second
 	lanRotationCooldown   = 60 * time.Second
 	lanKCPFrameMax        = 64 * 1024
+	lanKCPReadyTimeout    = 35 * time.Second
 )
+
+var lanKCPReadyFrame = []byte("\x00LAN-KCP-READY\n")
 
 var tryLANUPnPFunc = tryLANUPnP
 
@@ -176,6 +179,7 @@ type lanP2P struct {
 	upnpMapping  *upnp.Mapping
 	peers        map[string]*lanP2PPeer
 	peerMu       sync.RWMutex
+	peerConv     map[uint32]string
 	server       *net.UDPAddr
 	deviceID     string
 	identity     lan.Identity
@@ -233,7 +237,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
 		conn: conn, upnpMapping: upnpMapping, server: server, deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
-		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
+		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
 	go func() {
 		<-ctx.Done()
@@ -295,6 +299,9 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 	if p.peers == nil {
 		p.peers = map[string]*lanP2PPeer{}
 	}
+	if p.peerConv == nil {
+		p.peerConv = map[uint32]string{}
+	}
 	if p.registering == nil {
 		p.registering = map[string]bool{}
 	}
@@ -314,9 +321,11 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 		p.peerMu.Lock()
 		if existing := p.peers[peerID]; existing == nil {
 			p.peers[peerID] = &lanP2PPeer{id: peerID, publicKey: peer.PublicKey}
+			p.peerConv[secure.ConvID("", p.deviceID, peerID, store.ProfileLANPacket)] = peerID
 			shouldRegister = true
 		} else {
 			existing.publicKey = peer.PublicKey
+			p.peerConv[secure.ConvID("", p.deviceID, peerID, store.ProfileLANPacket)] = peerID
 			if !p.registering[peerID] {
 				shouldRegister = true
 			}
@@ -714,7 +723,7 @@ func (p *lanP2P) readLoop(ctx context.Context, conn *net.UDPConn, gen uint64, ad
 			p.handleControl(ctx, data, src, adapter, router, link)
 			continue
 		}
-		peerID := p.peerIDByAddr(src)
+		peerID := p.peerIDByPacket(data, src)
 		if peerID == "" {
 			if src.String() == p.server.String() {
 				log.Printf("LAN P2P ignored non-json control from server: bytes=%d", len(data))
@@ -866,12 +875,10 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 		log.Printf("LAN P2P KCP open failed: peer=%s err=%v", peer.id, err)
 		return
 	}
-	if isListener {
-		if err := tunnel.ConsumeHandshake(kcpConn); err != nil {
-			p.resetPeerAfterOpenFailure(ctx, peer, kcpConn)
-			log.Printf("LAN P2P KCP handshake failed: peer=%s err=%v", peer.id, err)
-			return
-		}
+	if err := confirmLANKCPReady(kcpConn, isListener); err != nil {
+		p.resetPeerAfterOpenFailure(ctx, peer, kcpConn)
+		log.Printf("LAN P2P KCP ready check failed: peer=%s role=%s err=%v", peer.id, role, err)
+		return
 	}
 	peer.kcpMu.Lock()
 	peer.kcp = kcpConn
@@ -890,6 +897,34 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 		_ = kcpConn.Close()
 	}()
 	go p.readTunnelFrames(ctx, adapter, router, link, peer, kcpConn)
+}
+
+func confirmLANKCPReady(conn net.Conn, listener bool) error {
+	if listener {
+		if err := tunnel.ConsumeHandshake(conn); err != nil {
+			return err
+		}
+		if err := writeLANFrame(conn, lanKCPReadyFrame); err != nil {
+			return fmt.Errorf("send ready ack: %w", err)
+		}
+		return nil
+	}
+	return waitLANKCPReadyAck(conn)
+}
+
+func waitLANKCPReadyAck(conn net.Conn) error {
+	if err := conn.SetReadDeadline(time.Now().Add(lanKCPReadyTimeout)); err != nil {
+		return err
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	payload, err := readLANFrame(conn)
+	if err != nil {
+		return fmt.Errorf("read ready ack: %w", err)
+	}
+	if !bytes.Equal(payload, lanKCPReadyFrame) {
+		return fmt.Errorf("unexpected ready ack: %q", string(payload))
+	}
+	return nil
 }
 
 func (p *lanP2P) readTunnelFrames(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer, conn net.Conn) {
@@ -987,16 +1022,32 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P peer info ignored: unknown peer=%s addr=%s", msg.Peer, msg.Addr)
 			return
 		}
-		if peer.isRelay.Load() {
-			log.Printf("LAN P2P peer info ignored in relay mode: peer=%s addr=%s", msg.Peer, msg.Addr)
-			return
-		}
 		peer.x25519Pub = msg.Payload
 		p.ensurePeerCodecs(peer)
 		addr, err := net.ResolveUDPAddr("udp", msg.Addr)
 		if err != nil {
 			log.Printf("LAN P2P bad peer addr: peer=%s addr=%q err=%v", msg.Peer, msg.Addr, err)
 			return
+		}
+		if peer.isRelay.Load() {
+			peer.kcpMu.Lock()
+			relayReady := peer.kcp != nil && peer.connected.Load()
+			if relayReady {
+				peer.kcpMu.Unlock()
+				log.Printf("LAN P2P peer info ignored in ready relay mode: peer=%s addr=%s", msg.Peer, msg.Addr)
+				return
+			}
+			if peer.pc != nil {
+				_ = peer.pc.Close()
+				peer.pc = nil
+			}
+			peer.connected.Store(false)
+			peer.punched.Store(false)
+			peer.punching.Store(false)
+			peer.isRelay.Store(false)
+			peer.relaySince.Store(0)
+			peer.kcpMu.Unlock()
+			log.Printf("LAN P2P leaving relay mode for fresh peer info: peer=%s addr=%s", msg.Peer, msg.Addr)
 		}
 		peer.addr.Store(addr)
 		if peer.pc == nil {
@@ -1066,6 +1117,23 @@ func (p *lanP2P) peerIDByAddr(addr *net.UDPAddr) string {
 		}
 	}
 	return ""
+}
+
+func (p *lanP2P) peerIDByPacket(data []byte, addr *net.UDPAddr) string {
+	if id := p.peerIDByConv(data); id != "" {
+		return id
+	}
+	return p.peerIDByAddr(addr)
+}
+
+func (p *lanP2P) peerIDByConv(data []byte) string {
+	if len(data) < 4 {
+		return ""
+	}
+	conv := binary.LittleEndian.Uint32(data[:4])
+	p.peerMu.RLock()
+	defer p.peerMu.RUnlock()
+	return p.peerConv[conv]
 }
 
 func refreshLANPeers(ctx context.Context, serverHTTP string, router *packet.Router, link *packet.LinkManager, p2p *lanP2P, initial lanBootstrapResponse, identity lan.Identity, deviceID string) {
