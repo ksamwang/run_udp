@@ -582,6 +582,12 @@ func TestLANRegisterPairsPeers(t *testing.T) {
 	if _, ok := a.lanPeers["dev-b"][peerSlotKey("dev-a", store.ProfileLANPacket)]; !ok {
 		t.Fatalf("missing dev-b LAN peer: %+v", a.lanPeers)
 	}
+	if _, ok := a.pairs.Load("127.0.0.1:15001"); !ok {
+		t.Fatalf("missing LAN relay route for dev-a")
+	}
+	if _, ok := a.pairs.Load("127.0.0.1:15002"); !ok {
+		t.Fatalf("missing LAN relay route for dev-b")
+	}
 }
 
 func TestLANPeerInfoIsPlainJSONWhenServerPSKConfigured(t *testing.T) {

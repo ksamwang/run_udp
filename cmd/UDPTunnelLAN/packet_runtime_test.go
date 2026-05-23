@@ -72,53 +72,26 @@ func TestRelayDisabledErrorIsVisible(t *testing.T) {
 }
 
 func TestLANP2PSendAfterPunch(t *testing.T) {
-	dst, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dst.Close()
-	src, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer src.Close()
-	privA, pubA, err := newX25519Keypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	privB, pubB, err := newX25519Keypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx, _, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, rx, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer := &lanP2PPeer{id: "dev-b", tx: tx}
-	peer.addr.Store(dst.LocalAddr().(*net.UDPAddr))
-	peer.punched.Store(true)
-	p := &lanP2P{conn: src, deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	peer := &lanP2PPeer{id: "dev-b", kcp: left}
+	peer.connected.Store(true)
+	p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
 
-	err = p.Send(packet.RoutedFrame{DstDevice: "dev-b", Payload: []byte{1, 2, 3}})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Send(packet.RoutedFrame{DstDevice: "dev-b", Payload: []byte{1, 2, 3}})
+	}()
+	got, err := readLANFrame(right)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buf := make([]byte, 256)
-	_ = dst.SetReadDeadline(testDeadline())
-	n, _, err := dst.ReadFromUDP(buf)
-	if err != nil {
+	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
-	plain, err := rx.Open(buf[:n])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(plain) != string([]byte{1, 2, 3}) {
-		t.Fatalf("bad packet data=%v", plain)
+	if string(got) != string([]byte{1, 2, 3}) {
+		t.Fatalf("bad packet data=%v", got)
 	}
 }
 
@@ -191,7 +164,7 @@ func TestLANP2PStartsRepeatedPunchAfterPeerInfo(t *testing.T) {
 	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
 	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: peerConn.LocalAddr().String(), Payload: pubB}
 	b, _ := protocol.Encode(msg)
-	p.handleControl(ctx, b, peerConn.LocalAddr().(*net.UDPAddr), link)
+	p.handleControl(ctx, b, peerConn.LocalAddr().(*net.UDPAddr), nil, nil, link)
 
 	buf := make([]byte, 1024)
 	_ = peerConn.SetReadDeadline(testDeadline())
@@ -240,7 +213,7 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 		Addr: observedConn.LocalAddr().String(), UpnpAddr: upnpConn.LocalAddr().String(), Payload: pubB,
 	}
 	b, _ := protocol.Encode(msg)
-	p.handleControl(ctx, b, observedConn.LocalAddr().(*net.UDPAddr), link)
+	p.handleControl(ctx, b, observedConn.LocalAddr().(*net.UDPAddr), nil, nil, link)
 
 	expectPunch := func(conn *net.UDPConn, label string) {
 		t.Helper()
@@ -256,6 +229,20 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 	}
 	expectPunch(observedConn, "observed")
 	expectPunch(upnpConn, "upnp")
+}
+
+func TestLANKCPFrameRoundTrip(t *testing.T) {
+	var buf strings.Builder
+	if err := writeLANFrame(&buf, []byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLANFrame(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string([]byte{1, 2, 3}) {
+		t.Fatalf("bad frame: %v", got)
+	}
 }
 
 func testDeadline() time.Time {

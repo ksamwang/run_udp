@@ -291,6 +291,11 @@ func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protoc
 	}
 	a.sendLANPeer(conn, self, other)
 	a.sendLANPeer(conn, other, self)
+	sessionID := a.ensurePairSession(self.id, other.id, profile, "pending")
+	self.sessionID = sessionID
+	other.sessionID = sessionID
+	a.pairs.Store(self.addr.String(), pairRoute{dst: cloneUDP(other.addr), lastSeen: time.Now(), sessionID: sessionID})
+	a.pairs.Store(other.addr.String(), pairRoute{dst: cloneUDP(self.addr), lastSeen: time.Now(), sessionID: sessionID})
 	log.Printf("LAN paired: %s(%s) <-> %s(%s)", self.id, self.addr, other.id, other.addr)
 }
 
