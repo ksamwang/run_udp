@@ -207,6 +207,12 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
+	} else if strings.TrimSpace(address.VirtualIP) == "" {
+		address, err = a.allocateVirtualAddress(r.Context(), network, req.DeviceID, firstNonEmpty(address.Hostname, strings.TrimSpace(req.DeviceName)))
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
 	}
 	routes, err := a.db.ListVirtualRoutes(r.Context(), network.ID, req.DeviceID)
 	if err != nil {
@@ -315,6 +321,15 @@ func isIPv4Broadcast(n *net.IPNet, ip net.IP) bool {
 		}
 	}
 	return true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (a *App) handleLANStatus(w http.ResponseWriter, r *http.Request) {

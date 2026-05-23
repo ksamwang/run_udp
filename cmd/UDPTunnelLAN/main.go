@@ -144,7 +144,7 @@ func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bo
 			return fmt.Errorf("Wintun PoC failed: %w", err)
 		}
 	}
-	log.Printf("virtual LAN runtime is not implemented yet; service remains alive for installer/runtime validation")
+	log.Printf("LAN control-plane bootstrap is active; packet forwarding runtime will start after peer link integration")
 	<-ctx.Done()
 	log.Printf("LAN runtime shutdown requested")
 	return nil
