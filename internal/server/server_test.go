@@ -316,6 +316,64 @@ func TestLANBootstrapRepairsEmptyVirtualIP(t *testing.T) {
 	}
 }
 
+func TestLANPacketRelayDisabledByDefault(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.AllowRelay = false
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/send", map[string]any{
+		"device_id": "dev-a",
+		"frames": []map[string]any{{
+			"network_id": 1, "src_device": "dev-a", "dst_device": "dev-b", "type": 1, "payload": "AQID",
+		}},
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["code"] != "relay_disabled" {
+		t.Fatalf("expected relay_disabled, got %v body=%s", resp["code"], rec.Body.String())
+	}
+}
+
+func TestLANPacketRelaySendAndPoll(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.AllowRelay = true
+	send := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/send", map[string]any{
+		"device_id": "dev-a",
+		"frames": []map[string]any{{
+			"network_id": 1, "src_device": "dev-a", "dst_device": "dev-b", "type": 1, "payload": "AQID",
+		}},
+	}, nil)
+	if send.Code != http.StatusOK {
+		t.Fatalf("send status=%d body=%s", send.Code, send.Body.String())
+	}
+	var sendResp map[string]int
+	if err := json.Unmarshal(send.Body.Bytes(), &sendResp); err != nil {
+		t.Fatal(err)
+	}
+	if sendResp["accepted"] != 1 {
+		t.Fatalf("bad send response: %s", send.Body.String())
+	}
+
+	poll := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/poll", map[string]any{
+		"device_id": "dev-b", "max": 10,
+	}, nil)
+	if poll.Code != http.StatusOK {
+		t.Fatalf("poll status=%d body=%s", poll.Code, poll.Body.String())
+	}
+	var pollResp struct {
+		Frames []lanPacketRelayFrame `json:"frames"`
+	}
+	if err := json.Unmarshal(poll.Body.Bytes(), &pollResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(pollResp.Frames) != 1 || pollResp.Frames[0].SrcDevice != "dev-a" || pollResp.Frames[0].Payload != "AQID" {
+		t.Fatalf("bad poll response: %+v", pollResp.Frames)
+	}
+}
+
 func TestHandleForwardsLocalPortConflict(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
@@ -1173,6 +1231,7 @@ func newTestApp(t *testing.T) *App {
 		startTime: time.Now(),
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
+		lanRelay:  newLANPacketRelay(256),
 	}
 }
 

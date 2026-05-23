@@ -54,7 +54,7 @@ CLIENT_LOG_LEVEL=debug
 	if cfg.AdminAccessTokenTTL != 2*time.Hour {
 		t.Fatalf("duration not loaded: %+v", cfg.AdminAccessTokenTTL)
 	}
-	if !cfg.AllowRelay || !cfg.ClientTrayEnabled || cfg.ClientLogLevel != "info" {
+	if cfg.AllowRelay || !cfg.ClientTrayEnabled || cfg.ClientLogLevel != "info" {
 		t.Fatalf("database-owned settings should not be loaded from env: %+v", cfg)
 	}
 }

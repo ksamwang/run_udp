@@ -71,7 +71,7 @@ func DefaultServer() Server {
 		PeerTTL:              90 * time.Second,
 		PairTTL:              2 * time.Minute,
 		RelayIdleTimeout:     5 * time.Minute,
-		AllowRelay:           true,
+		AllowRelay:           false,
 		AllowLegacy:          false,
 		ClientNoUPnP:         c.NoUPnP,
 		ClientUPnPTimeout:    c.UPnPTimeout,

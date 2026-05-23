@@ -38,6 +38,7 @@
 - 安装形态：`UDPTunnelLAN` 使用独立安装包。
 - 默认启动：LAN 服务默认开机启动。
 - 默认启用：LAN 功能默认启用。
+- 服务端默认不允许中继，LAN relay 必须由管理员显式开启。
 
 ## 建议目录
 
@@ -279,7 +280,7 @@ internal/
 - [x] 复用当前 NAT 探测和 rendezvous。
 - [x] 为 LAN 数据面设计 packet mode。
 - [x] P2P 可用时直连。
-- [x] P2P 不可用时走 relay。
+- [x] P2P 不可用且服务端允许中继时走 relay。
 - [x] 支持 peer session keepalive。
 - [x] 网络变化时重建 peer link。
 - [x] 增加每设备最大 peer session 数限制。
@@ -289,16 +290,21 @@ internal/
 实现说明：
 
 - LAN 数据面使用 `lan-packet` profile 复用现有 rendezvous 和 UDP relay 通道。
-- 当前完成 packet link 会话管理与单元测试，真实 P2P/relay 端到端访问需在阶段 7 接入 Wintun runtime 后验证。
+- 当前完成 packet link 会话管理与单元测试，HTTP relay API 已按 `allow_relay` 门控接入；真实 UDP P2P 端到端访问仍需后续接入。
 
 验收：
 
 - P2P 模式下 A 能访问 B 的 TCP 服务。
-- relay 模式下 A 能访问 B 的 TCP 服务。
+- relay 模式下 A 能访问 B 的 TCP 服务，且默认关闭 relay 时应明确失败并上报状态。
 - peer session 泄漏不会导致客户端或服务端资源持续增长。
 
 ## 阶段 7：TCP/RDP 可用性
 
+- [x] Wintun ReadPacket 接入 Packet Router。
+- [x] Packet Router 输出接入 LAN relay send API。
+- [x] LAN relay poll 写回 Wintun WritePacket。
+- [x] 服务端 LAN relay API 受 `allow_relay` 控制，默认关闭。
+- [ ] UDP P2P packet link 端到端接入。
 - [ ] 验证 RDP：`mstsc /v:172.16.10.x`
 - [ ] 验证 SSH。
 - [ ] 验证 HTTP。

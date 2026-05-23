@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"udp_tunnel_demo/internal/lan"
+	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/store"
 	"udp_tunnel_demo/internal/wintun"
 )
@@ -135,7 +136,7 @@ func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bo
 	if strings.TrimSpace(cfg.ServerHTTP) == "" {
 		log.Printf("LAN bootstrap skipped: server_http is empty; open LAN tray settings to configure it")
 	} else {
-		if err := bootstrapAndReport(ctx, cfg, identity); err != nil {
+		if err := bootstrapAndRun(ctx, cfg, identity); err != nil {
 			log.Printf("LAN bootstrap failed: %v", err)
 		}
 	}
@@ -144,13 +145,13 @@ func runLAN(ctx context.Context, configPath string, cfg lan.Config, wintunPOC bo
 			return fmt.Errorf("Wintun PoC failed: %w", err)
 		}
 	}
-	log.Printf("LAN control-plane bootstrap is active; packet forwarding runtime will start after peer link integration")
+	log.Printf("LAN control-plane bootstrap is active")
 	<-ctx.Done()
 	log.Printf("LAN runtime shutdown requested")
 	return nil
 }
 
-func bootstrapAndReport(ctx context.Context, cfg lan.Config, identity lan.Identity) error {
+func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity) error {
 	deviceID := lan.DeviceID()
 	resp, err := requestLANBootstrap(ctx, cfg.ServerHTTP, lanBootstrapRequest{
 		DeviceID: deviceID, DeviceName: defaultDeviceName(), PublicKey: identity.PublicKey,
@@ -169,26 +170,38 @@ func bootstrapAndReport(ctx context.Context, cfg lan.Config, identity lan.Identi
 		log.Printf("LAN peer list is empty; no other virtual IP is currently assigned in this network")
 	}
 	adapterState := "not_configured"
+	runtimeState := "bootstrap"
 	lastError := ""
 	selectedCIDR := resp.Network.CIDR
 	mtu := wintun.DefaultMTU
 	mss := 1200
+	var adapter *wintun.Adapter
+	var router *packet.Router
+	var link *packet.LinkManager
 	if resp.Address.VirtualIP != "" {
-		state, err := configureLANAdapter(resp.Address.VirtualIP, resp.Network.CIDR, mtu)
+		state, configured, err := configureLANAdapter(resp.Address.VirtualIP, resp.Network.CIDR, mtu)
 		if err != nil {
 			adapterState = "error"
 			lastError = err.Error()
 			log.Printf("LAN adapter configure failed: %v", err)
 		} else {
+			adapter = configured
 			adapterState = "up"
+			runtimeState = "running"
 			selectedCIDR = state.SelectedCIDR
 			mss = state.MSS
 			log.Printf("LAN adapter up: name=%q ip=%s cidr=%s mtu=%d mss=%d route_conflict=%v",
 				wintun.DefaultAdapterName, resp.Address.VirtualIP, selectedCIDR, mtu, mss, state.Conflict.Conflicts)
+			router, link, err = buildPacketRuntime(resp, deviceID, mtu)
+			if err != nil {
+				runtimeState = "error"
+				lastError = err.Error()
+				log.Printf("LAN packet runtime prepare failed: %v", err)
+			}
 		}
 	}
 	state := store.VirtualPeerState{
-		DeviceID: deviceID, NetworkID: resp.Network.ID, State: "bootstrap", AdapterState: adapterState,
+		DeviceID: deviceID, NetworkID: resp.Network.ID, State: runtimeState, AdapterState: adapterState,
 		SelectedCIDR: selectedCIDR, MTU: mtu, MSS: mss,
 		LastError: lastError, LastTransitionAt: time.Now().Format(time.RFC3339),
 	}
@@ -196,13 +209,16 @@ func bootstrapAndReport(ctx context.Context, cfg lan.Config, identity lan.Identi
 		return err
 	}
 	log.Printf("LAN status reported: state=%s adapter=%s selected_cidr=%s", state.State, state.AdapterState, state.SelectedCIDR)
+	if adapter != nil && router != nil && link != nil {
+		go runPacketForwarding(ctx, cfg.ServerHTTP, adapter, router, link, deviceID, resp.Network.ID)
+	}
 	return nil
 }
 
-func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, error) {
+func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, *wintun.Adapter, error) {
 	state, err := wintun.InspectSystem(cidr, mtu)
 	if err != nil {
-		return state, err
+		return state, nil, err
 	}
 	selectedCIDR := state.SelectedCIDR
 	if selectedCIDR == "" {
@@ -215,7 +231,7 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, e
 		MTU:  mtu,
 	})
 	if err != nil {
-		return state, err
+		return state, nil, err
 	}
 	if err := adapter.Configure(wintun.Config{
 		Name: wintun.DefaultAdapterName,
@@ -224,9 +240,35 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, e
 		MTU:  mtu,
 	}); err != nil {
 		_ = adapter.Close()
-		return state, err
+		return state, nil, err
 	}
-	return state, nil
+	return state, adapter, nil
+}
+
+func buildPacketRuntime(resp lanBootstrapResponse, deviceID string, mtu int) (*packet.Router, *packet.LinkManager, error) {
+	addresses := make([]store.VirtualAddress, 0, len(resp.Peers)+1)
+	addresses = append(addresses, resp.Address)
+	available := map[string]bool{}
+	for _, peer := range resp.Peers {
+		addresses = append(addresses, store.VirtualAddress{
+			DeviceID: peer.DeviceID, NetworkID: resp.Network.ID, VirtualIP: peer.VirtualIP, Hostname: peer.Hostname,
+		})
+		available[peer.DeviceID] = true
+	}
+	router, err := packet.NewRouter(packet.RouterConfig{
+		NetworkID: resp.Network.ID, SourceDeviceID: deviceID, MTU: mtu,
+		Addresses: addresses, ACLRules: resp.ACL, PeerAvailable: available,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: deviceID, ForceRelay: true})
+	for _, peer := range resp.Peers {
+		if _, err := link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.DeviceID}, packet.PeerEndpoint{Addr: "http-relay"}, false); err != nil {
+			log.Printf("LAN link peer skipped: peer=%s err=%v", peer.DeviceID, err)
+		}
+	}
+	return router, link, nil
 }
 
 func runWintunPOC(ip, cidr string, mtu int) error {

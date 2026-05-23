@@ -45,6 +45,8 @@ type App struct {
 	pairs    sync.Map // src address string -> pairRoute
 
 	cfgMu sync.RWMutex
+
+	lanRelay *lanPacketRelay
 }
 
 type agentTunnelReport struct {
@@ -114,6 +116,7 @@ func New(cfg config.Server) (*App, error) {
 		startTime: time.Now(),
 		peers:     map[string]map[string]*peer{},
 		pairByID:  map[string]int64{},
+		lanRelay:  newLANPacketRelay(256),
 	}
 	if err := a.ensureAdminUser(); err != nil {
 		_ = db.Close()
