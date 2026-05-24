@@ -209,6 +209,33 @@ func TestLANAdminAPIs(t *testing.T) {
 	if len(keys) != 1 || keys[0].DeviceID != "dev-a" || keys[0].PublicKey != "pub-a" {
 		t.Fatalf("bad device keys: %+v", keys)
 	}
+	groupRec := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/groups", map[string]any{
+		"id": "ops", "name": "Ops", "device_ids": []string{"dev-a", "dev-b"},
+	})
+	if groupRec.Code != http.StatusOK {
+		t.Fatalf("create group status=%d body=%s", groupRec.Code, groupRec.Body.String())
+	}
+	listGroups := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/groups", nil)
+	if listGroups.Code != http.StatusOK {
+		t.Fatalf("list groups status=%d body=%s", listGroups.Code, listGroups.Body.String())
+	}
+	var groups []lanGroupResponse
+	if err := json.Unmarshal(listGroups.Body.Bytes(), &groups); err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ID != "ops" || len(groups[0].DeviceIDs) != 2 {
+		t.Fatalf("bad groups: %+v", groups)
+	}
+	patchGroup := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/groups/ops", map[string]any{
+		"id": "ignored", "name": "Ops Team", "device_ids": []string{"dev-a"},
+	})
+	if patchGroup.Code != http.StatusOK {
+		t.Fatalf("patch group status=%d body=%s", patchGroup.Code, patchGroup.Body.String())
+	}
+	delGroup := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/groups/ops", nil)
+	if delGroup.Code != http.StatusOK {
+		t.Fatalf("delete group status=%d body=%s", delGroup.Code, delGroup.Body.String())
+	}
 	deleteInUse := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/networks/"+strconv.FormatInt(network.ID, 10), nil)
 	if deleteInUse.Code != http.StatusBadRequest {
 		t.Fatalf("delete in-use network status=%d body=%s", deleteInUse.Code, deleteInUse.Body.String())
@@ -324,6 +351,18 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := a.db.UpsertVirtualDeviceGroup(ctx, store.VirtualDeviceGroup{ID: "ops", Name: "Ops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetVirtualDeviceGroupMembers(ctx, "ops", []string{"dev-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.CreateVirtualACLRule(ctx, store.VirtualACLRule{
+		NetworkID: network.ID, SourceGroupID: "ops", TargetDeviceID: "dev-b",
+		Protocol: "tcp", PortStart: 22, PortEnd: 22, Action: "deny", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.db.UpsertVirtualRoute(ctx, store.VirtualRoute{
 		DeviceID: "dev-a", NetworkID: network.ID, CIDR: "10.30.0.0/16", Advertise: true, Accept: true,
 	}); err != nil {
@@ -354,6 +393,15 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if len(resp.Routes) != 1 || resp.Routes[0].CIDR != "10.30.0.0/16" {
 		t.Fatalf("bootstrap routes not returned: %+v", resp.Routes)
+	}
+	hasExpandedGroupACL := false
+	for _, rule := range resp.ACL {
+		if rule.SourceDeviceID == "dev-a" && rule.TargetDeviceID == "dev-b" && rule.SourceGroupID == "" && rule.PortStart == 22 {
+			hasExpandedGroupACL = true
+		}
+	}
+	if !hasExpandedGroupACL {
+		t.Fatalf("group acl not expanded: %+v", resp.ACL)
 	}
 	key, err := a.db.GetVirtualDeviceKey(ctx, "dev-a")
 	if err != nil {

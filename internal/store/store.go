@@ -127,6 +127,19 @@ type VirtualDeviceKey struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+type VirtualDeviceGroup struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type VirtualDeviceGroupMember struct {
+	GroupID   string `json:"group_id"`
+	DeviceID  string `json:"device_id"`
+	CreatedAt string `json:"created_at"`
+}
+
 type VirtualACLRule struct {
 	ID             int64  `json:"id"`
 	NetworkID      int64  `json:"network_id"`

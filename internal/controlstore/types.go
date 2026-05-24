@@ -59,6 +59,11 @@ type Store interface {
 	UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error
 	GetVirtualDeviceKey(ctx context.Context, deviceID string) (store.VirtualDeviceKey, error)
 	ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualDeviceKey, error)
+	UpsertVirtualDeviceGroup(ctx context.Context, group store.VirtualDeviceGroup) (store.VirtualDeviceGroup, error)
+	DeleteVirtualDeviceGroup(ctx context.Context, id string) error
+	ListVirtualDeviceGroups(ctx context.Context) ([]store.VirtualDeviceGroup, error)
+	SetVirtualDeviceGroupMembers(ctx context.Context, groupID string, deviceIDs []string) error
+	ListVirtualDeviceGroupMembers(ctx context.Context, groupID string) ([]store.VirtualDeviceGroupMember, error)
 	CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error)
 	ListVirtualACLRules(ctx context.Context, networkID int64) ([]store.VirtualACLRule, error)
 	UpdateVirtualACLRule(ctx context.Context, id int64, rule store.VirtualACLRule) error

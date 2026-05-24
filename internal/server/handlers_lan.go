@@ -214,6 +214,83 @@ func (a *App) handleAdminLANDeviceKeys(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type lanGroupResponse struct {
+	store.VirtualDeviceGroup
+	DeviceIDs []string `json:"device_ids"`
+}
+
+func (a *App) handleAdminLANGroups(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		groups, err := a.listLANGroups(r.Context())
+		writeJSONOrError(w, groups, err)
+	case http.MethodPost:
+		group, members, err := decodeLANGroup(r)
+		if err == nil {
+			group, err = a.db.UpsertVirtualDeviceGroup(r.Context(), group)
+		}
+		if err == nil {
+			err = a.db.SetVirtualDeviceGroupMembers(r.Context(), group.ID, members)
+		}
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSONOrError(w, lanGroupResponse{VirtualDeviceGroup: group, DeviceIDs: members}, nil)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
+func (a *App) handleAdminLANGroup(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/admin/lan/groups/"))
+	if id == "" {
+		writeJSONOrError(w, nil, badRequest("bad_group_id", "bad group id"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		group, members, err := decodeLANGroup(r)
+		if err == nil {
+			group.ID = id
+			group, err = a.db.UpsertVirtualDeviceGroup(r.Context(), group)
+		}
+		if err == nil {
+			err = a.db.SetVirtualDeviceGroupMembers(r.Context(), group.ID, members)
+		}
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, nil)
+	case http.MethodDelete:
+		err := a.db.DeleteVirtualDeviceGroup(r.Context(), id)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
+func (a *App) listLANGroups(ctx context.Context) ([]lanGroupResponse, error) {
+	groups, err := a.db.ListVirtualDeviceGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	members, err := a.db.ListVirtualDeviceGroupMembers(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	byGroup := map[string][]string{}
+	for _, member := range members {
+		byGroup[member.GroupID] = append(byGroup[member.GroupID], member.DeviceID)
+	}
+	out := make([]lanGroupResponse, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, lanGroupResponse{VirtualDeviceGroup: group, DeviceIDs: byGroup[group.ID]})
+	}
+	return out, nil
+}
+
 func (a *App) handleAdminLANACLRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -389,6 +466,11 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
+	acl, err = a.expandVirtualACLRules(r.Context(), acl, addresses)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
 	keyByDevice := make(map[string]string, len(keys))
 	for _, key := range keys {
 		if key.Algorithm == "ed25519" {
@@ -542,6 +624,77 @@ func validateVirtualAddress(address store.VirtualAddress) error {
 		return badRequest("bad_address", "virtual_ip is invalid")
 	}
 	return nil
+}
+
+func decodeLANGroup(r *http.Request) (store.VirtualDeviceGroup, []string, error) {
+	var req struct {
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		DeviceIDs []string `json:"device_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return store.VirtualDeviceGroup{}, nil, badRequest("bad_json", "bad json")
+	}
+	group := store.VirtualDeviceGroup{ID: strings.TrimSpace(req.ID), Name: strings.TrimSpace(req.Name)}
+	if group.ID == "" || group.Name == "" {
+		return group, nil, badRequest("bad_group", "id and name are required")
+	}
+	seen := map[string]bool{}
+	members := make([]string, 0, len(req.DeviceIDs))
+	for _, deviceID := range req.DeviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" || seen[deviceID] {
+			continue
+		}
+		seen[deviceID] = true
+		members = append(members, deviceID)
+	}
+	return group, members, nil
+}
+
+func (a *App) expandVirtualACLRules(ctx context.Context, rules []store.VirtualACLRule, addresses []store.VirtualAddress) ([]store.VirtualACLRule, error) {
+	members, err := a.db.ListVirtualDeviceGroupMembers(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	byGroup := map[string][]string{}
+	for _, member := range members {
+		byGroup[member.GroupID] = append(byGroup[member.GroupID], member.DeviceID)
+	}
+	known := map[string]bool{}
+	for _, address := range addresses {
+		known[address.DeviceID] = true
+	}
+	out := make([]store.VirtualACLRule, 0, len(rules))
+	for _, rule := range rules {
+		srcs := aclDevices(rule.SourceDeviceID, rule.SourceGroupID, byGroup, known)
+		dsts := aclDevices(rule.TargetDeviceID, rule.TargetGroupID, byGroup, known)
+		for _, src := range srcs {
+			for _, dst := range dsts {
+				expanded := rule
+				expanded.SourceDeviceID = src
+				expanded.TargetDeviceID = dst
+				expanded.SourceGroupID = ""
+				expanded.TargetGroupID = ""
+				out = append(out, expanded)
+			}
+		}
+	}
+	return out, nil
+}
+
+func aclDevices(deviceID, groupID string, byGroup map[string][]string, known map[string]bool) []string {
+	if strings.TrimSpace(deviceID) != "" {
+		return []string{strings.TrimSpace(deviceID)}
+	}
+	if strings.TrimSpace(groupID) != "" {
+		return byGroup[strings.TrimSpace(groupID)]
+	}
+	out := make([]string, 0, len(known))
+	for deviceID := range known {
+		out = append(out, deviceID)
+	}
+	return out
 }
 
 func (a *App) validateVirtualAddressCIDR(ctx context.Context, address store.VirtualAddress) error {

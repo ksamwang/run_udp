@@ -148,6 +148,23 @@ type VirtualDeviceKey struct {
 
 func (VirtualDeviceKey) TableName() string { return "virtual_device_keys" }
 
+type VirtualDeviceGroup struct {
+	ID        string `gorm:"primaryKey;size:191;column:id"`
+	Name      string `gorm:"size:191;not null;column:name"`
+	CreatedAt string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+}
+
+func (VirtualDeviceGroup) TableName() string { return "virtual_device_groups" }
+
+type VirtualDeviceGroupMember struct {
+	GroupID   string `gorm:"primaryKey;size:191;column:group_id"`
+	DeviceID  string `gorm:"primaryKey;size:191;column:device_id"`
+	CreatedAt string `gorm:"size:64;not null;column:created_at"`
+}
+
+func (VirtualDeviceGroupMember) TableName() string { return "virtual_device_group_members" }
+
 type VirtualACLRule struct {
 	ID             int64  `gorm:"primaryKey;column:id"`
 	NetworkID      int64  `gorm:"index;not null;column:network_id"`

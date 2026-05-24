@@ -63,6 +63,8 @@ func (s *MySQLStore) AutoMigrate() error {
 		&VirtualNetwork{},
 		&VirtualAddress{},
 		&VirtualDeviceKey{},
+		&VirtualDeviceGroup{},
+		&VirtualDeviceGroupMember{},
 		&VirtualACLRule{},
 		&VirtualRoute{},
 		&VirtualPeerState{},
@@ -670,6 +672,88 @@ func (s *MySQLStore) ListVirtualDeviceKeys(ctx context.Context) ([]store.Virtual
 	return out, nil
 }
 
+func (s *MySQLStore) UpsertVirtualDeviceGroup(ctx context.Context, group store.VirtualDeviceGroup) (store.VirtualDeviceGroup, error) {
+	now := nowString()
+	group.ID = strings.TrimSpace(group.ID)
+	group.Name = strings.TrimSpace(group.Name)
+	if group.CreatedAt == "" {
+		group.CreatedAt = now
+	}
+	group.UpdatedAt = now
+	row := VirtualDeviceGroup{ID: group.ID, Name: group.Name, CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt}
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.Assignments(map[string]any{"name": row.Name, "updated_at": row.UpdatedAt}),
+	}).Create(&row).Error; err != nil {
+		return group, err
+	}
+	return row.toStore(), nil
+}
+
+func (s *MySQLStore) DeleteVirtualDeviceGroup(ctx context.Context, id string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&VirtualDeviceGroupMember{}, "group_id = ?", id).Error; err != nil {
+			return err
+		}
+		txDelete := tx.Delete(&VirtualDeviceGroup{}, "id = ?", id)
+		if txDelete.Error != nil {
+			return txDelete.Error
+		}
+		if txDelete.RowsAffected == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
+func (s *MySQLStore) ListVirtualDeviceGroups(ctx context.Context) ([]store.VirtualDeviceGroup, error) {
+	var rows []VirtualDeviceGroup
+	if err := s.db.WithContext(ctx).Order("id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualDeviceGroup, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) SetVirtualDeviceGroupMembers(ctx context.Context, groupID string, deviceIDs []string) error {
+	now := nowString()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&VirtualDeviceGroupMember{}, "group_id = ?", groupID).Error; err != nil {
+			return err
+		}
+		for _, deviceID := range deviceIDs {
+			deviceID = strings.TrimSpace(deviceID)
+			if deviceID == "" {
+				continue
+			}
+			row := VirtualDeviceGroupMember{GroupID: groupID, DeviceID: deviceID, CreatedAt: now}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *MySQLStore) ListVirtualDeviceGroupMembers(ctx context.Context, groupID string) ([]store.VirtualDeviceGroupMember, error) {
+	var rows []VirtualDeviceGroupMember
+	q := s.db.WithContext(ctx).Order("group_id, device_id")
+	if groupID != "" {
+		q = q.Where("group_id = ?", groupID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualDeviceGroupMember, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
 func (s *MySQLStore) CreateVirtualACLRule(ctx context.Context, rule store.VirtualACLRule) (store.VirtualACLRule, error) {
 	now := nowString()
 	row := VirtualACLRule{
@@ -930,6 +1014,14 @@ func (k VirtualDeviceKey) toStore() store.VirtualDeviceKey {
 	return store.VirtualDeviceKey{
 		DeviceID: k.DeviceID, Algorithm: k.Algorithm, PublicKey: k.PublicKey, CreatedAt: k.CreatedAt, UpdatedAt: k.UpdatedAt,
 	}
+}
+
+func (g VirtualDeviceGroup) toStore() store.VirtualDeviceGroup {
+	return store.VirtualDeviceGroup{ID: g.ID, Name: g.Name, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
+}
+
+func (m VirtualDeviceGroupMember) toStore() store.VirtualDeviceGroupMember {
+	return store.VirtualDeviceGroupMember{GroupID: m.GroupID, DeviceID: m.DeviceID, CreatedAt: m.CreatedAt}
 }
 
 func (r VirtualACLRule) toStore() store.VirtualACLRule {

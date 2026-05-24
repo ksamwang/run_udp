@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,41 +13,45 @@ import (
 )
 
 type fakeStore struct {
-	mu            sync.Mutex
-	meta          map[string]string
-	devices       map[string]store.Device
-	rules         map[int64]store.ForwardRule
-	nextRuleID    int64
-	sessions      map[int64]store.Session
-	nextSessionID int64
-	tunnelStates  map[string]store.TunnelState
-	refreshTokens map[string]store.AdminRefreshToken
-	adminUsers    map[string]store.AdminUser
-	virtualNets   map[int64]store.VirtualNetwork
-	virtualAddrs  map[string]store.VirtualAddress
-	virtualKeys   map[string]store.VirtualDeviceKey
-	virtualACLs   map[int64]store.VirtualACLRule
-	virtualRoutes map[string]store.VirtualRoute
-	virtualPeers  map[string]store.VirtualPeerState
-	nextLANID     int64
-	auditEvents   []string
+	mu             sync.Mutex
+	meta           map[string]string
+	devices        map[string]store.Device
+	rules          map[int64]store.ForwardRule
+	nextRuleID     int64
+	sessions       map[int64]store.Session
+	nextSessionID  int64
+	tunnelStates   map[string]store.TunnelState
+	refreshTokens  map[string]store.AdminRefreshToken
+	adminUsers     map[string]store.AdminUser
+	virtualNets    map[int64]store.VirtualNetwork
+	virtualAddrs   map[string]store.VirtualAddress
+	virtualKeys    map[string]store.VirtualDeviceKey
+	virtualGroups  map[string]store.VirtualDeviceGroup
+	virtualMembers map[string]store.VirtualDeviceGroupMember
+	virtualACLs    map[int64]store.VirtualACLRule
+	virtualRoutes  map[string]store.VirtualRoute
+	virtualPeers   map[string]store.VirtualPeerState
+	nextLANID      int64
+	auditEvents    []string
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		meta:          map[string]string{},
-		devices:       map[string]store.Device{},
-		rules:         map[int64]store.ForwardRule{},
-		sessions:      map[int64]store.Session{},
-		tunnelStates:  map[string]store.TunnelState{},
-		refreshTokens: map[string]store.AdminRefreshToken{},
-		adminUsers:    map[string]store.AdminUser{},
-		virtualNets:   map[int64]store.VirtualNetwork{},
-		virtualAddrs:  map[string]store.VirtualAddress{},
-		virtualKeys:   map[string]store.VirtualDeviceKey{},
-		virtualACLs:   map[int64]store.VirtualACLRule{},
-		virtualRoutes: map[string]store.VirtualRoute{},
-		virtualPeers:  map[string]store.VirtualPeerState{},
+		meta:           map[string]string{},
+		devices:        map[string]store.Device{},
+		rules:          map[int64]store.ForwardRule{},
+		sessions:       map[int64]store.Session{},
+		tunnelStates:   map[string]store.TunnelState{},
+		refreshTokens:  map[string]store.AdminRefreshToken{},
+		adminUsers:     map[string]store.AdminUser{},
+		virtualNets:    map[int64]store.VirtualNetwork{},
+		virtualAddrs:   map[string]store.VirtualAddress{},
+		virtualKeys:    map[string]store.VirtualDeviceKey{},
+		virtualGroups:  map[string]store.VirtualDeviceGroup{},
+		virtualMembers: map[string]store.VirtualDeviceGroupMember{},
+		virtualACLs:    map[int64]store.VirtualACLRule{},
+		virtualRoutes:  map[string]store.VirtualRoute{},
+		virtualPeers:   map[string]store.VirtualPeerState{},
 	}
 }
 
@@ -633,6 +638,74 @@ func (s *fakeStore) ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualD
 	out := make([]store.VirtualDeviceKey, 0, len(s.virtualKeys))
 	for _, key := range s.virtualKeys {
 		out = append(out, key)
+	}
+	return out, nil
+}
+
+func (s *fakeStore) UpsertVirtualDeviceGroup(ctx context.Context, group store.VirtualDeviceGroup) (store.VirtualDeviceGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := nowTestString()
+	if group.CreatedAt == "" {
+		group.CreatedAt = now
+	}
+	group.UpdatedAt = now
+	s.virtualGroups[group.ID] = group
+	return group, nil
+}
+
+func (s *fakeStore) DeleteVirtualDeviceGroup(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.virtualGroups[id]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(s.virtualGroups, id)
+	for key, member := range s.virtualMembers {
+		if member.GroupID == id {
+			delete(s.virtualMembers, key)
+		}
+	}
+	return nil
+}
+
+func (s *fakeStore) ListVirtualDeviceGroups(ctx context.Context) ([]store.VirtualDeviceGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.VirtualDeviceGroup, 0, len(s.virtualGroups))
+	for _, group := range s.virtualGroups {
+		out = append(out, group)
+	}
+	return out, nil
+}
+
+func (s *fakeStore) SetVirtualDeviceGroupMembers(ctx context.Context, groupID string, deviceIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, member := range s.virtualMembers {
+		if member.GroupID == groupID {
+			delete(s.virtualMembers, key)
+		}
+	}
+	for _, deviceID := range deviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" {
+			continue
+		}
+		member := store.VirtualDeviceGroupMember{GroupID: groupID, DeviceID: deviceID, CreatedAt: nowTestString()}
+		s.virtualMembers[groupID+"\x00"+deviceID] = member
+	}
+	return nil
+}
+
+func (s *fakeStore) ListVirtualDeviceGroupMembers(ctx context.Context, groupID string) ([]store.VirtualDeviceGroupMember, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []store.VirtualDeviceGroupMember
+	for _, member := range s.virtualMembers {
+		if groupID == "" || member.GroupID == groupID {
+			out = append(out, member)
+		}
 	}
 	return out, nil
 }
