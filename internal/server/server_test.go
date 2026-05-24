@@ -1247,6 +1247,29 @@ func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
 	}
 }
 
+func TestHandleAuditEventsFilters(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if err := a.db.Audit(ctx, "rule_create", "#1 dev-a->dev-b:3389"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.Audit(ctx, "device_delete", "dev-old"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAdminJSON(t, a, http.MethodGet, "/api/admin/audit-events?kind=rule_create&keyword=3389", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var events []store.AuditEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != "rule_create" || events[0].Detail != "#1 dev-a->dev-b:3389" {
+		t.Fatalf("unexpected audit events: %+v", events)
+	}
+}
+
 func TestAdminJWTLoginRefreshAndMe(t *testing.T) {
 	a := newTestApp(t)
 	pass := "secret-pass"

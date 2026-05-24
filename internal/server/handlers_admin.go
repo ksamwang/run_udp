@@ -145,6 +145,23 @@ func (a *App) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, metrics, err)
 }
 
+func (a *App) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONOrError(w, nil, methodNotAllowed())
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	filter := store.AuditFilter{
+		Kind:    strings.TrimSpace(r.URL.Query().Get("kind")),
+		Keyword: strings.TrimSpace(r.URL.Query().Get("keyword")),
+		From:    strings.TrimSpace(r.URL.Query().Get("from")),
+		To:      strings.TrimSpace(r.URL.Query().Get("to")),
+		Limit:   limit,
+	}
+	events, err := a.db.ListAuditEvents(r.Context(), filter)
+	writeJSONOrError(w, events, err)
+}
+
 func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

@@ -383,6 +383,36 @@ func (s *MySQLStore) Audit(ctx context.Context, kind, detail string) error {
 	return s.db.WithContext(ctx).Create(&AuditEvent{Kind: kind, Detail: detail, CreatedAt: nowString()}).Error
 }
 
+func (s *MySQLStore) ListAuditEvents(ctx context.Context, filter store.AuditFilter) ([]store.AuditEvent, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	q := s.db.WithContext(ctx).Order("id DESC").Limit(limit)
+	if strings.TrimSpace(filter.Kind) != "" {
+		q = q.Where("kind = ?", strings.TrimSpace(filter.Kind))
+	}
+	if strings.TrimSpace(filter.From) != "" {
+		q = q.Where("created_at >= ?", strings.TrimSpace(filter.From))
+	}
+	if strings.TrimSpace(filter.To) != "" {
+		q = q.Where("created_at <= ?", strings.TrimSpace(filter.To))
+	}
+	if strings.TrimSpace(filter.Keyword) != "" {
+		keyword := "%" + strings.TrimSpace(filter.Keyword) + "%"
+		q = q.Where("kind LIKE ? OR detail LIKE ?", keyword, keyword)
+	}
+	var rows []AuditEvent
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.AuditEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
 func (s *MySQLStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) error {
 	now := nowString()
 	if user.CreatedAt == "" {
@@ -959,6 +989,12 @@ func (s Session) toStore() store.Session {
 	return store.Session{
 		ID: s.ID, SourceID: s.SourceID, TargetID: s.TargetID, Profile: store.NormalizeProfile(s.Profile),
 		Path: s.Path, RelayBytes: s.RelayBytes, StartedAt: s.StartedAt, LastSeen: s.LastSeen, EndedAt: s.EndedAt,
+	}
+}
+
+func (a AuditEvent) toStore() store.AuditEvent {
+	return store.AuditEvent{
+		ID: a.ID, Kind: a.Kind, Detail: a.Detail, CreatedAt: a.CreatedAt,
 	}
 }
 

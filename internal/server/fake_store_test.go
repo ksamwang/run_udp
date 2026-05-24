@@ -32,7 +32,8 @@ type fakeStore struct {
 	virtualRoutes  map[string]store.VirtualRoute
 	virtualPeers   map[string]store.VirtualPeerState
 	nextLANID      int64
-	auditEvents    []string
+	auditEvents    []store.AuditEvent
+	nextAuditID    int64
 }
 
 func newFakeStore() *fakeStore {
@@ -361,8 +362,44 @@ func (s *fakeStore) LocalPortConflict(ctx context.Context, sourceID string, loca
 func (s *fakeStore) Audit(ctx context.Context, kind, detail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.auditEvents = append(s.auditEvents, kind+":"+detail)
+	s.nextAuditID++
+	s.auditEvents = append(s.auditEvents, store.AuditEvent{
+		ID:        s.nextAuditID,
+		Kind:      kind,
+		Detail:    detail,
+		CreatedAt: nowTestString(),
+	})
 	return nil
+}
+
+func (s *fakeStore) ListAuditEvents(ctx context.Context, filter store.AuditFilter) ([]store.AuditEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	var out []store.AuditEvent
+	for i := len(s.auditEvents) - 1; i >= 0; i-- {
+		event := s.auditEvents[i]
+		if filter.Kind != "" && event.Kind != filter.Kind {
+			continue
+		}
+		if filter.From != "" && event.CreatedAt < filter.From {
+			continue
+		}
+		if filter.To != "" && event.CreatedAt > filter.To {
+			continue
+		}
+		if filter.Keyword != "" && !strings.Contains(event.Kind, filter.Keyword) && !strings.Contains(event.Detail, filter.Keyword) {
+			continue
+		}
+		out = append(out, event)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (s *fakeStore) UpsertAdminUser(ctx context.Context, user store.AdminUser) error {

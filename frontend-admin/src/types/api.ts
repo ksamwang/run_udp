@@ -22,6 +22,13 @@ export type Metrics = {
   relay_bytes: number
 }
 
+export type AuditEvent = {
+  id: number
+  kind: string
+  detail: string
+  created_at: string
+}
+
 export type HealthResponse = {
   status: string
   uptime_seconds: number

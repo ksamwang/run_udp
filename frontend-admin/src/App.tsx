@@ -14,6 +14,7 @@ const pageTitles: Record<string, string> = {
   rules: '转发规则',
   sessions: '会话',
   lan: '虚拟局域网',
+  audit: '审计日志',
   settings: '设置',
 }
 
@@ -30,6 +31,7 @@ const DevicesPage = lazy(() => import('./pages/DevicesPage').then((m) => ({ defa
 const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then((m) => ({ default: m.SessionsPage })))
 const LanPage = lazy(() => import('./pages/LanPage').then((m) => ({ default: m.LanPage })))
+const AuditPage = lazy(() => import('./pages/AuditPage').then((m) => ({ default: m.AuditPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 
 function AdminApp() {
@@ -122,6 +124,7 @@ function AdminApp() {
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/lan" element={<LanPage />} />
+            <Route path="/audit" element={<AuditPage />} />
             <Route path="/settings" element={<SettingsPage forcePasswordChange={forcePasswordChange} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

@@ -59,6 +59,21 @@ type Metrics struct {
 	RelayBytes     int64 `json:"relay_bytes"`
 }
 
+type AuditEvent struct {
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"`
+	Detail    string `json:"detail"`
+	CreatedAt string `json:"created_at"`
+}
+
+type AuditFilter struct {
+	Kind    string
+	Keyword string
+	From    string
+	To      string
+	Limit   int
+}
+
 type TunnelState struct {
 	DeviceID         string `json:"device_id"`
 	PeerID           string `json:"peer_id"`
