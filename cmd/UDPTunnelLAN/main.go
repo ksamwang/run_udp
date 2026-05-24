@@ -16,6 +16,7 @@ import (
 	"udp_tunnel_demo/internal/lan"
 	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/store"
+	"udp_tunnel_demo/internal/vnet"
 	"udp_tunnel_demo/internal/wintun"
 )
 
@@ -174,8 +175,8 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 	routeConflict := "none"
 	lastError := ""
 	selectedCIDR := resp.Network.CIDR
-	mtu := wintun.DefaultMTU
-	mss := 1200
+	mtu := lanNetworkMTU(resp.Network)
+	mss := lanNetworkMSS(resp.Network, mtu)
 	var adapter *wintun.Adapter
 	var router *packet.Router
 	var link *packet.LinkManager
@@ -192,7 +193,9 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 			adapterState = "up"
 			runtimeState = "running"
 			selectedCIDR = state.SelectedCIDR
-			mss = state.MSS
+			if resp.Network.MSS <= 0 {
+				mss = state.MSS
+			}
 			log.Printf("LAN adapter up: name=%q ip=%s cidr=%s mtu=%d mss=%d route_conflict=%v",
 				wintun.DefaultAdapterName, resp.Address.VirtualIP, selectedCIDR, mtu, mss, state.Conflict.Conflicts)
 			router, link, err = buildPacketRuntime(resp, deviceID, mtu)
@@ -246,6 +249,20 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, *
 		return state, nil, err
 	}
 	return state, adapter, nil
+}
+
+func lanNetworkMTU(network store.VirtualNetwork) int {
+	if network.MTU > 0 {
+		return network.MTU
+	}
+	return wintun.DefaultMTU
+}
+
+func lanNetworkMSS(network store.VirtualNetwork, mtu int) int {
+	if network.MSS > 0 {
+		return network.MSS
+	}
+	return vnet.MSSForMTU(mtu)
 }
 
 func validateLANRouteSelection(virtualIP, cidr string, state wintun.SystemState) error {

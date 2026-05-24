@@ -24,7 +24,7 @@ func TestRequestLANBootstrap(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(lanBootstrapResponse{
 			Version:       1,
 			ConfigVersion: "v1",
-			Network:       store.VirtualNetwork{ID: 7, Name: "default", CIDR: "172.16.10.0/24", Enabled: true},
+			Network:       store.VirtualNetwork{ID: 7, Name: "default", CIDR: "172.16.10.0/24", MTU: 1400, MSS: 1180, Enabled: true},
 			Address:       store.VirtualAddress{DeviceID: "dev-a", NetworkID: 7, VirtualIP: "172.16.10.2"},
 			Peers:         []lanBootstrapPeer{{DeviceID: "dev-b", VirtualIP: "172.16.10.3"}},
 		})
@@ -37,8 +37,25 @@ func TestRequestLANBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DeviceID != "dev-a" || got.PublicKey != "pub" || resp.Network.ID != 7 || resp.Address.VirtualIP != "172.16.10.2" || len(resp.Peers) != 1 {
+	if got.DeviceID != "dev-a" || got.PublicKey != "pub" || resp.Network.ID != 7 || resp.Network.MTU != 1400 || resp.Network.MSS != 1180 || resp.Address.VirtualIP != "172.16.10.2" || len(resp.Peers) != 1 {
 		t.Fatalf("bad bootstrap got=%+v resp=%+v", got, resp)
+	}
+}
+
+func TestLANNetworkMTUMSS(t *testing.T) {
+	network := store.VirtualNetwork{MTU: 1400, MSS: 1180}
+	if got := lanNetworkMTU(network); got != 1400 {
+		t.Fatalf("mtu=%d", got)
+	}
+	if got := lanNetworkMSS(network, 1400); got != 1180 {
+		t.Fatalf("mss=%d", got)
+	}
+	defaults := store.VirtualNetwork{}
+	if got := lanNetworkMTU(defaults); got != wintun.DefaultMTU {
+		t.Fatalf("default mtu=%d", got)
+	}
+	if got := lanNetworkMSS(defaults, wintun.DefaultMTU); got != vnet.MSSForMTU(wintun.DefaultMTU) {
+		t.Fatalf("default mss=%d", got)
 	}
 }
 

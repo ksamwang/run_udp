@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"udp_tunnel_demo/internal/store"
+	"udp_tunnel_demo/internal/vnet"
 )
 
 const lanBootstrapVersion = 1
@@ -714,6 +715,15 @@ func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {
 	}
 	if _, _, err := net.ParseCIDR(network.CIDR); err != nil {
 		return network, badRequest("bad_network", "cidr is invalid")
+	}
+	if network.MTU < 0 || network.MTU > 9000 || (network.MTU > 0 && network.MTU < 576) {
+		return network, badRequest("bad_network", "mtu must be 0 or between 576 and 9000")
+	}
+	if network.MSS < 0 || network.MSS > vnet.DefaultMSS || (network.MSS > 0 && network.MSS < 536) {
+		return network, badRequest("bad_network", "mss must be 0 or between 536 and 1200")
+	}
+	if network.MTU > 0 && network.MSS > 0 && network.MSS > vnet.MSSForMTU(network.MTU) {
+		return network, badRequest("bad_network", "mss is too large for mtu")
 	}
 	return network, nil
 }

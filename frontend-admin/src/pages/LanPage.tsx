@@ -32,7 +32,7 @@ import {
 } from '../api/lan'
 import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
-type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'enabled'>
+type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
 type ACLForm = VirtualACLRulePayload
 type RouteForm = VirtualRoutePayload
@@ -103,6 +103,8 @@ export function LanPage() {
       networkForm.setFieldsValue({
         name: currentNetwork.name,
         cidr: currentNetwork.cidr,
+        mtu: currentNetwork.mtu || 0,
+        mss: currentNetwork.mss || 0,
         enabled: currentNetwork.enabled,
       })
     }
@@ -316,7 +318,7 @@ export function LanPage() {
                 onClick={() => {
                   setCreatingNetwork(true)
                   setSelectedNetworkID(undefined)
-                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', enabled: true })
+                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', mtu: 0, mss: 0, enabled: true })
                 }}
               >
                 新增网络
@@ -343,6 +345,14 @@ export function LanPage() {
             >
               <Input placeholder="172.16.10.0/24" />
             </Form.Item>
+            <Space size="large" align="start">
+              <Form.Item name="mtu" label="MTU" tooltip="0 表示使用客户端默认值 1280">
+                <InputNumber min={0} max={9000} placeholder="0" />
+              </Form.Item>
+              <Form.Item name="mss" label="MSS" tooltip="0 表示按 MTU 自动计算">
+                <InputNumber min={0} max={1200} placeholder="0" />
+              </Form.Item>
+            </Space>
             <Form.Item name="enabled" label="启用 LAN" valuePropName="checked">
               <Switch />
             </Form.Item>

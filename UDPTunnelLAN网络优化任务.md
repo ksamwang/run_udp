@@ -185,10 +185,10 @@
 任务：
 
 - [x] 产品决策：需要为不同网络环境提供可配置 MTU/MSS。
-- [ ] 管理后台增加 UDPTunnelLAN 网络级 MTU/MSS 配置。
-- [ ] bootstrap 下发网络级 MTU/MSS。
-- [ ] 客户端按服务端配置设置 Wintun MTU 和 TCP MSS clamp。
-- [ ] 增加配置校验，避免 MTU/MSS 设置到明显不可用范围。
+- [x] 管理后台增加 UDPTunnelLAN 网络级 MTU/MSS 配置。
+- [x] bootstrap 下发网络级 MTU/MSS。
+- [x] 客户端按服务端配置设置 Wintun MTU 和 TCP MSS clamp。
+- [x] 增加配置校验，避免 MTU/MSS 设置到明显不可用范围。
 - [ ] 增加不同 MTU/MSS 组合的连通性和吞吐测试。
 
 ### P2-5 按流量类型选择低延迟或高吞吐

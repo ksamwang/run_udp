@@ -554,7 +554,7 @@ func (s *MySQLStore) ListVirtualNetworks(ctx context.Context) ([]store.VirtualNe
 func (s *MySQLStore) CreateVirtualNetwork(ctx context.Context, network store.VirtualNetwork) (store.VirtualNetwork, error) {
 	now := nowString()
 	row := VirtualNetwork{
-		Name: network.Name, CIDR: network.CIDR, Enabled: network.Enabled,
+		Name: network.Name, CIDR: network.CIDR, MTU: network.MTU, MSS: network.MSS, Enabled: network.Enabled,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if row.Name == "" {
@@ -568,7 +568,7 @@ func (s *MySQLStore) CreateVirtualNetwork(ctx context.Context, network store.Vir
 
 func (s *MySQLStore) UpdateVirtualNetwork(ctx context.Context, id int64, network store.VirtualNetwork) error {
 	values := map[string]any{
-		"name": network.Name, "cidr": network.CIDR, "enabled": network.Enabled, "updated_at": nowString(),
+		"name": network.Name, "cidr": network.CIDR, "mtu": network.MTU, "mss": network.MSS, "enabled": network.Enabled, "updated_at": nowString(),
 	}
 	tx := s.db.WithContext(ctx).Model(&VirtualNetwork{}).Where("id = ?", id).Updates(values)
 	if tx.Error != nil {
@@ -1031,7 +1031,7 @@ func (u AdminUser) toStore() store.AdminUser {
 
 func (n VirtualNetwork) toStore() store.VirtualNetwork {
 	return store.VirtualNetwork{
-		ID: n.ID, Name: n.Name, CIDR: n.CIDR, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
+		ID: n.ID, Name: n.Name, CIDR: n.CIDR, MTU: n.MTU, MSS: n.MSS, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 	}
 }
 

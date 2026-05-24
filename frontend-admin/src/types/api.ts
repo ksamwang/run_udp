@@ -161,6 +161,8 @@ export type VirtualNetwork = {
   id: number
   name: string
   cidr: string
+  mtu: number
+  mss: number
   enabled: boolean
   created_at: string
   updated_at: string
