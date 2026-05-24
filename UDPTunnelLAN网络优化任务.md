@@ -230,8 +230,39 @@
 
 任务：
 
-- [ ] 制定本地同网、跨 NAT、HTTP relay、未来 UDP relay 四类测试场景。
+- [x] 制定本地同网、跨 NAT、HTTP relay、未来 UDP relay 四类测试场景。
 - [ ] 使用 ping、iperf3、RDP 体感、文件复制分别记录指标。
 - [ ] 同场景对照 Agent interactive 和 Agent bulk。
-- [ ] 将关键压测命令和结果写入文档。
+- [x] 将关键压测命令和结果写入文档。
 - [ ] 每轮性能优化后更新基线数据。
+
+基线测试矩阵：
+
+| 场景 | UDPTunnelLAN 路径 | Agent 对照 | 必测指标 | 记录项 |
+| --- | --- | --- | --- | --- |
+| 本地同网 | `p2p_datagram`，必要时记录 `p2p_kcp` | interactive / bulk | ping、iperf3、RDP、文件复制 | RTT p50/p95、吞吐、丢包、路径切换次数 |
+| 跨 NAT | `p2p_datagram` 或 `p2p_kcp` | interactive / bulk | ping、iperf3、RDP、文件复制 | NAT 类型、打洞耗时、首次可用时间、吞吐 |
+| HTTP relay 兜底 | `relay_http` | Agent relay | ping、iperf3、RDP、文件复制 | poll 延迟、吞吐、队列溢出、CPU |
+| UDP relay | `relay_udp` | Agent relay | ping、iperf3、RDP、文件复制 | RTT p50/p95、吞吐、丢包恢复、服务端转发字节 |
+
+关键压测命令模板：
+
+```powershell
+# 连通性和延迟，记录 p50/p95/max
+ping -n 200 <peer_virtual_ip>
+
+# 吞吐，客户端侧连接服务端，分别测 1/4/8 并发流
+iperf3 -s
+iperf3 -c <peer_virtual_ip> -P 1 -t 60
+iperf3 -c <peer_virtual_ip> -P 4 -t 60
+iperf3 -c <peer_virtual_ip> -P 8 -t 60
+
+# 反向吞吐
+iperf3 -c <peer_virtual_ip> -R -P 4 -t 60
+
+# 文件复制，记录总耗时和平均速度
+Measure-Command { Copy-Item .\test-1GB.bin \\<peer_virtual_ip>\share\test-1GB.bin -Force }
+
+# 诊断导出，测试后立即保存后台 LAN 诊断
+Invoke-WebRequest "<admin_base_url>/api/admin/lan/diagnostics?network_id=<network_id>" -OutFile ".\lan-diagnostics.json"
+```
