@@ -49,11 +49,11 @@
 任务：
 
 - [x] 产品决策：允许 LAN 原始 IP 包默认绕开 KCP，首选加密 UDP datagram；KCP 仅作为控制、兼容或临时兜底。
-- [ ] 明确 UDPTunnelLAN 原始 IP 包的首选路径为加密 UDP datagram。
-- [ ] 梳理 `datagramReady` 的建立条件，减少已经 P2P 可达但仍走 KCP 的时间窗口。
-- [ ] P2P punch / ack 成功后尽快切换 raw IP 包到 datagram path。
-- [ ] KCP 仅作为临时兜底、控制确认或未支持 datagram 时的兼容路径。
-- [ ] 增加测试覆盖 datagram ready 后 raw IP 包不再落入 KCP stream。
+- [x] 明确 UDPTunnelLAN 原始 IP 包的首选路径为加密 UDP datagram。
+- [x] 梳理 `datagramReady` 的建立条件，减少已经 P2P 可达但仍走 KCP 的时间窗口。
+- [x] P2P punch / ack 成功后尽快切换 raw IP 包到 datagram path。
+- [x] KCP 仅作为临时兜底、控制确认或未支持 datagram 时的兼容路径。
+- [x] 增加测试覆盖 datagram ready 后 raw IP 包不再落入 KCP stream。
 - [ ] 增加日志或状态字段，区分 `p2p_datagram`、`p2p_kcp`、`relay_http`，便于现场判断真实路径。
 
 ### P0-3 降低 KCP stream 路径的阻塞影响

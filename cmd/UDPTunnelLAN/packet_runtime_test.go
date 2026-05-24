@@ -455,6 +455,48 @@ func TestLANP2PSendFallsBackToKCPWhenDatagramUnavailable(t *testing.T) {
 	}
 }
 
+func TestLANP2PPunchAckUsesDatagramWithoutOpeningKCP(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	peerAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 21000}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	msg := &protocol.Message{Type: protocol.MsgPunchAck, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	b, _ := protocol.Encode(msg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.handleControl(ctx, b, peerAddr, nil, nil, link)
+
+	if !peer.punched.Load() || !peer.datagramReady.Load() {
+		t.Fatalf("expected datagram-ready punch state, punched=%v datagram=%v", peer.punched.Load(), peer.datagramReady.Load())
+	}
+	if peer.connected.Load() || peer.kcp != nil || peer.pc != nil {
+		t.Fatalf("datagram-ready direct path must not open KCP: connected=%v kcp=%v pc=%v", peer.connected.Load(), peer.kcp, peer.pc)
+	}
+	frame, err := link.Send("dev-b", []byte("probe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.Path != packet.LinkPathP2P {
+		t.Fatalf("expected p2p link path, got %q", frame.Path)
+	}
+}
+
 func TestLANP2PSendAfterPunch(t *testing.T) {
 	left, right := net.Pipe()
 	defer left.Close()

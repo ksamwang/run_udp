@@ -512,6 +512,28 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 	return writeLANFrame(peer.kcp, payload)
 }
 
+func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager) bool {
+	if peer == nil || peer.isRelay.Load() || !peer.datagramReady.Load() || peer.tx == nil || peer.rx == nil {
+		return false
+	}
+	addr := peer.addr.Load()
+	if addr == nil {
+		return false
+	}
+	if link != nil {
+		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: addr.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
+	}
+	log.Printf("LAN P2P datagram path ready: peer=%s addr=%s path=p2p_datagram", peer.id, addr)
+	return true
+}
+
+func (p *lanP2P) openTunnelUnlessDatagramReady(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
+	if p.useDatagramFastPath(peer, link) {
+		return
+	}
+	go p.openTunnel(ctx, adapter, router, link, peer)
+}
+
 func (p *lanP2P) CanRelay(peerID string) bool {
 	peer := p.peer(peerID)
 	return peer != nil && peer.tx != nil && peer.rx != nil
@@ -719,6 +741,9 @@ func (p *lanP2P) scheduleOpenRetry(ctx context.Context, peer *lanP2PPeer) {
 		p.peerMu.Unlock()
 		peer := p.peer(peerID)
 		if peer == nil || peer.connected.Load() || !peer.punched.Load() {
+			return
+		}
+		if p.useDatagramFastPath(peer, p.link) {
 			return
 		}
 		log.Printf("LAN P2P retrying KCP tunnel: peer=%s relay=%v", peer.id, peer.isRelay.Load())
@@ -1056,6 +1081,9 @@ func (p *lanP2P) newPeerPacketConn(peerAddr *atomic.Pointer[net.UDPAddr]) *tunne
 }
 
 func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
+	if p.useDatagramFastPath(peer, link) {
+		return
+	}
 	if peer == nil || !peer.connected.CompareAndSwap(false, true) {
 		return
 	}
@@ -1268,7 +1296,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		log.Printf("LAN P2P peer info: peer=%s addr=%s upnp=%q codec_ready=%v", peer.id, addr, msg.UpnpAddr, peer.tx != nil && peer.rx != nil)
 		p.startPunchLoop(ctx, peer)
 		if !relayActive && peer.punched.Load() && !peer.connected.Load() {
-			go p.openTunnel(ctx, adapter, router, link, peer)
+			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
 		}
 	case protocol.MsgPunch:
 		if store.NormalizeProfile(msg.Profile) != store.ProfileLANPacket {
@@ -1287,7 +1315,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		}
 		if peer.punched.CompareAndSwap(false, true) {
 			log.Printf("LAN P2P punched via incoming punch: peer=%s addr=%s", peer.id, src)
-			go p.openTunnel(ctx, adapter, router, link, peer)
+			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
 		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 		p.writeControl(src, &protocol.Message{Type: protocol.MsgPunchAck, From: p.deviceID, Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame})
@@ -1308,7 +1336,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		}
 		if peer.punched.CompareAndSwap(false, true) {
 			log.Printf("LAN P2P punched via ack: peer=%s addr=%s", peer.id, src)
-			go p.openTunnel(ctx, adapter, router, link, peer)
+			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
 		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 	}
