@@ -13,6 +13,7 @@ import {
   deleteVirtualRoute,
   listVirtualACLRules,
   listVirtualAddresses,
+  listVirtualDeviceKeys,
   listVirtualNetworks,
   listVirtualPeerStates,
   listVirtualRoutes,
@@ -70,6 +71,7 @@ export function LanPage() {
     enabled: Boolean(networkID),
   })
   const devices = useQuery({ queryKey: ['devices'], queryFn: listDevices })
+  const deviceKeys = useQuery({ queryKey: ['lan', 'device-keys'], queryFn: listVirtualDeviceKeys })
 
   useEffect(() => {
     if (!selectedNetworkID && networks.data?.[0]) {
@@ -126,6 +128,13 @@ export function LanPage() {
       return device?.name ? `${device.name} (${id})` : id
     }
   }, [devices.data])
+  const keyByDevice = useMemo(() => {
+    const m = new Map<string, { algorithm: string; public_key: string; updated_at: string }>()
+    for (const key of deviceKeys.data || []) {
+      m.set(key.device_id, key)
+    }
+    return m
+  }, [deviceKeys.data])
 
   const refreshLAN = () => {
     queryClient.invalidateQueries({ queryKey: ['lan'] })
@@ -304,6 +313,18 @@ export function LanPage() {
               { title: '虚拟 IP', dataIndex: 'virtual_ip', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
               { title: '主机名', dataIndex: 'hostname', render: (v) => v || '-' },
               { title: 'Magic DNS', dataIndex: 'dns_enabled', render: (v) => <Tag color={v ? 'green' : 'default'}>{v ? '已预留' : '未启用'}</Tag> },
+              {
+                title: '设备密钥',
+                render: (_, row) => {
+                  const key = keyByDevice.get(row.device_id)
+                  return key ? (
+                    <Space direction="vertical" size={0}>
+                      <Tag color="green">{key.algorithm || 'unknown'}</Tag>
+                      <Typography.Text type="secondary" copyable>{key.public_key.slice(0, 16)}...</Typography.Text>
+                    </Space>
+                  ) : <Tag color="orange">缺失</Tag>
+                },
+              },
               { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
               {
                 title: '操作',

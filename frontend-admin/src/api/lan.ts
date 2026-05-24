@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceKey, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
@@ -35,6 +35,10 @@ export function updateVirtualAddress(deviceID: string, payload: Omit<VirtualAddr
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
+}
+
+export function listVirtualDeviceKeys() {
+  return apiRequest<VirtualDeviceKey[]>('/api/admin/lan/device-keys')
 }
 
 export function listVirtualACLRules(networkID?: number) {

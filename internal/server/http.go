@@ -42,6 +42,7 @@ func (a *App) httpMux() http.Handler {
 	admin.Any("/lan/networks/:id", ginWrap(a.requireAdmin(a.handleAdminLANNetwork)))
 	admin.Any("/lan/addresses", ginWrap(a.requireAdmin(a.handleAdminLANAddresses)))
 	admin.Any("/lan/addresses/:device_id", ginWrap(a.requireAdmin(a.handleAdminLANAddress)))
+	admin.Any("/lan/device-keys", ginWrap(a.requireAdmin(a.handleAdminLANDeviceKeys)))
 	admin.Any("/lan/acl", ginWrap(a.requireAdmin(a.handleAdminLANACLRules)))
 	admin.Any("/lan/acl/:id", ginWrap(a.requireAdmin(a.handleAdminLANACLRule)))
 	admin.Any("/lan/routes", ginWrap(a.requireAdmin(a.handleAdminLANRoutes)))

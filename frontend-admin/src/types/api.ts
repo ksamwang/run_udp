@@ -154,6 +154,14 @@ export type VirtualAddress = {
   updated_at: string
 }
 
+export type VirtualDeviceKey = {
+  device_id: string
+  algorithm: string
+  public_key: string
+  created_at: string
+  updated_at: string
+}
+
 export type VirtualACLRule = {
   id: number
   network_id: number

@@ -148,6 +148,16 @@ func (a *App) handleAdminLANAddress(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleAdminLANDeviceKeys(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		keys, err := a.db.ListVirtualDeviceKeys(r.Context())
+		writeJSONOrError(w, keys, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
 func (a *App) handleAdminLANACLRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

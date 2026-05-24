@@ -150,6 +150,20 @@ func TestLANAdminAPIs(t *testing.T) {
 	if len(addresses) != 1 || addresses[0].VirtualIP != "172.16.31.10" {
 		t.Fatalf("bad addresses: %+v", addresses)
 	}
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-a", Algorithm: "ed25519", PublicKey: "pub-a"}); err != nil {
+		t.Fatal(err)
+	}
+	keysRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/device-keys", nil)
+	if keysRec.Code != http.StatusOK {
+		t.Fatalf("list device keys status=%d body=%s", keysRec.Code, keysRec.Body.String())
+	}
+	var keys []store.VirtualDeviceKey
+	if err := json.Unmarshal(keysRec.Body.Bytes(), &keys); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0].DeviceID != "dev-a" || keys[0].PublicKey != "pub-a" {
+		t.Fatalf("bad device keys: %+v", keys)
+	}
 	deleteInUse := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/networks/"+strconv.FormatInt(network.ID, 10), nil)
 	if deleteInUse.Code != http.StatusBadRequest {
 		t.Fatalf("delete in-use network status=%d body=%s", deleteInUse.Code, deleteInUse.Body.String())
