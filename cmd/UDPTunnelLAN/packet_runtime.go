@@ -76,11 +76,12 @@ type lanRelayFrame struct {
 func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string, networkID int64) {
 	defer adapter.Close()
 	serverHTTP = strings.TrimRight(strings.TrimSpace(serverHTTP), "/")
-	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s", networkID, deviceID, serverHTTP, lanPathPolicy(resp.Network))
+	pathPolicy := newLANPathPolicy(resp.Network)
+	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s", networkID, deviceID, serverHTTP, pathPolicy.Name)
 	outbound := make(chan packet.RoutedFrame, lanOutboundQueueSize)
-	p2p := startLANP2P(ctx, resp.Server, adapter, router, link, resp, identity, deviceID)
+	p2p := startLANP2P(ctx, resp.Server, adapter, router, link, resp, identity, deviceID, pathPolicy)
 	go readWintunPackets(ctx, adapter, router, outbound)
-	go sendPackets(ctx, serverHTTP, link, p2p, outbound)
+	go sendPackets(ctx, serverHTTP, link, p2p, pathPolicy, outbound)
 	go pollRelayPackets(ctx, serverHTTP, adapter, router, link, p2p, deviceID)
 	go refreshLANPeers(ctx, serverHTTP, router, link, p2p, resp, identity, deviceID)
 	go reportLANPeerRuntime(ctx, serverHTTP, router, link, p2p, resp, deviceID, networkID)
@@ -94,6 +95,21 @@ func lanPathPolicy(network store.VirtualNetwork) string {
 		return strings.TrimSpace(network.PathPolicy)
 	default:
 		return "prefer_p2p"
+	}
+}
+
+type lanPathPolicyConfig struct {
+	Name        string
+	PreferRelay bool
+	RelayOnly   bool
+}
+
+func newLANPathPolicy(network store.VirtualNetwork) lanPathPolicyConfig {
+	name := lanPathPolicy(network)
+	return lanPathPolicyConfig{
+		Name:        name,
+		PreferRelay: name == "prefer_relay" || name == "relay_only",
+		RelayOnly:   name == "relay_only",
 	}
 }
 
@@ -199,7 +215,7 @@ func isWintunNoPacketError(err error) bool {
 	return strings.Contains(msg, "no more data") || strings.Contains(msg, "没有更多数据")
 }
 
-func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManager, p2p *lanP2P, outbound <-chan packet.RoutedFrame) {
+func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManager, p2p *lanP2P, pathPolicy lanPathPolicyConfig, outbound <-chan packet.RoutedFrame) {
 	batch := make([]packet.RoutedFrame, 0, lanPacketBatchSize)
 	pending := newLANPendingQueue(lanPendingMaxFrames, lanPendingMaxBytes, lanPendingTTL)
 	var relayBackoffUntil time.Time
@@ -221,7 +237,7 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		delivered := map[int]bool{}
 		relay := make([]packet.RoutedFrame, 0, len(frames))
 		for i, frame := range frames {
-			if p2p != nil && p2p.Send(frame) == nil {
+			if !pathPolicy.PreferRelay && p2p != nil && p2p.Send(frame) == nil {
 				_, _ = link.Send(frame.DstDevice, frame.Payload)
 				delivered[i] = true
 				continue
@@ -231,14 +247,10 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			}
 			relay = append(relay, frame)
 		}
-		if len(relay) == 0 {
-			pending.Remove(delivered)
-			return
+		if pathPolicy.PreferRelay && len(relay) > 0 {
+			log.Printf("LAN path policy uses relay first: policy=%s frames=%d", pathPolicy.Name, len(relay))
 		}
-		if strings.TrimSpace(serverHTTP) == "" {
-			for _, frame := range relay {
-				log.Printf("LAN tunnel unavailable; keep pending dst=%s bytes=%d", frame.DstDevice, len(frame.Payload))
-			}
+		if len(relay) == 0 {
 			pending.Remove(delivered)
 			return
 		}
@@ -270,6 +282,13 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 				pending.Remove(delivered)
 				return
 			}
+		}
+		if strings.TrimSpace(serverHTTP) == "" {
+			for _, frame := range relay {
+				log.Printf("LAN HTTP relay unavailable after UDP relay attempt; keep pending dst=%s bytes=%d", frame.DstDevice, len(frame.Payload))
+			}
+			pending.Remove(delivered)
+			return
 		}
 		if err := postRelayFrames(ctx, serverHTTP, relayFrames); err != nil {
 			log.Printf("LAN relay send failed: %v", err)
@@ -532,6 +551,7 @@ type lanP2P struct {
 	peerMu       sync.RWMutex
 	peerConv     map[uint32]string
 	server       *net.UDPAddr
+	pathPolicy   lanPathPolicyConfig
 	deviceID     string
 	identity     lan.Identity
 	adapter      *wintun.Adapter
@@ -570,7 +590,7 @@ type lanP2PPeer struct {
 	kcpMu            sync.Mutex
 }
 
-func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string) *lanP2P {
+func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string, pathPolicy lanPathPolicyConfig) *lanP2P {
 	server, err := net.ResolveUDPAddr("udp", strings.TrimSpace(serverAddr))
 	if err != nil || server == nil {
 		log.Printf("LAN P2P disabled: bad server addr %q: %v", serverAddr, err)
@@ -589,7 +609,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	}
 	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
-		conn: conn, upnpMapping: upnpMapping, server: server, deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
+		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
 		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
 	go func() {
@@ -686,7 +706,9 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 		if shouldRegister {
 			p.registering[peerID] = true
 		}
-		if !p.relayTimers[peerID] {
+		if p.pathPolicy.PreferRelay {
+			go p.enableRelayMode(ctx, peerID, "path_policy_"+p.pathPolicy.Name)
+		} else if !p.relayTimers[peerID] {
 			p.relayTimers[peerID] = true
 			go p.relayFallbackTimer(ctx, peerID)
 		}
@@ -701,6 +723,9 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 	peer := p.peer(frame.DstDevice)
 	if peer == nil {
+		return packet.ErrLinkUnavailable
+	}
+	if p.pathPolicy.RelayOnly || p.pathPolicy.PreferRelay {
 		return packet.ErrLinkUnavailable
 	}
 	peer.lastTrafficClass.Store(classifyLANFrame(frame))
@@ -747,6 +772,10 @@ func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager)
 }
 
 func (p *lanP2P) openTunnelUnlessDatagramReady(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
+	if p.pathPolicy.RelayOnly {
+		log.Printf("LAN P2P KCP open skipped: peer=%s policy=%s", peer.id, p.pathPolicy.Name)
+		return
+	}
 	if p.useDatagramFastPath(peer, link) {
 		return
 	}
@@ -951,12 +980,19 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 		return
 	case <-t.C:
 	}
-	peer := p.peer(peerID)
 	p.peerMu.Lock()
 	if p.relayTimers != nil {
 		p.relayTimers[peerID] = false
 	}
 	p.peerMu.Unlock()
+	p.enableRelayMode(ctx, peerID, fmt.Sprintf("punch timeout %s", lanPunchTimeout))
+}
+
+func (p *lanP2P) enableRelayMode(ctx context.Context, peerID, reason string) {
+	if p == nil {
+		return
+	}
+	peer := p.peer(peerID)
 	if peer == nil || peer.punched.Load() {
 		return
 	}
@@ -967,8 +1003,10 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 		peer.pc = p.newPeerPacketConn(&peer.addr)
 	}
 	peer.punched.Store(true)
-	log.Printf("LAN P2P relay mode: peer=%s reason=punch timeout %s", peer.id, lanPunchTimeout)
-	go p.openTunnel(ctx, p.adapter, p.router, p.link, peer)
+	log.Printf("LAN P2P relay mode: peer=%s reason=%s policy=%s", peer.id, reason, p.pathPolicy.Name)
+	if !p.pathPolicy.RelayOnly {
+		go p.openTunnel(ctx, p.adapter, p.router, p.link, peer)
+	}
 }
 
 func (p *lanP2P) resetRelayTimer(ctx context.Context, peerID string) {

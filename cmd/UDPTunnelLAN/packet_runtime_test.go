@@ -415,7 +415,7 @@ func TestSendPacketsUsesHTTPRelayWhenP2PUnavailable(t *testing.T) {
 	outbound := make(chan packet.RoutedFrame, 1)
 	p2p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b", tx: txA, rx: rxA}}}
 	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
-	go sendPackets(ctx, srv.URL, link, p2p, outbound)
+	go sendPackets(ctx, srv.URL, link, p2p, lanPathPolicyConfig{Name: "prefer_p2p"}, outbound)
 	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("plain")}
 
 	select {
@@ -470,7 +470,7 @@ func TestSendPacketsReplaysPendingWhenDatagramBecomesReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	outbound := make(chan packet.RoutedFrame, 1)
-	go sendPackets(ctx, "", link, p2p, outbound)
+	go sendPackets(ctx, "", link, p2p, lanPathPolicyConfig{Name: "prefer_p2p"}, outbound)
 	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("queued")}
 	time.Sleep(100 * time.Millisecond)
 	peer.datagramReady.Store(true)
@@ -487,6 +487,68 @@ func TestSendPacketsReplaysPendingWhenDatagramBecomesReady(t *testing.T) {
 	}
 	if string(plain) != "queued" {
 		t.Fatalf("pending frame not replayed via datagram: %q", plain)
+	}
+}
+
+func TestSendPacketsRelayOnlySkipsDatagramAndUsesUDPRelay(t *testing.T) {
+	clientConn, serverConn, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+	defer serverConn.Close()
+	_, p2pConn, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p2pConn.Close()
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	peer.addr.Store(p2pConn.LocalAddr().(*net.UDPAddr))
+	peer.datagramReady.Store(true)
+	p2p := &lanP2P{conn: clientConn, server: serverConn.LocalAddr().(*net.UDPAddr), deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 1)
+	go sendPackets(ctx, "", link, p2p, lanPathPolicyConfig{Name: "relay_only", PreferRelay: true, RelayOnly: true}, outbound)
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("relay-only")}
+
+	buf := make([]byte, 2048)
+	_ = serverConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := serverConn.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayFrame, err := lantransport.UnpackRelayFrame(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := rxB.Open(relayFrame.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "relay-only" {
+		t.Fatalf("bad relay payload: %q", plain)
+	}
+	_ = p2pConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if n, _, err := p2pConn.ReadFromUDP(buf); err == nil {
+		t.Fatalf("relay_only should not send direct datagram bytes=%d", n)
 	}
 }
 
