@@ -225,6 +225,21 @@ func TestLANPendingQueueKeepsCriticalFramesWhenFull(t *testing.T) {
 	}
 }
 
+func TestLANWintunReadStatsClassifiesPackets(t *testing.T) {
+	stats := &lanWintunReadStats{lastLog: time.Now()}
+	icmp := make([]byte, 40)
+	icmp[0] = 0x45
+	icmp[3] = 40
+	icmp[9] = packet.IPv4ProtocolICMP
+	copy(icmp[12:16], []byte{172, 16, 10, 1})
+	copy(icmp[16:20], []byte{172, 16, 10, 2})
+	stats.recordPacket(icmp)
+	stats.recordPacket(bytes.Repeat([]byte{0x45}, 1300))
+	if stats.packets != 2 || stats.bytes != 1340 || stats.icmp != 1 || stats.large != 1 {
+		t.Fatalf("bad wintun stats: %+v", stats)
+	}
+}
+
 func BenchmarkRelayFrameEnvelopeEncoding(b *testing.B) {
 	frame := lanRelayFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", Type: packet.TypeIPv4,

@@ -35,6 +35,7 @@ import (
 const (
 	lanPacketBatchSize    = 64
 	lanPacketPollInterval = 10 * time.Millisecond
+	lanOutboundQueueSize  = 1024
 	lanConfigRefreshEvery = 10 * time.Second
 	lanUPnPTimeout        = 4 * time.Second
 	lanPunchTimeout       = 30 * time.Second
@@ -76,7 +77,7 @@ func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun
 	defer adapter.Close()
 	serverHTTP = strings.TrimRight(strings.TrimSpace(serverHTTP), "/")
 	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s", networkID, deviceID, serverHTTP, lanPathPolicy(resp.Network))
-	outbound := make(chan packet.RoutedFrame, 256)
+	outbound := make(chan packet.RoutedFrame, lanOutboundQueueSize)
 	p2p := startLANP2P(ctx, resp.Server, adapter, router, link, resp, identity, deviceID)
 	go readWintunPackets(ctx, adapter, router, outbound)
 	go sendPackets(ctx, serverHTTP, link, p2p, outbound)
@@ -96,6 +97,7 @@ func lanPathPolicy(network store.VirtualNetwork) string {
 }
 
 func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, outbound chan<- packet.RoutedFrame) {
+	stats := &lanWintunReadStats{lastLog: time.Now()}
 	for {
 		select {
 		case <-ctx.Done():
@@ -108,12 +110,16 @@ func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *pac
 				return
 			}
 			if isWintunNoPacketError(err) {
+				stats.noPacket++
+				stats.maybeLog()
 				continue
 			}
+			stats.errors++
 			log.Printf("LAN packet read failed: %v", err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
+		stats.recordPacket(pkt)
 		if !isSupportedTunPacket(pkt) {
 			continue
 		}
@@ -129,9 +135,51 @@ func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *pac
 		case <-ctx.Done():
 			return
 		default:
+			stats.queueFull++
+			stats.maybeLog()
 			log.Printf("LAN outbound queue full; drop dst=%s bytes=%d", frame.DstDevice, len(frame.Payload))
 		}
 	}
+}
+
+type lanWintunReadStats struct {
+	packets   uint64
+	bytes     uint64
+	tcp       uint64
+	udp       uint64
+	icmp      uint64
+	large     uint64
+	noPacket  uint64
+	errors    uint64
+	queueFull uint64
+	lastLog   time.Time
+}
+
+func (s *lanWintunReadStats) recordPacket(pkt []byte) {
+	s.packets++
+	s.bytes += uint64(len(pkt))
+	if len(pkt) > 1200 {
+		s.large++
+	}
+	if header, err := packet.ParseIPv4(pkt); err == nil {
+		switch header.Protocol {
+		case packet.IPv4ProtocolTCP:
+			s.tcp++
+		case packet.IPv4ProtocolUDP:
+			s.udp++
+		case packet.IPv4ProtocolICMP:
+			s.icmp++
+		}
+	}
+	s.maybeLog()
+}
+
+func (s *lanWintunReadStats) maybeLog() {
+	if time.Since(s.lastLog) < 30*time.Second {
+		return
+	}
+	log.Printf("LAN Wintun read stats: packets=%d bytes=%d tcp=%d udp=%d icmp=%d large=%d no_packet=%d errors=%d queue_full=%d", s.packets, s.bytes, s.tcp, s.udp, s.icmp, s.large, s.noPacket, s.errors, s.queueFull)
+	s.lastLog = time.Now()
 }
 
 func isSupportedTunPacket(pkt []byte) bool {
