@@ -3,6 +3,7 @@ module udp_tunnel_demo
 go 1.25.0
 
 require (
+	github.com/StackExchange/wmi v1.2.1
 	github.com/getlantern/systray v1.2.2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/libp2p/go-nat v0.2.0
@@ -10,6 +11,7 @@ require (
 	github.com/xtaci/smux v1.5.57
 	golang.org/x/crypto v0.48.0
 	golang.org/x/sys v0.42.0
+	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.1
 )
@@ -28,6 +30,7 @@ require (
 	github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55 // indirect
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
+	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
@@ -63,6 +66,5 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
