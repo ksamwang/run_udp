@@ -746,6 +746,46 @@ func TestSendPacketsDefersThroughputBatchBeforeFlush(t *testing.T) {
 	}
 }
 
+func TestSendPacketsPrioritizesInteractiveOverThroughput(t *testing.T) {
+	kcpLeft, kcpRight := net.Pipe()
+	defer kcpLeft.Close()
+	defer kcpRight.Close()
+	peer := &lanP2PPeer{id: "dev-b", kcp: kcpLeft}
+	peer.connected.Store(true)
+	p2p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 2)
+	go sendPackets(ctx, "", link, p2p, lanPathPolicyConfig{Name: "prefer_p2p"}, outbound)
+
+	outbound <- packet.RoutedFrame{
+		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
+		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
+		Payload: bytes.Repeat([]byte("x"), 1500),
+	}
+	outbound <- packet.RoutedFrame{
+		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
+		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, TCPSYN: true, DestPort: 3389},
+		Payload: []byte("syn"),
+	}
+
+	first, err := readLANFrame(kcpRight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "syn" {
+		t.Fatalf("interactive frame should flush first, got %q", first)
+	}
+	second, err := readLANFrame(kcpRight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1500 {
+		t.Fatalf("throughput frame should flush second, got %d bytes", len(second))
+	}
+}
+
 func TestLANP2PSendPrefersDatagramBeforeKCP(t *testing.T) {
 	udpLeft, udpRight, err := udpPair()
 	if err != nil {
