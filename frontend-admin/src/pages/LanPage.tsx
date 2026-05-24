@@ -190,6 +190,9 @@ export function LanPage() {
     }
     return m
   }, [deviceKeys.data])
+  const currentPathPolicy = pathPolicyLabel(currentNetwork?.path_policy)
+  const currentMTU = currentNetwork?.mtu || 1280
+  const currentMSS = currentNetwork?.mss || Math.max(currentMTU - 40, 536)
 
   const refreshLAN = () => {
     queryClient.invalidateQueries({ queryKey: ['lan'] })
@@ -359,6 +362,11 @@ export function LanPage() {
               ) : null}
             </Space>
           </div>
+          <Space wrap className="lan-section-toolbar">
+            <Tag color="cyan">路径策略：{currentPathPolicy}</Tag>
+            <Tag color="green">流量策略：交互低延迟 / 文件吞吐优先</Tag>
+            <Tag>MTU/MSS：{currentMTU} / {currentMSS}</Tag>
+          </Space>
           <Form form={networkForm} layout="vertical" className="lan-form" onFinish={(values) => networkMutation.mutate(values)}>
             <Form.Item name="name" label="网络名称" rules={[{ required: true, message: '请输入网络名称' }]}>
               <Input placeholder="默认虚拟网络" />
@@ -897,5 +905,19 @@ function pathTagColor(value?: string) {
       return 'purple'
     default:
       return 'default'
+  }
+}
+
+function pathPolicyLabel(value?: string) {
+  switch (value || 'prefer_p2p') {
+    case 'auto':
+      return '自动'
+    case 'prefer_relay':
+      return '优先 Relay'
+    case 'relay_only':
+      return '仅 Relay'
+    case 'prefer_p2p':
+    default:
+      return '优先 P2P'
   }
 }
