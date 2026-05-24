@@ -42,6 +42,13 @@ type Server struct {
 	ClientReleaseNotes            string        `json:"client_release_notes"`
 	ClientReleaseMinimumSupported string        `json:"client_release_minimum_supported_version"`
 	ClientReleaseFile             string        `json:"client_release_file"`
+	LANReleaseVersion             string        `json:"lan_release_version"`
+	LANReleaseURL                 string        `json:"lan_release_url"`
+	LANReleaseSHA256              string        `json:"lan_release_sha256"`
+	LANReleasePublishedAt         string        `json:"lan_release_published_at"`
+	LANReleaseNotes               string        `json:"lan_release_notes"`
+	LANReleaseMinimumSupported    string        `json:"lan_release_minimum_supported_version"`
+	LANReleaseFile                string        `json:"lan_release_file"`
 }
 
 type Client struct {

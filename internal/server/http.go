@@ -65,9 +65,11 @@ func (a *App) httpMux() http.Handler {
 	lan.POST("/status", ginWrap(a.handleLANStatus))
 	lan.POST("/packets/send", ginWrap(a.handleLANPacketSend))
 	lan.POST("/packets/poll", ginWrap(a.handleLANPacketPoll))
+	lan.GET("/release", ginWrap(a.handleLANRelease))
 
 	r.GET("/api/client/release", ginWrap(a.requireAgent(a.handleClientRelease)))
 	r.GET("/downloads/client/installer", ginWrap(a.handleClientInstaller))
+	r.GET("/downloads/lan/installer", ginWrap(a.handleLANInstaller))
 	return r
 }
 

@@ -185,8 +185,8 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       ),
     },
     {
-      key: 'release',
-      label: '客户端发布',
+      key: 'agent-release',
+      label: 'Agent 发布',
       children: (
         <Card>
           <div className="settings-grid">
@@ -197,6 +197,23 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
             <Form.Item name="client_release_minimum_supported_version" label="最低支持版本"><Input /></Form.Item>
             <Form.Item name="client_release_file" label="服务端安装包文件"><Input /></Form.Item>
             <Form.Item name="client_release_notes" label="发布说明" className="settings-wide"><Input.TextArea rows={4} /></Form.Item>
+          </div>
+        </Card>
+      ),
+    },
+    {
+      key: 'lan-release',
+      label: 'UDPTunnelLAN 发布',
+      children: (
+        <Card>
+          <div className="settings-grid">
+            <Form.Item name="lan_release_version" label="版本号"><Input /></Form.Item>
+            <Form.Item name="lan_release_url" label="下载 URL"><Input /></Form.Item>
+            <Form.Item name="lan_release_sha256" label="SHA256"><Input /></Form.Item>
+            <Form.Item name="lan_release_published_at" label="发布时间"><Input /></Form.Item>
+            <Form.Item name="lan_release_minimum_supported_version" label="最低支持版本"><Input /></Form.Item>
+            <Form.Item name="lan_release_file" label="服务端安装包文件"><Input /></Form.Item>
+            <Form.Item name="lan_release_notes" label="发布说明" className="settings-wide"><Input.TextArea rows={4} /></Form.Item>
           </div>
         </Card>
       ),

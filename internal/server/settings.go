@@ -27,6 +27,13 @@ const (
 	settingClientReleaseNotes            = "client_release_notes"
 	settingClientReleaseMinimumSupported = "client_release_minimum_supported_version"
 	settingClientReleaseFile             = "client_release_file"
+	settingLANReleaseVersion             = "lan_release_version"
+	settingLANReleaseURL                 = "lan_release_url"
+	settingLANReleaseSHA256              = "lan_release_sha256"
+	settingLANReleasePublishedAt         = "lan_release_published_at"
+	settingLANReleaseNotes               = "lan_release_notes"
+	settingLANReleaseMinimumSupported    = "lan_release_minimum_supported_version"
+	settingLANReleaseFile                = "lan_release_file"
 )
 
 func (a *App) applyStoredSettings() error {
@@ -63,6 +70,13 @@ func (a *App) ensureDefaultSettings(ctx context.Context) error {
 		settingClientReleaseNotes:            a.cfg.ClientReleaseNotes,
 		settingClientReleaseMinimumSupported: a.cfg.ClientReleaseMinimumSupported,
 		settingClientReleaseFile:             a.cfg.ClientReleaseFile,
+		settingLANReleaseVersion:             a.cfg.LANReleaseVersion,
+		settingLANReleaseURL:                 a.cfg.LANReleaseURL,
+		settingLANReleaseSHA256:              a.cfg.LANReleaseSHA256,
+		settingLANReleasePublishedAt:         a.cfg.LANReleasePublishedAt,
+		settingLANReleaseNotes:               a.cfg.LANReleaseNotes,
+		settingLANReleaseMinimumSupported:    a.cfg.LANReleaseMinimumSupported,
+		settingLANReleaseFile:                a.cfg.LANReleaseFile,
 	}
 	a.cfgMu.RUnlock()
 
@@ -148,6 +162,13 @@ func (a *App) applySystemSettingsLocked(ctx context.Context) error {
 		{settingClientReleaseNotes, &a.cfg.ClientReleaseNotes},
 		{settingClientReleaseMinimumSupported, &a.cfg.ClientReleaseMinimumSupported},
 		{settingClientReleaseFile, &a.cfg.ClientReleaseFile},
+		{settingLANReleaseVersion, &a.cfg.LANReleaseVersion},
+		{settingLANReleaseURL, &a.cfg.LANReleaseURL},
+		{settingLANReleaseSHA256, &a.cfg.LANReleaseSHA256},
+		{settingLANReleasePublishedAt, &a.cfg.LANReleasePublishedAt},
+		{settingLANReleaseNotes, &a.cfg.LANReleaseNotes},
+		{settingLANReleaseMinimumSupported, &a.cfg.LANReleaseMinimumSupported},
+		{settingLANReleaseFile, &a.cfg.LANReleaseFile},
 	} {
 		value, err := a.db.GetSystemSetting(ctx, item.key)
 		if err != nil {

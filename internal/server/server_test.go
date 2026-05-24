@@ -1110,6 +1110,28 @@ func TestHandleClientRelease(t *testing.T) {
 	}
 }
 
+func TestHandleLANRelease(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.LANReleaseVersion = "0.8.0"
+	a.cfg.LANReleaseSHA256 = "def456"
+	a.cfg.LANReleasePublishedAt = "2026-05-24T10:00:00Z"
+	a.cfg.LANReleaseNotes = "lan stable release"
+	a.cfg.LANReleaseMinimumSupported = "0.7.0"
+	a.cfg.LANReleaseURL = "https://example.com/UDPTunnelLAN-0.8.0-setup.exe"
+
+	rec := doJSON(t, a.httpMux(), http.MethodGet, "/api/lan/release", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp clientReleaseResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Version != "0.8.0" || resp.URL == "" || resp.SHA256 != "def456" || resp.MinimumSupportedVersion != "0.7.0" {
+		t.Fatalf("unexpected LAN release response: %+v", resp)
+	}
+}
+
 func TestApplyStoredSettingsUsesSystemSettings(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
@@ -1184,6 +1206,13 @@ func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
 		"client_release_notes":                     "release notes",
 		"client_release_minimum_supported_version": "1.0.0",
 		"client_release_file":                      "client.exe",
+		"lan_release_version":                      "0.8.0",
+		"lan_release_url":                          "https://example.com/lan.exe",
+		"lan_release_sha256":                       "def456",
+		"lan_release_published_at":                 "2026-05-24T10:00:00Z",
+		"lan_release_notes":                        "lan release notes",
+		"lan_release_minimum_supported_version":    "0.7.0",
+		"lan_release_file":                         "lan.exe",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1201,6 +1230,13 @@ func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
 	}
 	if lanRelay != "true" || !a.cfg.LANAllowRelay {
 		t.Fatalf("expected LAN relay setting persisted, got=%q cfg=%v", lanRelay, a.cfg.LANAllowRelay)
+	}
+	lanRelease, err := a.db.GetSystemSetting(context.Background(), settingLANReleaseVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lanRelease != "0.8.0" || a.cfg.LANReleaseURL != "https://example.com/lan.exe" {
+		t.Fatalf("expected LAN release settings persisted, version=%q cfg=%+v", lanRelease, a.cfg)
 	}
 	legacy, err := a.db.GetMeta(context.Background(), "setting_client_log_level")
 	if err != nil {
@@ -1482,6 +1518,13 @@ func TestEndToEndAdminAgentBootstrapFlow(t *testing.T) {
 		"client_release_notes":                     "stable",
 		"client_release_minimum_supported_version": "0.9.0",
 		"client_release_file":                      "",
+		"lan_release_version":                      "0.8.0",
+		"lan_release_url":                          "https://example.com/lan.exe",
+		"lan_release_sha256":                       "def",
+		"lan_release_published_at":                 "2026-05-23T11:00:00+08:00",
+		"lan_release_notes":                        "lan stable",
+		"lan_release_minimum_supported_version":    "0.7.0",
+		"lan_release_file":                         "",
 	}, adminHeaders)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("settings status=%d body=%s", settingsRec.Code, settingsRec.Body.String())

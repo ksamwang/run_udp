@@ -175,6 +175,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"client_release_notes":                     a.cfg.ClientReleaseNotes,
 			"client_release_minimum_supported_version": a.cfg.ClientReleaseMinimumSupported,
 			"client_release_file":                      a.cfg.ClientReleaseFile,
+			"lan_release_version":                      a.cfg.LANReleaseVersion,
+			"lan_release_url":                          a.cfg.LANReleaseURL,
+			"lan_release_sha256":                       a.cfg.LANReleaseSHA256,
+			"lan_release_published_at":                 a.cfg.LANReleasePublishedAt,
+			"lan_release_notes":                        a.cfg.LANReleaseNotes,
+			"lan_release_minimum_supported_version":    a.cfg.LANReleaseMinimumSupported,
+			"lan_release_file":                         a.cfg.LANReleaseFile,
 			"restart_only_fields":                      []string{"udp_listen", "stun_alt_listen", "http_listen", "control_database_dsn", "psk"},
 		}
 		a.cfgMu.RUnlock()
@@ -201,6 +208,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			ClientReleaseNotes            string `json:"client_release_notes"`
 			ClientReleaseMinimumSupported string `json:"client_release_minimum_supported_version"`
 			ClientReleaseFile             string `json:"client_release_file"`
+			LANReleaseVersion             string `json:"lan_release_version"`
+			LANReleaseURL                 string `json:"lan_release_url"`
+			LANReleaseSHA256              string `json:"lan_release_sha256"`
+			LANReleasePublishedAt         string `json:"lan_release_published_at"`
+			LANReleaseNotes               string `json:"lan_release_notes"`
+			LANReleaseMinimumSupported    string `json:"lan_release_minimum_supported_version"`
+			LANReleaseFile                string `json:"lan_release_file"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
@@ -260,6 +274,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		a.cfg.ClientReleaseNotes = req.ClientReleaseNotes
 		a.cfg.ClientReleaseMinimumSupported = req.ClientReleaseMinimumSupported
 		a.cfg.ClientReleaseFile = req.ClientReleaseFile
+		a.cfg.LANReleaseVersion = req.LANReleaseVersion
+		a.cfg.LANReleaseURL = req.LANReleaseURL
+		a.cfg.LANReleaseSHA256 = req.LANReleaseSHA256
+		a.cfg.LANReleasePublishedAt = req.LANReleasePublishedAt
+		a.cfg.LANReleaseNotes = req.LANReleaseNotes
+		a.cfg.LANReleaseMinimumSupported = req.LANReleaseMinimumSupported
+		a.cfg.LANReleaseFile = req.LANReleaseFile
 		a.cfgMu.Unlock()
 		settings := map[string]string{
 			settingPeerTTL:                       peerTTL.String(),
@@ -282,6 +303,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			settingClientReleaseNotes:            req.ClientReleaseNotes,
 			settingClientReleaseMinimumSupported: req.ClientReleaseMinimumSupported,
 			settingClientReleaseFile:             req.ClientReleaseFile,
+			settingLANReleaseVersion:             req.LANReleaseVersion,
+			settingLANReleaseURL:                 req.LANReleaseURL,
+			settingLANReleaseSHA256:              req.LANReleaseSHA256,
+			settingLANReleasePublishedAt:         req.LANReleasePublishedAt,
+			settingLANReleaseNotes:               req.LANReleaseNotes,
+			settingLANReleaseMinimumSupported:    req.LANReleaseMinimumSupported,
+			settingLANReleaseFile:                req.LANReleaseFile,
 		}
 		for key, value := range settings {
 			if err := a.db.PutSystemSetting(r.Context(), key, value); err != nil {

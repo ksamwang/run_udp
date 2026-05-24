@@ -132,6 +132,13 @@ export type Settings = {
   client_release_notes: string
   client_release_minimum_supported_version: string
   client_release_file: string
+  lan_release_version: string
+  lan_release_url: string
+  lan_release_sha256: string
+  lan_release_published_at: string
+  lan_release_notes: string
+  lan_release_minimum_supported_version: string
+  lan_release_file: string
   restart_only_fields?: string[]
 }
 

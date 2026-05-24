@@ -178,6 +178,21 @@ func (a *App) handleClientInstaller(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, file)
 }
 
+func (a *App) handleLANRelease(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.lanRelease(r))
+}
+
+func (a *App) handleLANInstaller(w http.ResponseWriter, r *http.Request) {
+	a.cfgMu.RLock()
+	file := a.cfg.LANReleaseFile
+	a.cfgMu.RUnlock()
+	if strings.TrimSpace(file) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, file)
+}
+
 func (a *App) agentOnline(tunnels []agentTunnelReport) bool {
 	return true
 }
@@ -258,5 +273,22 @@ func (a *App) clientRelease(r *http.Request) clientReleaseResponse {
 		PublishedAt:             a.cfg.ClientReleasePublishedAt,
 		Notes:                   a.cfg.ClientReleaseNotes,
 		MinimumSupportedVersion: a.cfg.ClientReleaseMinimumSupported,
+	}
+}
+
+func (a *App) lanRelease(r *http.Request) clientReleaseResponse {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	url := strings.TrimSpace(a.cfg.LANReleaseURL)
+	if url == "" && strings.TrimSpace(a.cfg.LANReleaseFile) != "" {
+		url = requestBaseURL(r) + "/downloads/lan/installer"
+	}
+	return clientReleaseResponse{
+		Version:                 a.cfg.LANReleaseVersion,
+		URL:                     url,
+		SHA256:                  a.cfg.LANReleaseSHA256,
+		PublishedAt:             a.cfg.LANReleasePublishedAt,
+		Notes:                   a.cfg.LANReleaseNotes,
+		MinimumSupportedVersion: a.cfg.LANReleaseMinimumSupported,
 	}
 }
