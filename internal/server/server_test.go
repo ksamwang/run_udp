@@ -523,6 +523,34 @@ func TestLANBootstrapAutoAssignsVirtualIP(t *testing.T) {
 	}
 }
 
+func TestLANBootstrapAutoAssignsWhenHostnameConflicts(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	network, err := a.db.EnsureDefaultVirtualNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "dev-a", NetworkID: network.ID, VirtualIP: "172.16.10.2", Hostname: "same-host",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
+		"device_id": "dev-b", "device_name": "same-host",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp lanBootstrapResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Address.DeviceID != "dev-b" || resp.Address.VirtualIP != "172.16.10.1" || resp.Address.Hostname != "dev-b" {
+		t.Fatalf("bad auto assigned address: %+v", resp.Address)
+	}
+}
+
 func TestLANBootstrapRepairsEmptyVirtualIP(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

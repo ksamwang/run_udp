@@ -625,18 +625,32 @@ func allocateVirtualAddress(ctx context.Context, db virtualAddressStore, network
 		return store.VirtualAddress{}, err
 	}
 	used := make(map[string]bool, len(addresses))
+	usedHostnames := make(map[string]bool, len(addresses))
 	for _, address := range addresses {
 		used[strings.TrimSpace(address.VirtualIP)] = true
+		if strings.TrimSpace(address.Hostname) != "" {
+			usedHostnames[strings.TrimSpace(address.Hostname)] = true
+		}
 	}
 	for ip := nextIPv4(base); ipNet.Contains(ip); ip = nextIPv4(ip) {
 		if isIPv4Broadcast(ipNet, ip) || used[ip.String()] {
 			continue
 		}
+		addressHostname := hostname
+		if strings.TrimSpace(addressHostname) == "" || usedHostnames[strings.TrimSpace(addressHostname)] {
+			addressHostname = deviceID
+		}
 		address := store.VirtualAddress{
 			DeviceID: deviceID, NetworkID: network.ID, VirtualIP: ip.String(),
-			Hostname: hostname, DNSEnabled: false,
+			Hostname: addressHostname, DNSEnabled: false,
 		}
 		if err := db.UpsertVirtualAddress(ctx, address); err != nil {
+			if strings.TrimSpace(addressHostname) != deviceID {
+				address.Hostname = deviceID
+				if retryErr := db.UpsertVirtualAddress(ctx, address); retryErr == nil {
+					return address, nil
+				}
+			}
 			return store.VirtualAddress{}, err
 		}
 		return address, nil

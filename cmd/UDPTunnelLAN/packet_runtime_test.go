@@ -615,7 +615,7 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 	expectPunch(upnpConn, "upnp")
 }
 
-func TestLANP2PPeerInfoLeavesReadyRelayMode(t *testing.T) {
+func TestLANP2PPeerInfoKeepsReadyRelayMode(t *testing.T) {
 	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
 	directAddr := "203.0.113.10:40000"
 	left, right := net.Pipe()
@@ -631,21 +631,26 @@ func TestLANP2PPeerInfoLeavesReadyRelayMode(t *testing.T) {
 	peer.addr.Store(relayAddr)
 	peer.isRelay.Store(true)
 	peer.connected.Store(true)
+	peer.punched.Store(true)
+	peer.punching.Store(true)
 	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: directAddr}
 	b, _ := protocol.Encode(msg)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p.handleControl(ctx, b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
 	cancel()
-	if peer.isRelay.Load() || peer.connected.Load() || peer.punched.Load() || !peer.punching.Load() {
-		t.Fatalf("peer must leave ready relay mode: relay=%v connected=%v punched=%v punching=%v", peer.isRelay.Load(), peer.connected.Load(), peer.punched.Load(), peer.punching.Load())
+	if !peer.isRelay.Load() || !peer.connected.Load() || !peer.punched.Load() || !peer.punching.Load() {
+		t.Fatalf("peer must keep ready relay mode: relay=%v connected=%v punched=%v punching=%v", peer.isRelay.Load(), peer.connected.Load(), peer.punched.Load(), peer.punching.Load())
 	}
 	if got := peer.addr.Load(); got == nil || got.String() != directAddr {
 		t.Fatalf("peer info must install direct address, got %v", got)
 	}
+	if peer.kcp != left {
+		t.Fatal("ready relay KCP must not be closed by peer info refresh")
+	}
 }
 
-func TestLANP2PPeerInfoLeavesUnreadyRelayMode(t *testing.T) {
+func TestLANP2PPeerInfoKeepsUnreadyRelayMode(t *testing.T) {
 	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
 	directAddr := "203.0.113.10:40000"
 	p := &lanP2P{
@@ -664,8 +669,8 @@ func TestLANP2PPeerInfoLeavesUnreadyRelayMode(t *testing.T) {
 	defer cancel()
 	p.handleControl(ctx, b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
 	cancel()
-	if peer.isRelay.Load() || peer.punched.Load() || !peer.punching.Load() {
-		t.Fatalf("peer must leave unready relay mode: relay=%v punched=%v punching=%v", peer.isRelay.Load(), peer.punched.Load(), peer.punching.Load())
+	if !peer.isRelay.Load() || !peer.punched.Load() || !peer.punching.Load() {
+		t.Fatalf("peer must keep unready relay mode: relay=%v punched=%v punching=%v", peer.isRelay.Load(), peer.punched.Load(), peer.punching.Load())
 	}
 	if got := peer.addr.Load(); got == nil || got.String() != directAddr {
 		t.Fatalf("peer info must install direct address, got %v", got)

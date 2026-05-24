@@ -1249,28 +1249,9 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P bad peer addr: peer=%s addr=%q err=%v", msg.Peer, msg.Addr, err)
 			return
 		}
-		if peer.isRelay.Load() {
-			peer.kcpMu.Lock()
-			relayReady := peer.kcp != nil && peer.connected.Load()
-			if relayReady && peer.kcp != nil {
-				_ = peer.kcp.Close()
-				peer.kcp = nil
-			}
-			if peer.pc != nil {
-				_ = peer.pc.Close()
-				peer.pc = nil
-			}
-			peer.connected.Store(false)
-			peer.punched.Store(false)
-			peer.punching.Store(false)
-			peer.isRelay.Store(false)
-			peer.datagramReady.Store(false)
-			peer.relaySince.Store(0)
-			peer.kcpMu.Unlock()
-			log.Printf("LAN P2P leaving relay mode for fresh peer info: peer=%s addr=%s relay_ready=%v", msg.Peer, msg.Addr, relayReady)
-		}
+		relayActive := peer.isRelay.Load()
 		peer.addr.Store(addr)
-		if peer.pc == nil {
+		if peer.pc == nil && !relayActive {
 			peer.pc = p.newPeerPacketConn(&peer.addr)
 		}
 		if strings.TrimSpace(msg.UpnpAddr) != "" {
@@ -1286,7 +1267,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		}
 		log.Printf("LAN P2P peer info: peer=%s addr=%s upnp=%q codec_ready=%v", peer.id, addr, msg.UpnpAddr, peer.tx != nil && peer.rx != nil)
 		p.startPunchLoop(ctx, peer)
-		if peer.punched.Load() && !peer.connected.Load() {
+		if !relayActive && peer.punched.Load() && !peer.connected.Load() {
 			go p.openTunnel(ctx, adapter, router, link, peer)
 		}
 	case protocol.MsgPunch:
