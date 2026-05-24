@@ -216,7 +216,7 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			return
 		}
 		stats := pending.Stats()
-		log.Printf("LAN pending replay: frames=%d bytes=%d added=%d dropped=%d expired=%d tcp=%d udp=%d icmp=%d", stats.Frames, stats.Bytes, stats.Added, stats.Dropped, stats.Expired, stats.TCP, stats.UDP, stats.ICMP)
+		log.Printf("LAN pending replay: frames=%d bytes=%d added=%d dropped=%d expired=%d tcp=%d udp=%d icmp=%d interactive=%d throughput=%d", stats.Frames, stats.Bytes, stats.Added, stats.Dropped, stats.Expired, stats.TCP, stats.UDP, stats.ICMP, stats.Interactive, stats.Throughput)
 		delivered := map[int]bool{}
 		relay := make([]packet.RoutedFrame, 0, len(frames))
 		for i, frame := range frames {
@@ -319,14 +319,16 @@ type lanPendingQueue struct {
 }
 
 type lanPendingStats struct {
-	Frames  int
-	Bytes   int
-	Added   uint64
-	Dropped uint64
-	Expired uint64
-	TCP     uint64
-	UDP     uint64
-	ICMP    uint64
+	Frames      int
+	Bytes       int
+	Added       uint64
+	Dropped     uint64
+	Expired     uint64
+	TCP         uint64
+	UDP         uint64
+	ICMP        uint64
+	Interactive uint64
+	Throughput  uint64
 }
 
 func newLANPendingQueue(maxFrames, maxBytes int, ttl time.Duration) *lanPendingQueue {
@@ -349,6 +351,12 @@ func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
 			q.stats.UDP++
 		case packet.IPv4ProtocolICMP:
 			q.stats.ICMP++
+		}
+		switch classifyLANFrame(frame) {
+		case lanTrafficInteractive:
+			q.stats.Interactive++
+		case lanTrafficThroughput:
+			q.stats.Throughput++
 		}
 		q.trim()
 	}
@@ -381,26 +389,43 @@ func (q *lanPendingQueue) FrameIDs() []uint64 {
 }
 
 func lanFramePriority(frame packet.RoutedFrame) int {
+	switch classifyLANFrame(frame) {
+	case lanTrafficCritical:
+		return 0
+	case lanTrafficInteractive:
+		return 1
+	default:
+		return 2
+	}
+}
+
+const (
+	lanTrafficCritical    = "critical"
+	lanTrafficInteractive = "interactive"
+	lanTrafficThroughput  = "throughput"
+)
+
+func classifyLANFrame(frame packet.RoutedFrame) string {
 	header := frame.Header
 	switch header.Protocol {
 	case packet.IPv4ProtocolICMP:
-		return 0
+		return lanTrafficCritical
 	case packet.IPv4ProtocolTCP:
 		if header.TCPSYN {
-			return 0
+			return lanTrafficCritical
 		}
 		if isLANInteractivePort(header.SourcePort) || isLANInteractivePort(header.DestPort) || len(frame.Payload) <= 256 {
-			return 1
+			return lanTrafficInteractive
 		}
 	case packet.IPv4ProtocolUDP:
 		if header.SourcePort == 53 || header.DestPort == 53 || len(frame.Payload) <= 256 {
-			return 1
+			return lanTrafficInteractive
 		}
 	}
 	if len(frame.Payload) <= 256 {
-		return 1
+		return lanTrafficInteractive
 	}
-	return 2
+	return lanTrafficThroughput
 }
 
 func isLANInteractivePort(port int) bool {

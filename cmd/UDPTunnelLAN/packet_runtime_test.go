@@ -220,8 +220,39 @@ func TestLANPendingQueueKeepsCriticalFramesWhenFull(t *testing.T) {
 		t.Fatalf("critical frames should be preserved, got %q/%q", frames[0].Payload, frames[1].Payload)
 	}
 	stats := q.Stats()
-	if stats.Dropped != 1 || stats.Frames != 2 || stats.Added != 3 || stats.TCP != 2 || stats.UDP != 1 {
+	if stats.Dropped != 1 || stats.Frames != 2 || stats.Added != 3 || stats.TCP != 2 || stats.UDP != 1 || stats.Interactive != 1 || stats.Throughput != 1 {
 		t.Fatalf("bad pending stats: %+v", stats)
+	}
+}
+
+func TestClassifyLANFrame(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame packet.RoutedFrame
+		want  string
+	}{
+		{
+			name:  "tcp syn critical",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, TCPSYN: true}, Payload: []byte("syn")},
+			want:  lanTrafficCritical,
+		},
+		{
+			name:  "rdp interactive",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 3389}, Payload: []byte("rdp")},
+			want:  lanTrafficInteractive,
+		},
+		{
+			name:  "smb throughput",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445}, Payload: bytes.Repeat([]byte{1}, 1400)},
+			want:  lanTrafficThroughput,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyLANFrame(tt.frame); got != tt.want {
+				t.Fatalf("classifyLANFrame=%q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
