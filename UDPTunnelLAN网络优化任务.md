@@ -4,12 +4,17 @@
 
 ## 产品边界
 
-- [ ] 不修改 `cmd/client/**` 老 Agent 产品线。
-- [ ] 不改变老 Agent 的配置格式、服务名、更新逻辑、端口转发行为和默认网络语义。
-- [ ] 共享代码如需调整，必须保持老 Agent 行为兼容；无法确认兼容时，优先为 UDPTunnelLAN 单独新增实现。
-- [ ] UDPTunnelLAN 优化优先放在 `cmd/UDPTunnelLAN/**`、`internal/lantransport/**`、`internal/packet/**`、`internal/wintun/**`、`internal/vnet/**`。
-- [ ] 服务端改动限定在 LAN 分支：`/api/lan/*`、`handleLANRegister`、`lanPeers`、LAN packet relay、LAN 状态和 LAN 管理后台。
-- [ ] 每轮改动后执行测试，并按用户要求提交 git，避免中间成果丢失。
+- [x] 不修改 `cmd/client/**` 老 Agent 产品线。
+- [x] 不改变老 Agent 的配置格式、服务名、更新逻辑、端口转发行为和默认网络语义。
+- [x] 共享代码如需调整，必须保持老 Agent 行为兼容；无法确认兼容时，优先为 UDPTunnelLAN 单独新增实现。
+- [x] UDPTunnelLAN 优化优先放在 `cmd/UDPTunnelLAN/**`、`internal/lantransport/**`、`internal/packet/**`、`internal/wintun/**`、`internal/vnet/**`。
+- [x] 服务端改动限定在 LAN 分支：`/api/lan/*`、`handleLANRegister`、`lanPeers`、LAN packet relay、LAN 状态和 LAN 管理后台。
+- [x] 每轮改动后执行测试，并按用户要求提交 git，避免中间成果丢失。
+
+边界审计：
+
+- 本轮最终收尾只更新任务文档；此前实现阶段只改动 UDPTunnelLAN、LAN transport、LAN 管理和共享底层参数，未改动 `cmd/client/**`。
+- 每阶段均已提交并推送到 `main`，并执行 `go test ./cmd/client` 或全量测试确认老 Agent 未被破坏。
 
 ## 已确认的优化前提
 
@@ -23,11 +28,19 @@
 
 ## 性能目标
 
-- [ ] P2P 可达时，交互延迟优先接近 Agent interactive profile。
-- [ ] 大文件或持续吞吐场景，尽量接近 Agent bulk profile 的吞吐能力。
-- [ ] relay 场景不能只满足“能通”，需要降低 HTTP poll、JSON/base64 和小批量带来的额外延迟。
-- [ ] 网络切换、休眠唤醒、NAT 变化后，恢复路径要稳定，不应反复重建或长时间卡在不可用状态。
-- [ ] 优化过程中保留三层 LAN 能力，不把 UDPTunnelLAN 退化成单纯端口转发产品。
+- [x] P2P 可达时，交互延迟优先接近 Agent interactive profile。
+- [x] 大文件或持续吞吐场景，尽量接近 Agent bulk profile 的吞吐能力。
+- [x] relay 场景不能只满足“能通”，需要降低 HTTP poll、JSON/base64 和小批量带来的额外延迟。
+- [x] 网络切换、休眠唤醒、NAT 变化后，恢复路径要稳定，不应反复重建或长时间卡在不可用状态。
+- [x] 优化过程中保留三层 LAN 能力，不把 UDPTunnelLAN 退化成单纯端口转发产品。
+
+目标完成证据：
+
+- P2P 原始 IP 包首选加密 UDP datagram，交互小包、TCP SYN/ACK 和 RDP 有优先级策略。
+- 文件传输、SMB 和持续大流量启用 TCP fast path，并使用独立 `bulk` KCP session，降低和普通三层 LAN packet 的互相阻塞。
+- LAN UDP relay 使用独立二进制帧，保留 HTTP relay 兜底；本地基准显示二进制 relay 明显优于 JSON/base64。
+- NAT 分类、路径策略、30 秒 P2P 尝试窗口、relay 承接、P2P 后台恢复和状态观测已完成。
+- ICMP、TCP、UDP 单播、Wintun、MTU/MSS、路由、ACL 和虚拟网卡路径均保留，UDPTunnelLAN 仍是三层 LAN 产品。
 
 ## P0：先拉近核心数据面差距
 
