@@ -256,6 +256,47 @@ func TestClassifyLANFrame(t *testing.T) {
 	}
 }
 
+func TestLANTCPFastPathCandidate(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame packet.RoutedFrame
+		want  bool
+	}{
+		{
+			name:  "tcp syn stays on packet path",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445, TCPSYN: true}, Payload: []byte("syn")},
+			want:  false,
+		},
+		{
+			name:  "smb candidate",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445}, Payload: bytes.Repeat([]byte{1}, 1400)},
+			want:  true,
+		},
+		{
+			name:  "rdp candidate",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 3389}, Payload: []byte("rdp")},
+			want:  true,
+		},
+		{
+			name:  "large tcp candidate",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 8443}, Payload: bytes.Repeat([]byte{1}, 1400)},
+			want:  true,
+		},
+		{
+			name:  "udp never candidate",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolUDP, DestPort: 53}, Payload: []byte("dns")},
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLANTCPFastPathCandidate(tt.frame); got != tt.want {
+				t.Fatalf("isLANTCPFastPathCandidate=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLANWintunReadStatsClassifiesPackets(t *testing.T) {
 	stats := &lanWintunReadStats{lastLog: time.Now()}
 	icmp := make([]byte, 40)

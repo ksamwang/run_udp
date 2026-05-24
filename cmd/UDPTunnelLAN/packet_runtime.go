@@ -450,9 +450,29 @@ func classifyLANFrame(frame packet.RoutedFrame) string {
 	return lanTrafficThroughput
 }
 
+func isLANTCPFastPathCandidate(frame packet.RoutedFrame) bool {
+	header := frame.Header
+	if header.Protocol != packet.IPv4ProtocolTCP || header.TCPSYN {
+		return false
+	}
+	if isLANFastPathPort(header.SourcePort) || isLANFastPathPort(header.DestPort) {
+		return true
+	}
+	return classifyLANFrame(frame) == lanTrafficThroughput && len(frame.Payload) >= 1024
+}
+
 func isLANInteractivePort(port int) bool {
 	switch port {
 	case 22, 53, 3389:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLANFastPathPort(port int) bool {
+	switch port {
+	case 139, 445, 3389:
 		return true
 	default:
 		return false
