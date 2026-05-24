@@ -2,6 +2,7 @@ package lantransport
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"udp_tunnel_demo/internal/packet"
@@ -96,5 +97,36 @@ func BenchmarkDatagramSealOpen1KB(b *testing.B) {
 		if _, err := Open(rx, frame); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkDatagramSealOpenSizes(b *testing.B) {
+	for _, size := range []int{1200, 1280, 1400} {
+		b.Run(fmt.Sprintf("%dB", size), func(b *testing.B) {
+			keys, err := packet.DeriveSessionKeys([]byte("shared-secret"), 7, "session", "dev-a", "dev-b")
+			if err != nil {
+				b.Fatal(err)
+			}
+			tx, err := packet.NewCodec(keys.AB, 7, packet.TypeIPv4)
+			if err != nil {
+				b.Fatal(err)
+			}
+			rx, err := packet.NewCodec(keys.AB, 7, packet.TypeIPv4)
+			if err != nil {
+				b.Fatal(err)
+			}
+			payload := make([]byte, size)
+			b.SetBytes(int64(len(payload)))
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				frame, err := Seal(tx, payload)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := Open(rx, frame); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

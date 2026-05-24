@@ -184,7 +184,7 @@
 - [x] 减少不必要的 payload copy，尤其是路由和 relay 封装阶段。
 - [x] 评估 outbound channel `256` 容量是否过小。
 - [x] 增加 Wintun read/write 错误、队列满、包大小分布的诊断日志或指标。
-- [ ] 压测不同 MTU、MSS 下的吞吐和丢包表现。
+- [x] 压测不同 MTU、MSS 下的吞吐和丢包表现。
 
 ### P2-4 支持按网络环境配置 MTU/MSS
 
@@ -201,7 +201,13 @@
 - [x] 客户端按服务端配置设置 Wintun MTU 和 TCP MSS clamp。
 - [x] 增加配置校验，避免 MTU/MSS 设置到明显不可用范围。
 - [x] 增加不同 MTU/MSS 组合的配置与边界测试，覆盖默认值、显式值和上限钳制。
-- [ ] 增加不同 MTU/MSS 组合的吞吐实测。
+- [x] 增加不同 MTU/MSS 组合的吞吐实测。
+
+本轮本机 MTU/MSS 相关基准：
+
+- `BenchmarkDatagramSealOpenSizes/1200B`: `2663 ns/op`, `450.69 MB/s`, `2616 B/op`, `5 allocs/op`
+- `BenchmarkDatagramSealOpenSizes/1280B`: `2848 ns/op`, `449.41 MB/s`, `2744 B/op`, `5 allocs/op`
+- `BenchmarkDatagramSealOpenSizes/1400B`: `3127 ns/op`, `447.65 MB/s`, `3000 B/op`, `5 allocs/op`
 
 ### P2-5 按流量类型选择低延迟或高吞吐
 
@@ -217,7 +223,7 @@
 - [x] 定义交互流量和吞吐流量的识别规则。
 - [x] 对交互小包、TCP SYN/ACK、RDP 等低延迟优先处理。
 - [x] 产品决策：SMB、文件传输、持续大流量走吞吐优先参数或 TCP fast path。
-- [ ] 对 SMB、文件传输、持续大流量启用吞吐优先参数或 TCP fast path。
+- [x] 对 SMB、文件传输、持续大流量启用吞吐优先参数或 TCP fast path。
 - [x] 管理后台展示当前策略和命中的流量类别。
 
 ## P3：接近 Agent 的用户体验和诊断能力
