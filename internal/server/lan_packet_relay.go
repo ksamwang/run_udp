@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 const (
 	lanPacketMaxBatch   = 64
 	lanPacketMaxPayload = 64 * 1024
+	lanPacketPollTick   = 10 * time.Millisecond
 )
 
 type lanPacketRelayFrame struct {
@@ -28,6 +30,7 @@ type lanPacketRelay struct {
 	mu       sync.Mutex
 	limit    int
 	byDevice map[string][]lanPacketRelayFrame
+	dropped  uint64
 }
 
 func newLANPacketRelay(limit int) *lanPacketRelay {
@@ -43,17 +46,18 @@ func (r *lanPacketRelay) Enqueue(frame lanPacketRelayFrame) {
 	frame.QueuedAt = time.Now().Format(time.RFC3339Nano)
 	q := append(r.byDevice[frame.DstDevice], frame)
 	if len(q) > r.limit {
+		r.dropped += uint64(len(q) - r.limit)
 		q = q[len(q)-r.limit:]
 	}
 	r.byDevice[frame.DstDevice] = q
 }
 
-func (r *lanPacketRelay) Poll(deviceID string, max int) []lanPacketRelayFrame {
+func (r *lanPacketRelay) Poll(deviceID string, max int) ([]lanPacketRelayFrame, int, uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	q := r.byDevice[deviceID]
 	if len(q) == 0 {
-		return nil
+		return nil, 0, r.dropped
 	}
 	if max <= 0 || max > lanPacketMaxBatch {
 		max = lanPacketMaxBatch
@@ -67,7 +71,7 @@ func (r *lanPacketRelay) Poll(deviceID string, max int) []lanPacketRelayFrame {
 	} else {
 		r.byDevice[deviceID] = append([]lanPacketRelayFrame(nil), q[max:]...)
 	}
-	return out
+	return out, len(r.byDevice[deviceID]), r.dropped
 }
 
 func (a *App) handleLANPacketSend(w http.ResponseWriter, r *http.Request) {
@@ -118,11 +122,14 @@ func (a *App) handleLANPacketPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(lanPacketPollTick)
 	defer ticker.Stop()
 	for {
-		frames := a.lanRelay.Poll(req.DeviceID, req.Max)
+		frames, remaining, dropped := a.lanRelay.Poll(req.DeviceID, req.Max)
 		if len(frames) > 0 {
+			if remaining > 0 || dropped > 0 || len(frames) >= lanPacketMaxBatch {
+				log.Printf("LAN relay poll: device=%s frames=%d remaining=%d dropped=%d", req.DeviceID, len(frames), remaining, dropped)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"frames": frames})
 			return
 		}

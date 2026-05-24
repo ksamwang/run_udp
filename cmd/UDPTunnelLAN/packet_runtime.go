@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	lanPacketBatchSize    = 16
+	lanPacketBatchSize    = 64
 	lanPacketPollInterval = 10 * time.Millisecond
 	lanConfigRefreshEvery = 10 * time.Second
 	lanUPnPTimeout        = 4 * time.Second
@@ -52,6 +52,8 @@ const (
 )
 
 var lanKCPReadyFrame = []byte("\x00LAN-KCP-READY\n")
+
+var lanHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 const (
 	lanPathP2PDatagram = "p2p_datagram"
@@ -1580,7 +1582,7 @@ func postLANJSON(ctx context.Context, url string, reqBody any, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := lanHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
