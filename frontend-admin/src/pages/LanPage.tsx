@@ -5,15 +5,18 @@ import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { listDevices } from '../api/devices'
 import {
+  createVirtualDeviceGroup,
   createVirtualNetwork,
   createVirtualACLRule,
   createVirtualRoute,
   deleteVirtualACLRule,
+  deleteVirtualDeviceGroup,
   deleteVirtualNetwork,
   deleteVirtualRoute,
   listVirtualACLRules,
   listVirtualAddresses,
   listVirtualDeviceKeys,
+  listVirtualDeviceGroups,
   listVirtualNetworks,
   listVirtualPeerStates,
   listVirtualRoutes,
@@ -22,15 +25,17 @@ import {
   triggerVirtualAddressBootstrap,
   updateVirtualACLRule,
   updateVirtualAddress,
+  updateVirtualDeviceGroup,
   updateVirtualNetwork,
   updateVirtualRoute,
 } from '../api/lan'
-import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
 type ACLForm = VirtualACLRulePayload
 type RouteForm = VirtualRoutePayload
+type GroupForm = VirtualDeviceGroupPayload
 
 export function LanPage() {
   const queryClient = useQueryClient()
@@ -38,11 +43,14 @@ export function LanPage() {
   const [addressForm] = Form.useForm<AddressForm>()
   const [aclForm] = Form.useForm<ACLForm>()
   const [routeForm] = Form.useForm<RouteForm>()
+  const [groupForm] = Form.useForm<GroupForm>()
   const [editingAddress, setEditingAddress] = useState<VirtualAddress | null>(null)
   const [editingACL, setEditingACL] = useState<VirtualACLRule | null>(null)
   const [aclFormOpen, setACLFormOpen] = useState(false)
   const [editingRoute, setEditingRoute] = useState<VirtualRoute | null>(null)
   const [routeFormOpen, setRouteFormOpen] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<VirtualDeviceGroup | null>(null)
+  const [groupFormOpen, setGroupFormOpen] = useState(false)
   const [selectedNetworkID, setSelectedNetworkID] = useState<number | undefined>()
   const [creatingNetwork, setCreatingNetwork] = useState(false)
 
@@ -75,6 +83,7 @@ export function LanPage() {
   })
   const devices = useQuery({ queryKey: ['devices'], queryFn: listDevices })
   const deviceKeys = useQuery({ queryKey: ['lan', 'device-keys'], queryFn: listVirtualDeviceKeys })
+  const groups = useQuery({ queryKey: ['lan', 'groups'], queryFn: listVirtualDeviceGroups })
 
   useEffect(() => {
     if (!selectedNetworkID && networks.data?.[0]) {
@@ -115,11 +124,36 @@ export function LanPage() {
       setRouteFormOpen(true)
     }
   }, [editingRoute, routeForm])
+  useEffect(() => {
+    if (editingGroup) {
+      groupForm.setFieldsValue({
+        id: editingGroup.id,
+        name: editingGroup.name,
+        device_ids: editingGroup.device_ids || [],
+      })
+      setGroupFormOpen(true)
+    }
+  }, [editingGroup, groupForm])
 
   const deviceOptions = useMemo(() => (devices.data || []).map((device) => ({
     label: device.name ? `${device.name} (${device.id})` : device.id,
     value: device.id,
   })), [devices.data])
+  const groupOptions = useMemo(() => (groups.data || []).map((group) => ({
+    label: group.name ? `${group.name} (${group.id})` : group.id,
+    value: group.id,
+  })), [groups.data])
+  const groupName = useMemo(() => {
+    const m = new Map<string, VirtualDeviceGroup>()
+    for (const group of groups.data || []) {
+      m.set(group.id, group)
+    }
+    return (id?: string) => {
+      if (!id) return '-'
+      const group = m.get(id)
+      return group?.name ? `${group.name} (${id})` : id
+    }
+  }, [groups.data])
   const deviceName = useMemo(() => {
     const m = new Map<string, Device>()
     for (const device of devices.data || []) {
@@ -223,6 +257,25 @@ export function LanPage() {
     onSuccess: () => {
       message.success('虚拟路由已删除')
       queryClient.invalidateQueries({ queryKey: ['lan', 'routes'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
+  })
+  const groupMutation = useMutation<unknown, Error, GroupForm>({
+    mutationFn: (payload: GroupForm) => editingGroup ? updateVirtualDeviceGroup(editingGroup.id, payload) : createVirtualDeviceGroup(payload),
+    onSuccess: () => {
+      message.success('设备组已保存')
+      setEditingGroup(null)
+      setGroupFormOpen(false)
+      groupForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['lan', 'groups'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
+  })
+  const deleteGroupMutation = useMutation({
+    mutationFn: deleteVirtualDeviceGroup,
+    onSuccess: () => {
+      message.success('设备组已删除')
+      queryClient.invalidateQueries({ queryKey: ['lan', 'groups'] })
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
   })
@@ -369,6 +422,71 @@ export function LanPage() {
       ),
     },
     {
+      key: 'groups',
+      label: '设备组',
+      children: (
+        <Card>
+          <div className="lan-section-toolbar">
+            <Typography.Text type="secondary">设备组用于 ACL 的源组和目标组匹配。</Typography.Text>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditingGroup(null)
+                groupForm.setFieldsValue({ id: '', name: '', device_ids: [] })
+                setGroupFormOpen(true)
+              }}
+            >
+              新增设备组
+            </Button>
+          </div>
+          {groupFormOpen && (
+            <Form form={groupForm} layout="vertical" className="lan-form" onFinish={(values) => groupMutation.mutate(values)}>
+              <Form.Item name="id" label="组 ID" rules={[{ required: true, message: '请输入组 ID' }]}>
+                <Input disabled={Boolean(editingGroup)} placeholder="ops" />
+              </Form.Item>
+              <Form.Item name="name" label="组名称" rules={[{ required: true, message: '请输入组名称' }]}>
+                <Input placeholder="运维组" />
+              </Form.Item>
+              <Form.Item name="device_ids" label="成员设备">
+                <Select mode="multiple" allowClear options={deviceOptions} optionFilterProp="label" placeholder="选择成员设备" />
+              </Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={groupMutation.isPending}>保存设备组</Button>
+                <Button onClick={() => { setEditingGroup(null); setGroupFormOpen(false); groupForm.resetFields() }}>取消</Button>
+              </Space>
+            </Form>
+          )}
+          <Table
+            rowKey="id"
+            loading={groups.isLoading}
+            dataSource={groups.data || []}
+            columns={[
+              { title: '组 ID', dataIndex: 'id', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+              { title: '组名称', dataIndex: 'name' },
+              { title: '成员', dataIndex: 'device_ids', render: (ids: string[]) => ids?.length ? ids.map((id) => <Tag key={id}>{deviceName(id)}</Tag>) : '-' },
+              { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
+              {
+                title: '操作',
+                width: 140,
+                render: (_, row) => (
+                  <Space>
+                    <Tooltip title="编辑设备组">
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingGroup(row)} />
+                    </Tooltip>
+                    <Popconfirm title="删除设备组" description="确认删除这个设备组？相关 ACL 需要另行调整。" onConfirm={() => deleteGroupMutation.mutate(row.id)}>
+                      <Button size="small" danger icon={<DeleteOutlined />} loading={deleteGroupMutation.isPending} />
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
+            ]}
+            scroll={{ x: 1000 }}
+          />
+        </Card>
+      ),
+    },
+    {
       key: 'acl',
       label: 'ACL 规则',
       children: (
@@ -394,8 +512,14 @@ export function LanPage() {
               <Form.Item name="source_device_id" label="源设备">
                 <Select allowClear options={deviceOptions} placeholder="任意设备" />
               </Form.Item>
+              <Form.Item name="source_group_id" label="源设备组">
+                <Select allowClear options={groupOptions} placeholder="任意设备组" />
+              </Form.Item>
               <Form.Item name="target_device_id" label="目标设备">
                 <Select allowClear options={deviceOptions} placeholder="任意设备" />
+              </Form.Item>
+              <Form.Item name="target_group_id" label="目标设备组">
+                <Select allowClear options={groupOptions} placeholder="任意设备组" />
               </Form.Item>
               <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
                 <Select options={[
@@ -433,7 +557,9 @@ export function LanPage() {
             columns={[
               { title: '状态', dataIndex: 'enabled', width: 90, render: (v) => <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '停用'}</Tag> },
               { title: '源设备', dataIndex: 'source_device_id', render: (v) => deviceName(v) },
+              { title: '源组', dataIndex: 'source_group_id', render: (v) => groupName(v) },
               { title: '目标设备', dataIndex: 'target_device_id', render: (v) => deviceName(v) },
+              { title: '目标组', dataIndex: 'target_group_id', render: (v) => groupName(v) },
               { title: '协议', dataIndex: 'protocol', render: (v) => <Tag>{formatProtocol(v)}</Tag> },
               { title: '端口', render: (_, row) => formatPortRange(row.port_start, row.port_end) },
               { title: '动作', dataIndex: 'action', render: (v) => <Tag color={v === 'deny' ? 'red' : 'green'}>{v === 'deny' ? '拒绝' : '允许'}</Tag> },

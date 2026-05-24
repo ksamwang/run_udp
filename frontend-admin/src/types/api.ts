@@ -162,6 +162,16 @@ export type VirtualDeviceKey = {
   updated_at: string
 }
 
+export type VirtualDeviceGroup = {
+  id: string
+  name: string
+  device_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export type VirtualDeviceGroupPayload = Pick<VirtualDeviceGroup, 'id' | 'name' | 'device_ids'>
+
 export type VirtualACLRule = {
   id: number
   network_id: number

@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceKey, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualDeviceKey, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
@@ -57,6 +57,30 @@ export function triggerVirtualAddressBootstrap(deviceID: string, networkID: numb
 
 export function listVirtualDeviceKeys() {
   return apiRequest<VirtualDeviceKey[]>('/api/admin/lan/device-keys')
+}
+
+export function listVirtualDeviceGroups() {
+  return apiRequest<VirtualDeviceGroup[]>('/api/admin/lan/groups')
+}
+
+export function createVirtualDeviceGroup(payload: VirtualDeviceGroupPayload) {
+  return apiRequest<VirtualDeviceGroup>('/api/admin/lan/groups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateVirtualDeviceGroup(id: string, payload: VirtualDeviceGroupPayload) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/groups/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteVirtualDeviceGroup(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/groups/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }
 
 export function listVirtualACLRules(networkID?: number) {
