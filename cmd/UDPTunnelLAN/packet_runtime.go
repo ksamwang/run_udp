@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -228,6 +229,7 @@ type lanPendingFrame struct {
 	frame packet.RoutedFrame
 	at    time.Time
 	size  int
+	id    uint64
 }
 
 type lanPendingQueue struct {
@@ -236,6 +238,7 @@ type lanPendingQueue struct {
 	ttl       time.Duration
 	bytes     int
 	frames    []lanPendingFrame
+	nextID    uint64
 }
 
 func newLANPendingQueue(maxFrames, maxBytes int, ttl time.Duration) *lanPendingQueue {
@@ -246,8 +249,9 @@ func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
 	now := time.Now()
 	q.prune(now)
 	for _, frame := range frames {
+		q.nextID++
 		size := len(frame.Payload)
-		q.frames = append(q.frames, lanPendingFrame{frame: frame, at: now, size: size})
+		q.frames = append(q.frames, lanPendingFrame{frame: frame, at: now, size: size, id: q.nextID})
 		q.bytes += size
 		q.trim()
 	}
@@ -255,11 +259,60 @@ func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
 
 func (q *lanPendingQueue) Frames() []packet.RoutedFrame {
 	q.prune(time.Now())
-	out := make([]packet.RoutedFrame, 0, len(q.frames))
-	for _, item := range q.frames {
+	items := append([]lanPendingFrame(nil), q.frames...)
+	sort.SliceStable(items, func(i, j int) bool {
+		return lanFramePriority(items[i].frame) < lanFramePriority(items[j].frame)
+	})
+	out := make([]packet.RoutedFrame, 0, len(items))
+	for _, item := range items {
 		out = append(out, item.frame)
 	}
 	return out
+}
+
+func (q *lanPendingQueue) FrameIDs() []uint64 {
+	q.prune(time.Now())
+	items := append([]lanPendingFrame(nil), q.frames...)
+	sort.SliceStable(items, func(i, j int) bool {
+		return lanFramePriority(items[i].frame) < lanFramePriority(items[j].frame)
+	})
+	out := make([]uint64, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.id)
+	}
+	return out
+}
+
+func lanFramePriority(frame packet.RoutedFrame) int {
+	header := frame.Header
+	switch header.Protocol {
+	case packet.IPv4ProtocolICMP:
+		return 0
+	case packet.IPv4ProtocolTCP:
+		if header.TCPSYN {
+			return 0
+		}
+		if isLANInteractivePort(header.SourcePort) || isLANInteractivePort(header.DestPort) || len(frame.Payload) <= 256 {
+			return 1
+		}
+	case packet.IPv4ProtocolUDP:
+		if header.SourcePort == 53 || header.DestPort == 53 || len(frame.Payload) <= 256 {
+			return 1
+		}
+	}
+	if len(frame.Payload) <= 256 {
+		return 1
+	}
+	return 2
+}
+
+func isLANInteractivePort(port int) bool {
+	switch port {
+	case 22, 53, 3389:
+		return true
+	default:
+		return false
+	}
 }
 
 func (q *lanPendingQueue) Remove(delivered map[int]bool) {
@@ -267,10 +320,17 @@ func (q *lanPendingQueue) Remove(delivered map[int]bool) {
 		q.prune(time.Now())
 		return
 	}
+	orderedIDs := q.FrameIDs()
+	deliveredIDs := make(map[uint64]bool, len(delivered))
+	for i := range delivered {
+		if i >= 0 && i < len(orderedIDs) {
+			deliveredIDs[orderedIDs[i]] = true
+		}
+	}
 	next := q.frames[:0]
 	q.bytes = 0
-	for i, item := range q.frames {
-		if delivered[i] {
+	for _, item := range q.frames {
+		if deliveredIDs[item.id] {
 			continue
 		}
 		next = append(next, item)

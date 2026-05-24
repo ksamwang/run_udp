@@ -158,6 +158,43 @@ func TestPostRelayFramesReceivesEncryptedPayload(t *testing.T) {
 	}
 }
 
+func TestLANPendingQueuePrioritizesInteractiveFrames(t *testing.T) {
+	q := newLANPendingQueue(8, 0, time.Minute)
+	q.Add([]packet.RoutedFrame{
+		{
+			DstDevice: "dev-b", Payload: bytes.Repeat([]byte{1}, 1400),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445, PayloadSize: 1360},
+		},
+		{
+			DstDevice: "dev-b", Payload: []byte("syn"),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 3389, TCPSYN: true},
+		},
+		{
+			DstDevice: "dev-b", Payload: []byte("icmp"),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolICMP},
+		},
+	})
+
+	frames := q.Frames()
+	if got := string(frames[0].Payload); got != "syn" {
+		t.Fatalf("tcp syn should be first, got %q", got)
+	}
+	if got := string(frames[1].Payload); got != "icmp" {
+		t.Fatalf("icmp should be second with stable priority order, got %q", got)
+	}
+	q.Remove(map[int]bool{0: true})
+	frames = q.Frames()
+	if len(frames) != 2 {
+		t.Fatalf("expected two remaining frames, got %d", len(frames))
+	}
+	if got := string(frames[0].Payload); got != "icmp" {
+		t.Fatalf("remove must follow prioritized order, got first remaining %q", got)
+	}
+	if len(frames[1].Payload) != 1400 {
+		t.Fatalf("bulk frame should remain last, got %d bytes", len(frames[1].Payload))
+	}
+}
+
 func BenchmarkRelayFrameEnvelopeEncoding(b *testing.B) {
 	frame := lanRelayFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", Type: packet.TypeIPv4,
