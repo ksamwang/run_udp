@@ -237,7 +237,11 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		stats := pending.Stats()
 		log.Printf("LAN pending replay: frames=%d bytes=%d added=%d dropped=%d expired=%d tcp=%d udp=%d icmp=%d interactive=%d throughput=%d", stats.Frames, stats.Bytes, stats.Added, stats.Dropped, stats.Expired, stats.TCP, stats.UDP, stats.ICMP, stats.Interactive, stats.Throughput)
 		delivered := map[int]bool{}
-		relay := make([]packet.RoutedFrame, 0, len(frames))
+		type relayCandidate struct {
+			index int
+			frame packet.RoutedFrame
+		}
+		relay := make([]relayCandidate, 0, len(frames))
 		for i, frame := range frames {
 			if p2p != nil && p2p.Send(frame) == nil {
 				_, _ = link.Send(frame.DstDevice, frame.Payload)
@@ -247,7 +251,7 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			if p2p == nil || !p2p.CanRelay(frame.DstDevice) {
 				continue
 			}
-			relay = append(relay, frame)
+			relay = append(relay, relayCandidate{index: i, frame: frame})
 		}
 		if pathPolicy.PreferRelay && len(relay) > 0 {
 			log.Printf("LAN path policy uses relay first: policy=%s frames=%d", pathPolicy.Name, len(relay))
@@ -260,7 +264,13 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			pending.Remove(delivered)
 			return
 		}
-		relayFrames, err := p2p.SealRelayFrames(relay)
+		relayInput := make([]packet.RoutedFrame, 0, len(relay))
+		relayIndexes := make([]int, 0, len(relay))
+		for _, candidate := range relay {
+			relayInput = append(relayInput, candidate.frame)
+			relayIndexes = append(relayIndexes, candidate.index)
+		}
+		relayFrames, err := p2p.SealRelayFrames(relayInput)
 		if err != nil {
 			log.Printf("LAN relay seal failed: %v", err)
 			relayBackoffUntil = time.Now().Add(lanRelayBackoff)
@@ -276,7 +286,9 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			for i, frame := range relayFrames {
 				if p2p.SendUDPRelayFrame(frame) == nil {
 					udpDelivered[i] = true
-					delivered[i] = true
+					if i < len(relayIndexes) {
+						delivered[relayIndexes[i]] = true
+					}
 				}
 			}
 			if len(udpDelivered) == len(relayFrames) {
@@ -286,8 +298,8 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			}
 		}
 		if strings.TrimSpace(serverHTTP) == "" {
-			for _, frame := range relay {
-				log.Printf("LAN HTTP relay unavailable after UDP relay attempt; keep pending dst=%s bytes=%d", frame.DstDevice, len(frame.Payload))
+			for _, candidate := range relay {
+				log.Printf("LAN HTTP relay unavailable after UDP relay attempt; keep pending dst=%s bytes=%d", candidate.frame.DstDevice, len(candidate.frame.Payload))
 			}
 			pending.Remove(delivered)
 			return
@@ -299,8 +311,8 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			return
 		}
 		log.Printf("LAN relay frames sent: path=%s frames=%d", lanPathRelayHTTP, len(relayFrames))
-		for i := range frames {
-			delivered[i] = true
+		for _, index := range relayIndexes {
+			delivered[index] = true
 		}
 		pending.Remove(delivered)
 	}

@@ -497,6 +497,77 @@ func TestSendPacketsUsesHTTPRelayWhenP2PUnavailable(t *testing.T) {
 	}
 }
 
+func TestSendPacketsHTTPRelayRemovesOnlyRelayedFrames(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relayed []string
+	posted := make(chan struct{}, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			DeviceID string          `json:"device_id"`
+			Frames   []lanRelayFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		for _, frame := range req.Frames {
+			wire, err := base64.StdEncoding.DecodeString(frame.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plain, err := rxB.Open(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			relayed = append(relayed, string(plain))
+		}
+		posted <- struct{}{}
+		_ = json.NewEncoder(w).Encode(map[string]int{"accepted": len(req.Frames)})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 3)
+	p2p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b", tx: txA, rx: rxA}}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	go sendPackets(ctx, srv.URL, link, p2p, lanPathPolicyConfig{Name: "prefer_p2p"}, outbound)
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-missing", PacketType: packet.TypeIPv4, Payload: []byte("missing")}
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("first-relay")}
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("second-relay")}
+
+	deadline := time.After(2 * time.Second)
+	for len(relayed) < 2 {
+		select {
+		case <-posted:
+		case <-deadline:
+			t.Fatalf("timed out waiting relay posts: %+v", relayed)
+		}
+	}
+	if strings.Join(relayed, ",") != "first-relay,second-relay" {
+		t.Fatalf("bad relayed frames: %+v", relayed)
+	}
+	select {
+	case <-posted:
+		t.Fatalf("relayed frames should be removed after success, got extra post: %+v", relayed)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestSendPacketsReplaysPendingWhenDatagramBecomesReady(t *testing.T) {
 	left, right, err := udpPair()
 	if err != nil {
