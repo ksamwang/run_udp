@@ -38,6 +38,15 @@ func PackRelayFrame(frame RelayFrame) ([]byte, error) {
 }
 
 func UnpackRelayFrame(data []byte) (RelayFrame, error) {
+	frame, err := UnpackRelayFrameView(data)
+	if err != nil {
+		return RelayFrame{}, err
+	}
+	frame.Payload = append([]byte(nil), frame.Payload...)
+	return frame, nil
+}
+
+func UnpackRelayFrameView(data []byte) (RelayFrame, error) {
 	if !IsRelayFrame(data) || len(data) < 8 {
 		return RelayFrame{}, ErrRelayFrame
 	}
@@ -51,7 +60,7 @@ func UnpackRelayFrame(data []byte) (RelayFrame, error) {
 	off += srcLen
 	dst := string(data[off : off+dstLen])
 	off += dstLen
-	payload := append([]byte(nil), data[off:]...)
+	payload := data[off:]
 	if len(payload) == 0 {
 		return RelayFrame{}, ErrRelayFrame
 	}

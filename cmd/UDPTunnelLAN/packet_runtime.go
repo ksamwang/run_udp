@@ -1542,7 +1542,7 @@ func (p *lanP2P) handleDatagramFrame(adapter *wintun.Adapter, router *packet.Rou
 }
 
 func (p *lanP2P) handleUDPRelayFrame(adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, data []byte) {
-	frame, err := lantransport.UnpackRelayFrame(data)
+	frame, err := lantransport.UnpackRelayFrameView(data)
 	if err != nil {
 		log.Printf("LAN UDP relay frame parse failed: %v", err)
 		return

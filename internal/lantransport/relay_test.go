@@ -19,6 +19,29 @@ func TestRelayFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRelayFrameViewAvoidsPayloadCopy(t *testing.T) {
+	packed, err := PackRelayFrame(RelayFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: []byte("ciphertext")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := UnpackRelayFrameView(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Payload[0] = 'C'
+	if packed[len(packed)-len(view.Payload)] != 'C' {
+		t.Fatal("view payload should share the relay frame buffer")
+	}
+	copied, err := UnpackRelayFrame(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied.Payload[0] = 'x'
+	if packed[len(packed)-len(copied.Payload)] == 'x' {
+		t.Fatal("copying unpacker must not expose the relay frame buffer")
+	}
+}
+
 func TestRelayFrameRejectsBadInput(t *testing.T) {
 	if _, err := PackRelayFrame(RelayFrame{SrcDevice: "dev-a", DstDevice: "dev-b"}); err == nil {
 		t.Fatal("empty payload must be rejected")
