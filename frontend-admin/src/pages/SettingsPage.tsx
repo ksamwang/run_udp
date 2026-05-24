@@ -92,7 +92,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       return
     }
     const payload = formToSettings(values)
-    const riskyTouched = payload.allow_legacy || payload.client_force_relay || payload.client_allow_legacy
+    const riskyTouched = payload.allow_legacy || payload.client_force_relay || payload.client_allow_legacy || !payload.lan_allow_relay
     if (riskyTouched) {
       confirm({
         title: '确认保存高风险设置',
@@ -128,6 +128,14 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
               label="允许中继"
               valuePropName="checked"
               tooltip="关闭后，系统不会主动走中继路径。"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              name="lan_allow_relay"
+              label="允许 LAN 中继"
+              valuePropName="checked"
+              tooltip="关闭后，UDPTunnelLAN 在 P2P 不可用时不能使用 HTTP relay fallback。"
             >
               <Switch />
             </Form.Item>

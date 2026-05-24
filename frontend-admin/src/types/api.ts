@@ -116,6 +116,7 @@ export type Settings = {
   pair_ttl: string
   relay_idle_timeout: string
   allow_relay: boolean
+  lan_allow_relay: boolean
   allow_legacy: boolean
   client_no_upnp: boolean
   client_upnp_timeout: string
