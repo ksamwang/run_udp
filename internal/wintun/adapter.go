@@ -10,6 +10,7 @@ import (
 const (
 	DefaultAdapterName = "UDP Tunnel LAN"
 	DefaultMTU         = 1280
+	DefaultRingSize    = 16 * 1024 * 1024
 )
 
 var ErrUnsupported = errors.New("wintun is only supported on windows")

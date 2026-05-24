@@ -169,7 +169,7 @@
 
 任务：
 
-- [ ] 检查 Wintun session ring size、读等待和写入错误处理是否适合高吞吐。
+- [x] 检查 Wintun session ring size、读等待和写入错误处理是否适合高吞吐。
 - [x] 减少不必要的 payload copy，尤其是路由和 relay 封装阶段。
 - [x] 评估 outbound channel `256` 容量是否过小。
 - [x] 增加 Wintun read/write 错误、队列满、包大小分布的诊断日志或指标。

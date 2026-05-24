@@ -34,7 +34,7 @@ func openOrCreate(cfg Config) (*Adapter, error) {
 			return nil, fmt.Errorf("open/create wintun adapter: %w", err)
 		}
 	}
-	session, err := wa.StartSession(0x400000)
+	session, err := wa.StartSession(DefaultRingSize)
 	if err != nil {
 		_ = wa.Close()
 		return nil, fmt.Errorf("start wintun session: %w", err)

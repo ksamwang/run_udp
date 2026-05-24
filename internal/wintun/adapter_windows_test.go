@@ -20,3 +20,9 @@ func TestCIDRMask(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultRingSizeSupportsHighThroughput(t *testing.T) {
+	if DefaultRingSize < 16*1024*1024 {
+		t.Fatalf("default ring size too small: %d", DefaultRingSize)
+	}
+}
