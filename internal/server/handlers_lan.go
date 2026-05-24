@@ -710,6 +710,7 @@ func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {
 	}
 	network.Name = strings.TrimSpace(network.Name)
 	network.CIDR = strings.TrimSpace(network.CIDR)
+	network.PathPolicy = strings.TrimSpace(network.PathPolicy)
 	if network.Name == "" || network.CIDR == "" {
 		return network, badRequest("bad_network", "name and cidr are required")
 	}
@@ -724,6 +725,14 @@ func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {
 	}
 	if network.MTU > 0 && network.MSS > 0 && network.MSS > vnet.MSSForMTU(network.MTU) {
 		return network, badRequest("bad_network", "mss is too large for mtu")
+	}
+	switch network.PathPolicy {
+	case "", "auto", "prefer_p2p", "prefer_relay", "relay_only":
+		if network.PathPolicy == "" {
+			network.PathPolicy = "prefer_p2p"
+		}
+	default:
+		return network, badRequest("bad_network", "path_policy is invalid")
 	}
 	return network, nil
 }

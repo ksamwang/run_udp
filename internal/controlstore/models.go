@@ -116,14 +116,15 @@ type AdminUser struct {
 func (AdminUser) TableName() string { return "admin_users" }
 
 type VirtualNetwork struct {
-	ID        int64  `gorm:"primaryKey;column:id"`
-	Name      string `gorm:"size:191;not null;column:name"`
-	CIDR      string `gorm:"uniqueIndex;size:64;not null;column:cidr"`
-	MTU       int    `gorm:"not null;default:0;column:mtu"`
-	MSS       int    `gorm:"not null;default:0;column:mss"`
-	Enabled   bool   `gorm:"index;not null;default:true;column:enabled"`
-	CreatedAt string `gorm:"size:64;not null;column:created_at"`
-	UpdatedAt string `gorm:"size:64;not null;column:updated_at"`
+	ID         int64  `gorm:"primaryKey;column:id"`
+	Name       string `gorm:"size:191;not null;column:name"`
+	CIDR       string `gorm:"uniqueIndex;size:64;not null;column:cidr"`
+	MTU        int    `gorm:"not null;default:0;column:mtu"`
+	MSS        int    `gorm:"not null;default:0;column:mss"`
+	PathPolicy string `gorm:"size:32;not null;default:'prefer_p2p';column:path_policy"`
+	Enabled    bool   `gorm:"index;not null;default:true;column:enabled"`
+	CreatedAt  string `gorm:"size:64;not null;column:created_at"`
+	UpdatedAt  string `gorm:"size:64;not null;column:updated_at"`
 }
 
 func (VirtualNetwork) TableName() string { return "virtual_networks" }

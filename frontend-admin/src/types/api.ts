@@ -163,6 +163,7 @@ export type VirtualNetwork = {
   cidr: string
   mtu: number
   mss: number
+  path_policy: string
   enabled: boolean
   created_at: string
   updated_at: string

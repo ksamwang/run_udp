@@ -5,14 +5,14 @@ export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
 }
 
-export function createVirtualNetwork(payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'enabled'>) {
+export function createVirtualNetwork(payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'enabled'>) {
   return apiRequest<VirtualNetwork>('/api/admin/lan/networks', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updateVirtualNetwork(id: number, payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'enabled'>) {
+export function updateVirtualNetwork(id: number, payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'enabled'>) {
   return apiRequest<{ ok: boolean }>(`/api/admin/lan/networks/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),

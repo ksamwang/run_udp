@@ -75,7 +75,7 @@ type lanRelayFrame struct {
 func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string, networkID int64) {
 	defer adapter.Close()
 	serverHTTP = strings.TrimRight(strings.TrimSpace(serverHTTP), "/")
-	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s", networkID, deviceID, serverHTTP)
+	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s", networkID, deviceID, serverHTTP, lanPathPolicy(resp.Network))
 	outbound := make(chan packet.RoutedFrame, 256)
 	p2p := startLANP2P(ctx, resp.Server, adapter, router, link, resp, identity, deviceID)
 	go readWintunPackets(ctx, adapter, router, outbound)
@@ -84,6 +84,15 @@ func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun
 	go refreshLANPeers(ctx, serverHTTP, router, link, p2p, resp, identity, deviceID)
 	<-ctx.Done()
 	log.Printf("LAN packet runtime stopped")
+}
+
+func lanPathPolicy(network store.VirtualNetwork) string {
+	switch strings.TrimSpace(network.PathPolicy) {
+	case "auto", "prefer_relay", "relay_only":
+		return strings.TrimSpace(network.PathPolicy)
+	default:
+		return "prefer_p2p"
+	}
 }
 
 func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, outbound chan<- packet.RoutedFrame) {

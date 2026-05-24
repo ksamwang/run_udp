@@ -116,14 +116,15 @@ type AdminUser struct {
 }
 
 type VirtualNetwork struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	CIDR      string `json:"cidr"`
-	MTU       int    `json:"mtu"`
-	MSS       int    `json:"mss"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	CIDR       string `json:"cidr"`
+	MTU        int    `json:"mtu"`
+	MSS        int    `json:"mss"`
+	PathPolicy string `json:"path_policy"`
+	Enabled    bool   `json:"enabled"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type VirtualAddress struct {

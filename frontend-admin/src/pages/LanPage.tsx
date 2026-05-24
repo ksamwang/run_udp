@@ -32,7 +32,7 @@ import {
 } from '../api/lan'
 import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
-type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'enabled'>
+type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
 type ACLForm = VirtualACLRulePayload
 type RouteForm = VirtualRoutePayload
@@ -105,6 +105,7 @@ export function LanPage() {
         cidr: currentNetwork.cidr,
         mtu: currentNetwork.mtu || 0,
         mss: currentNetwork.mss || 0,
+        path_policy: currentNetwork.path_policy || 'prefer_p2p',
         enabled: currentNetwork.enabled,
       })
     }
@@ -318,7 +319,7 @@ export function LanPage() {
                 onClick={() => {
                   setCreatingNetwork(true)
                   setSelectedNetworkID(undefined)
-                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', mtu: 0, mss: 0, enabled: true })
+                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', mtu: 0, mss: 0, path_policy: 'prefer_p2p', enabled: true })
                 }}
               >
                 新增网络
@@ -353,6 +354,16 @@ export function LanPage() {
                 <InputNumber min={0} max={1200} placeholder="0" />
               </Form.Item>
             </Space>
+            <Form.Item name="path_policy" label="路径策略" initialValue="prefer_p2p">
+              <Select
+                options={[
+                  { value: 'prefer_p2p', label: '优先 P2P' },
+                  { value: 'auto', label: '自动' },
+                  { value: 'prefer_relay', label: '优先 Relay' },
+                  { value: 'relay_only', label: '仅 Relay' },
+                ]}
+              />
+            </Form.Item>
             <Form.Item name="enabled" label="启用 LAN" valuePropName="checked">
               <Switch />
             </Form.Item>
