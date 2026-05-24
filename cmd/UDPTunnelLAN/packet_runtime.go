@@ -36,6 +36,8 @@ import (
 const (
 	lanPacketBatchSize    = 64
 	lanPacketPollInterval = 10 * time.Millisecond
+	lanThroughputBatchMax = 16
+	lanThroughputBatchDelay = 15 * time.Millisecond
 	lanOutboundQueueSize  = 1024
 	lanConfigRefreshEvery = 10 * time.Second
 	lanUPnPTimeout        = 4 * time.Second
@@ -225,6 +227,21 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 	if !timer.Stop() {
 		<-timer.C
 	}
+	stopTimer := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+	armTimer := func(d time.Duration) {
+		if d <= 0 {
+			d = lanThroughputBatchDelay
+		}
+		stopTimer()
+		timer.Reset(d)
+	}
 	flush := func() {
 		if len(batch) > 0 {
 			pending.Add(batch)
@@ -322,14 +339,23 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			return
 		case frame := <-outbound:
 			batch = append(batch, frame)
-			flush()
-			if len(batch) > 0 || pending.Len() > 0 {
-				timer.Reset(20 * time.Millisecond)
+			priority := lanFramePriority(frame)
+			if priority <= 1 || len(batch) >= lanThroughputBatchMax {
+				stopTimer()
+				flush()
+				if len(batch) > 0 || pending.Len() > 0 {
+					armTimer(lanPacketPollInterval)
+				}
+				continue
+			}
+			if len(batch) == 1 {
+				armTimer(lanThroughputBatchDelay)
 			}
 		case <-timer.C:
+			stopTimer()
 			flush()
 			if pending.Len() > 0 {
-				timer.Reset(20 * time.Millisecond)
+				armTimer(lanPacketPollInterval)
 			}
 		}
 	}

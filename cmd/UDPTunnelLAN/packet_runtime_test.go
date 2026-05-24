@@ -722,6 +722,30 @@ func TestSendPacketsRelayOnlySkipsDatagramAndUsesUDPRelay(t *testing.T) {
 	}
 }
 
+func TestSendPacketsDefersThroughputBatchBeforeFlush(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b", tx: nil, rx: nil}
+	p2p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 1)
+	go sendPackets(ctx, "", link, p2p, lanPathPolicyConfig{Name: "prefer_p2p"}, outbound)
+
+	outbound <- packet.RoutedFrame{
+		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
+		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
+		Payload: bytes.Repeat([]byte("x"), 1500),
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	if got := link.Stats().TxBytes; got != 0 {
+		t.Fatalf("throughput frame flushed too early, tx=%d", got)
+	}
+	if got := len(outbound); got != 0 {
+		t.Fatalf("throughput frame should be consumed into pending queue, outbound=%d", got)
+	}
+}
+
 func TestLANP2PSendPrefersDatagramBeforeKCP(t *testing.T) {
 	udpLeft, udpRight, err := udpPair()
 	if err != nil {
