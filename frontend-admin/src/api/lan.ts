@@ -149,6 +149,14 @@ export function listVirtualPeerPathEvents(networkID?: number, limit = 200) {
   return apiRequest<VirtualPeerPathEvent[]>(`/api/admin/lan/path-events${query}`)
 }
 
+export async function downloadLANDiagnostics(networkID?: number) {
+  const params = new URLSearchParams()
+  if (networkID) params.set('network_id', String(networkID))
+  const query = params.toString() ? `?${params.toString()}` : ''
+  const res = await apiRequest<unknown>(`/api/admin/lan/diagnostics${query}`)
+  return res
+}
+
 export function listVirtualDeviceStates(networkID?: number) {
   const query = networkID ? `?network_id=${networkID}` : ''
   return apiRequest<VirtualDeviceState[]>(`/api/admin/lan/device-states${query}`)

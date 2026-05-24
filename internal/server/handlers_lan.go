@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"udp_tunnel_demo/internal/store"
 	"udp_tunnel_demo/internal/vnet"
@@ -51,6 +52,20 @@ type lanDeviceState struct {
 	LastBootstrapAt string `json:"last_bootstrap_at"`
 	LastStatusAt    string `json:"last_status_at"`
 	LastError       string `json:"last_error"`
+}
+
+type lanDiagnosticsSnapshot struct {
+	GeneratedAt  string                       `json:"generated_at"`
+	NetworkID    int64                        `json:"network_id,omitempty"`
+	Networks     []store.VirtualNetwork       `json:"networks"`
+	Addresses    []store.VirtualAddress       `json:"addresses"`
+	DeviceKeys   []store.VirtualDeviceKey     `json:"device_keys"`
+	Groups       []store.VirtualDeviceGroup   `json:"groups"`
+	ACL          []store.VirtualACLRule       `json:"acl"`
+	Routes       []store.VirtualRoute         `json:"routes"`
+	PeerStates   []store.VirtualPeerState     `json:"peer_states"`
+	DeviceStates []lanDeviceState             `json:"device_states"`
+	PathEvents   []store.VirtualPeerPathEvent `json:"path_events"`
 }
 
 func (a *App) handleAdminLANNetworks(w http.ResponseWriter, r *http.Request) {
@@ -512,6 +527,62 @@ func (a *App) handleAdminLANPathEvents(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
 	}
+}
+
+func (a *App) handleAdminLANDiagnostics(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		snapshot, err := a.lanDiagnosticsSnapshot(r.Context(), networkID)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		w.Header().Set("Content-Disposition", "attachment; filename=\"udptunnellan-diagnostics.json\"")
+		writeJSONOrError(w, snapshot, nil)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
+func (a *App) lanDiagnosticsSnapshot(ctx context.Context, networkID int64) (lanDiagnosticsSnapshot, error) {
+	snapshot := lanDiagnosticsSnapshot{
+		GeneratedAt: time.Now().Format(time.RFC3339),
+		NetworkID:   networkID,
+	}
+	var err error
+	if snapshot.Networks, err = a.db.ListVirtualNetworks(ctx); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Addresses, err = a.db.ListVirtualAddresses(ctx, networkID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.DeviceKeys, err = a.db.ListVirtualDeviceKeys(ctx); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Groups, err = a.db.ListVirtualDeviceGroups(ctx); err != nil {
+		return snapshot, err
+	}
+	if snapshot.ACL, err = a.db.ListVirtualACLRules(ctx, networkID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Routes, err = a.db.ListVirtualRoutes(ctx, networkID, ""); err != nil {
+		return snapshot, err
+	}
+	if snapshot.PeerStates, err = a.db.ListVirtualPeerStates(ctx, networkID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.DeviceStates, err = a.lanDeviceStates(ctx, networkID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.PathEvents, err = a.db.ListVirtualPeerPathEvents(ctx, networkID, "", "", 500); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
 }
 
 func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {

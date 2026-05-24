@@ -466,6 +466,18 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if len(pathEvents) != 2 || pathEvents[0].DataPath != "relay_udp" || pathEvents[1].DataPath != "p2p_datagram" {
 		t.Fatalf("bad path events: %+v", pathEvents)
 	}
+	diagRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/diagnostics?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if diagRec.Code != http.StatusOK {
+		t.Fatalf("admin lan diagnostics status=%d body=%s", diagRec.Code, diagRec.Body.String())
+	}
+	var diag lanDiagnosticsSnapshot
+	if err := json.Unmarshal(diagRec.Body.Bytes(), &diag); err != nil {
+		t.Fatal(err)
+	}
+	if diag.NetworkID != network.ID || len(diag.Networks) == 0 || len(diag.Addresses) == 0 ||
+		len(diag.PeerStates) != 1 || len(diag.PathEvents) != 2 {
+		t.Fatalf("bad diagnostics snapshot: %+v", diag)
+	}
 	deviceStatesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/device-states?network_id="+strconv.FormatInt(network.ID, 10), nil)
 	if deviceStatesRec.Code != http.StatusOK {
 		t.Fatalf("admin lan device states status=%d body=%s", deviceStatesRec.Code, deviceStatesRec.Body.String())

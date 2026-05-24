@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownloadOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Form, Input, InputNumber, message, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
@@ -13,6 +13,7 @@ import {
   deleteVirtualDeviceGroup,
   deleteVirtualNetwork,
   deleteVirtualRoute,
+  downloadLANDiagnostics,
   listVirtualACLRules,
   listVirtualAddresses,
   listVirtualDeviceKeys,
@@ -192,6 +193,22 @@ export function LanPage() {
 
   const refreshLAN = () => {
     queryClient.invalidateQueries({ queryKey: ['lan'] })
+  }
+  const downloadDiagnostics = async () => {
+    try {
+      const data = await downloadLANDiagnostics(networkID)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `udptunnellan-diagnostics-${dayjs().format('YYYYMMDD-HHmmss')}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '诊断导出失败')
+    }
   }
   const networkMutation = useMutation<VirtualNetwork | { ok: boolean }, Error, NetworkForm>({
     mutationFn: (payload: NetworkForm) => creatingNetwork || !networkID ? createVirtualNetwork(payload) : updateVirtualNetwork(networkID, payload),
@@ -797,9 +814,14 @@ export function LanPage() {
           <Typography.Title level={3}>虚拟局域网</Typography.Title>
           <Typography.Text type="secondary">管理默认虚拟网络、设备虚拟 IP、ACL 和 LAN 运行状态。</Typography.Text>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={refreshLAN} loading={networks.isFetching || addresses.isFetching || acl.isFetching || states.isFetching || pathEvents.isFetching}>
-          刷新
-        </Button>
+        <Space>
+          <Button icon={<DownloadOutlined />} onClick={downloadDiagnostics} disabled={!networkID}>
+            导出诊断
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={refreshLAN} loading={networks.isFetching || addresses.isFetching || acl.isFetching || states.isFetching || pathEvents.isFetching}>
+            刷新
+          </Button>
+        </Space>
       </div>
       <Tabs items={tabs} />
     </div>
