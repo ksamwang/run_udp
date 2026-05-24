@@ -48,6 +48,7 @@
 
 任务：
 
+- [x] 产品决策：允许 LAN 原始 IP 包默认绕开 KCP，首选加密 UDP datagram；KCP 仅作为控制、兼容或临时兜底。
 - [ ] 明确 UDPTunnelLAN 原始 IP 包的首选路径为加密 UDP datagram。
 - [ ] 梳理 `datagramReady` 的建立条件，减少已经 P2P 可达但仍走 KCP 的时间窗口。
 - [ ] P2P punch / ack 成功后尽快切换 raw IP 包到 datagram path。
@@ -84,11 +85,31 @@
 
 任务：
 
+- [x] 产品决策：LAN UDP relay 实现完全独立通道，不复用老 Agent UDP relay 服务端通道。
+- [x] 安全决策：LAN UDP relay 继续保持端到端加密，服务端只转发密文，不解密原始 IP 包。
 - [ ] 设计 LAN 专用 UDP relay 数据面，避免 HTTP JSON/base64 承载高频 IP 包。
 - [ ] 服务端支持 LAN relay 二进制帧转发。
 - [ ] 客户端 P2P 不可用时优先进入 LAN UDP relay，而不是 HTTP poll relay。
+- [ ] LAN UDP relay 只识别最小转发头和目标设备，不读取明文 IP payload。
 - [ ] 保留 HTTP relay 作为最保守兜底或诊断路径。
 - [ ] 增加 relay 路径压测，分别记录 HTTP relay 和 UDP relay 的 RTT、吞吐、丢包恢复。
+
+### P1-3 增加 TCP fast path
+
+当前问题：
+
+- UDPTunnelLAN 保留三层 LAN 能力，但 RDP、SMB、文件传输等常见业务主要是 TCP。
+- 原始 IP 包走通用包隧道时，TCP over KCP 或 TCP over relay 容易出现重复拥塞控制和 head-of-line blocking。
+- Agent 的 TCP 流代理模型在这些场景下更接近业务本身，吞吐和稳定性更好。
+
+任务：
+
+- [x] 产品决策：为 UDPTunnelLAN 增加 TCP fast path，同时保留三层 LAN 能力。
+- [ ] 识别可进入 fast path 的 TCP 流量，例如 RDP、SMB、文件传输或后台配置的端口集合。
+- [ ] fast path 采用类似 Agent 的 TCP stream 转发模型，但实现独立于 `cmd/client`。
+- [ ] fast path 与原始 IP 包路径共存，不能破坏 ICMP、UDP 和普通三层互通。
+- [ ] 管理后台增加 TCP fast path 策略配置和状态展示。
+- [ ] 增加测试覆盖 fast path 开启、关闭、fallback 到通用三层路径。
 
 ### P1-2 在 HTTP relay 保留期间做临时优化
 
@@ -117,10 +138,12 @@
 
 任务：
 
+- [x] 产品决策：管理后台默认路径策略为优先 P2P。
 - [ ] 为 UDPTunnelLAN 引入 NAT 探测或复用服务端可提供的 NAT 判断结果。
 - [ ] 对明显不可打洞场景直接进入 relay 数据面，同时后台继续尝试 P2P。
 - [ ] 保留用户确认的“初始 P2P 尝试 30 秒”语义，但允许坏 NAT 快速启用 relay 承接流量。
 - [ ] 后台状态展示 NAT 类型、当前路径和 fallback 原因。
+- [ ] 管理后台提供路径策略配置，第一阶段默认 `优先 P2P`，后续可扩展自动、优先 relay、仅 relay。
 - [ ] 增加测试覆盖 relay-first、P2P 后台打通后切换回 P2P。
 
 ### P2-2 改善早期包处理和队列策略
@@ -151,6 +174,38 @@
 - [ ] 评估 outbound channel `256` 容量是否过小。
 - [ ] 增加 Wintun read/write 错误、队列满、包大小分布的诊断日志或指标。
 - [ ] 压测不同 MTU、MSS 下的吞吐和丢包表现。
+
+### P2-4 支持按网络环境配置 MTU/MSS
+
+当前问题：
+
+- UDPTunnelLAN 当前默认 MTU/MSS 较保守。
+- 不同网络环境、relay 路径、运营商链路和企业网设备对分片、MTU、MSS 的容忍度不同。
+
+任务：
+
+- [x] 产品决策：需要为不同网络环境提供可配置 MTU/MSS。
+- [ ] 管理后台增加 UDPTunnelLAN 网络级 MTU/MSS 配置。
+- [ ] bootstrap 下发网络级 MTU/MSS。
+- [ ] 客户端按服务端配置设置 Wintun MTU 和 TCP MSS clamp。
+- [ ] 增加配置校验，避免 MTU/MSS 设置到明显不可用范围。
+- [ ] 增加不同 MTU/MSS 组合的连通性和吞吐测试。
+
+### P2-5 按流量类型选择低延迟或高吞吐
+
+当前问题：
+
+- 交互通讯更需要低延迟。
+- 文件传输更需要吞吐。
+- 单一策略无法同时兼顾 RDP/实时交互和大文件传输。
+
+任务：
+
+- [x] 产品决策：即时交互通讯低延迟优先，文件传输吞吐优先。
+- [ ] 定义交互流量和吞吐流量的识别规则。
+- [ ] 对交互小包、TCP SYN/ACK、RDP 等低延迟优先处理。
+- [ ] 对 SMB、文件传输、持续大流量启用吞吐优先参数或 TCP fast path。
+- [ ] 管理后台展示当前策略和命中的流量类别。
 
 ## P3：接近 Agent 的用户体验和诊断能力
 
@@ -183,10 +238,10 @@
 
 ## 当前未决问题
 
-- [ ] LAN 原始 IP 包是否允许默认完全绕开 KCP，只用加密 UDP datagram 承载；KCP 仅作为控制或兼容兜底。
-- [ ] LAN UDP relay 是否要复用老 Agent UDP relay 服务端通道，还是实现完全独立的 LAN relay 通道。
-- [ ] 如果实现 LAN UDP relay，是否继续要求端到端加密，服务端只转发密文。
-- [ ] 是否需要为 UDPTunnelLAN 增加“TCP fast path”，让 RDP/SMB/文件传输走类似 Agent 的 TCP 流代理，同时保留三层 LAN 能力。
-- [ ] LAN 的默认性能目标优先级：低延迟优先、吞吐优先，还是按流量类型自动区分。
-- [ ] 是否允许管理后台提供强制路径策略：自动、优先 P2P、优先 relay、仅 relay。
-- [ ] 是否需要为不同网络环境提供可配置 MTU/MSS，而不是只使用默认值。
+- [x] LAN 原始 IP 包是否允许默认完全绕开 KCP，只用加密 UDP datagram 承载；KCP 仅作为控制或兼容兜底。结论：允许。
+- [x] LAN UDP relay 是否要复用老 Agent UDP relay 服务端通道，还是实现完全独立的 LAN relay 通道。结论：完全独立。
+- [x] 如果实现 LAN UDP relay，是否继续要求端到端加密，服务端只转发密文。结论：建议并确认采用端到端加密，服务端只转发密文。
+- [x] 是否需要为 UDPTunnelLAN 增加“TCP fast path”，让 RDP/SMB/文件传输走类似 Agent 的 TCP 流代理，同时保留三层 LAN 能力。结论：需要。
+- [x] LAN 的默认性能目标优先级：低延迟优先、吞吐优先，还是按流量类型自动区分。结论：即时交互通讯低延迟优先，文件传输吞吐优先。
+- [x] 是否允许管理后台提供强制路径策略：自动、优先 P2P、优先 relay、仅 relay。结论：默认优先 P2P。
+- [x] 是否需要为不同网络环境提供可配置 MTU/MSS，而不是只使用默认值。结论：需要。
