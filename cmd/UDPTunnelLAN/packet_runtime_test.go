@@ -333,6 +333,28 @@ func TestLANTCPFastPathState(t *testing.T) {
 	}
 }
 
+func TestLANTCPFastPathDecision(t *testing.T) {
+	tcpSYN := packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, TCPSYN: true}}
+	tcpLarge := packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445}, Payload: bytes.Repeat([]byte{1}, 1400)}
+	tcpSmall := packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 8080}, Payload: []byte("small")}
+
+	if got := lanTCPFastPathDecision(tcpSYN, "auto", true); got != lanTCPFastPathFallback {
+		t.Fatalf("syn decision=%q", got)
+	}
+	if got := lanTCPFastPathDecision(tcpLarge, "off", true); got != lanTCPFastPathOff {
+		t.Fatalf("off decision=%q", got)
+	}
+	if got := lanTCPFastPathDecision(tcpLarge, "auto", false); got != lanTCPFastPathFallback {
+		t.Fatalf("unavailable decision=%q", got)
+	}
+	if got := lanTCPFastPathDecision(tcpLarge, "force", true); got != lanTCPFastPathAttempt {
+		t.Fatalf("force decision=%q", got)
+	}
+	if got := lanTCPFastPathDecision(tcpSmall, "auto", true); got != lanTCPFastPathFallback {
+		t.Fatalf("small tcp decision=%q", got)
+	}
+}
+
 func TestLANWintunReadStatsClassifiesPackets(t *testing.T) {
 	stats := &lanWintunReadStats{lastLog: time.Now()}
 	icmp := make([]byte, 40)

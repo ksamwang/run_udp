@@ -11,6 +11,16 @@
 - [ ] 服务端改动限定在 LAN 分支：`/api/lan/*`、`handleLANRegister`、`lanPeers`、LAN packet relay、LAN 状态和 LAN 管理后台。
 - [ ] 每轮改动后执行测试，并按用户要求提交 git，避免中间成果丢失。
 
+## 已确认的优化前提
+
+- [x] LAN 原始 IP 包默认绕开 KCP，优先使用加密 UDP datagram 承载，KCP 仅作为控制、兼容或临时兜底。
+- [x] LAN UDP relay 采用独立通道，不复用老 Agent 的 UDP relay 服务端通道。
+- [x] LAN UDP relay 保持端到端加密，服务端只转发密文，不解密原始 IP 包。
+- [x] UDPTunnelLAN 增加 TCP fast path，同时保留三层 LAN 能力。
+- [x] 即时交互通讯优先低延迟，文件传输和持续大流量优先吞吐。
+- [x] 管理后台默认路径策略为优先 P2P。
+- [x] 为不同网络环境提供可配置 MTU/MSS。
+
 ## 性能目标
 
 - [ ] P2P 可达时，交互延迟优先接近 Agent interactive profile。
@@ -109,7 +119,7 @@
 - [ ] fast path 采用类似 Agent 的 TCP stream 转发模型，但实现独立于 `cmd/client`。
 - [ ] fast path 与原始 IP 包路径共存，不能破坏 ICMP、UDP 和普通三层互通。
 - [x] 管理后台增加 TCP fast path 策略配置和状态展示。
-- [ ] 增加测试覆盖 fast path 开启、关闭、fallback 到通用三层路径。
+- [x] 增加测试覆盖 fast path 开启、关闭、fallback 到通用三层路径。
 
 ### P1-2 在 HTTP relay 保留期间做临时优化
 

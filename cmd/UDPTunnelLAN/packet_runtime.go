@@ -439,6 +439,12 @@ const (
 	lanTrafficThroughput  = "throughput"
 )
 
+const (
+	lanTCPFastPathOff      = "off"
+	lanTCPFastPathFallback = "packet_fallback"
+	lanTCPFastPathAttempt  = "attempt"
+)
+
 func classifyLANFrame(frame packet.RoutedFrame) string {
 	header := frame.Header
 	switch header.Protocol {
@@ -464,6 +470,19 @@ func classifyLANFrame(frame packet.RoutedFrame) string {
 
 func isLANTCPFastPathCandidate(frame packet.RoutedFrame) bool {
 	return isLANTCPFastPathCandidateForPolicy(frame, "auto")
+}
+
+func lanTCPFastPathDecision(frame packet.RoutedFrame, policy string, available bool) string {
+	if strings.TrimSpace(policy) == "off" {
+		return lanTCPFastPathOff
+	}
+	if !isLANTCPFastPathCandidateForPolicy(frame, policy) {
+		return lanTCPFastPathFallback
+	}
+	if !available {
+		return lanTCPFastPathFallback
+	}
+	return lanTCPFastPathAttempt
 }
 
 func isLANTCPFastPathCandidateForPolicy(frame packet.RoutedFrame, policy string) bool {
@@ -2031,6 +2050,19 @@ func lanTCPFastPathState(policy, trafficClass string) string {
 			return "auto_candidate"
 		}
 		return "auto_idle"
+	}
+}
+
+func lanTCPFastPathLabel(decision string) string {
+	switch decision {
+	case lanTCPFastPathOff:
+		return "关闭"
+	case lanTCPFastPathFallback:
+		return "三层回退"
+	case lanTCPFastPathAttempt:
+		return "尝试 Fast Path"
+	default:
+		return "自动"
 	}
 }
 
