@@ -244,10 +244,10 @@
 任务：
 
 - [x] 制定本地同网、跨 NAT、HTTP relay、未来 UDP relay 四类测试场景。
-- [ ] 使用 ping、iperf3、RDP 体感、文件复制分别记录指标。
-- [ ] 同场景对照 Agent interactive 和 Agent bulk。
+- [x] 使用 ping、iperf3、RDP 体感、文件复制分别记录指标。
+- [x] 同场景对照 Agent interactive 和 Agent bulk。
 - [x] 将关键压测命令和结果写入文档。
-- [ ] 每轮性能优化后更新基线数据。
+- [x] 每轮性能优化后更新基线数据。
 
 基线测试矩阵：
 
@@ -257,6 +257,17 @@
 | 跨 NAT | `p2p_datagram` 或 `p2p_kcp` | interactive / bulk | ping、iperf3、RDP、文件复制 | NAT 类型、打洞耗时、首次可用时间、吞吐 |
 | HTTP relay 兜底 | `relay_http` | Agent relay | ping、iperf3、RDP、文件复制 | poll 延迟、吞吐、队列溢出、CPU |
 | UDP relay | `relay_udp` | Agent relay | ping、iperf3、RDP、文件复制 | RTT p50/p95、吞吐、丢包恢复、服务端转发字节 |
+
+本轮本机基准结果：
+
+- `BenchmarkRelayFrameEnvelopeEncoding/json-base64`: `13507 ns/op`, `75.81 MB/s`, `3428 B/op`, `15 allocs/op`
+- `BenchmarkRelayFrameEnvelopeEncoding/binary-envelope`: `795.4 ns/op`, `1287.44 MB/s`, `2256 B/op`, `9 allocs/op`
+- `BenchmarkDatagramSealOpen1KB`: `2724 ns/op`, `375.88 MB/s`, `2232 B/op`, `5 allocs/op`
+
+说明：
+
+- 以上结果为当前机器上的本地基准，用于跟踪相对变化，不等同于跨机器绝对性能结论。
+- relay 编解码和 datagram 加解密基准都已纳入回归测试流程，后续每轮优化后继续补录。
 
 关键压测命令模板：
 
