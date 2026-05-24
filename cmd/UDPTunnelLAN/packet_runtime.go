@@ -52,6 +52,12 @@ const (
 
 var lanKCPReadyFrame = []byte("\x00LAN-KCP-READY\n")
 
+const (
+	lanPathP2PDatagram = "p2p_datagram"
+	lanPathP2PKCP      = "p2p_kcp"
+	lanPathRelayHTTP   = "relay_http"
+)
+
 var tryLANUPnPFunc = tryLANUPnP
 
 type lanRelayFrame struct {
@@ -193,6 +199,7 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 			pending.Remove(delivered)
 			return
 		}
+		log.Printf("LAN relay frames sent: path=%s frames=%d", lanPathRelayHTTP, len(relayFrames))
 		for i := range frames {
 			delivered[i] = true
 		}
@@ -523,7 +530,7 @@ func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager)
 	if link != nil {
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: addr.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 	}
-	log.Printf("LAN P2P datagram path ready: peer=%s addr=%s path=p2p_datagram", peer.id, addr)
+	log.Printf("LAN P2P datagram path ready: peer=%s addr=%s path=%s", peer.id, addr, lanPathP2PDatagram)
 	return true
 }
 
@@ -1120,10 +1127,12 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 	readyPath := !peer.isRelay.Load()
 	_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: valueOrDash(peerAddrString(&peer.addr))}, packet.PeerEndpoint{Addr: "udp-relay"}, readyPath)
 	path := packet.LinkPathP2P
+	dataPath := lanPathP2PKCP
 	if peer.isRelay.Load() {
 		path = packet.LinkPathRelay
+		dataPath = "relay_kcp"
 	}
-	log.Printf("LAN P2P KCP tunnel ready: peer=%s role=%s path=%s", peer.id, role, path)
+	log.Printf("LAN P2P KCP tunnel ready: peer=%s role=%s path=%s link_path=%s", peer.id, role, dataPath, path)
 	go func() {
 		<-ctx.Done()
 		_ = kcpConn.Close()
@@ -1210,6 +1219,7 @@ func (p *lanP2P) handleDatagramFrame(adapter *wintun.Adapter, router *packet.Rou
 	}
 	router.RecordInbound(packet.RoutedFrame{SrcDevice: peer.id, DstDevice: p.deviceID, Payload: payload, PacketType: packet.TypeIPv4})
 	_ = link.Receive(peer.id, payload, packet.LinkPathP2P)
+	log.Printf("LAN P2P datagram frame received: peer=%s path=%s bytes=%d", peer.id, lanPathP2PDatagram, len(payload))
 	if err := adapter.WritePacket(payload); err != nil {
 		log.Printf("LAN P2P datagram write packet failed: peer=%s bytes=%d err=%v", peer.id, len(payload), err)
 	}
@@ -1455,6 +1465,7 @@ func pollRelayPackets(ctx context.Context, serverHTTP string, adapter *wintun.Ad
 			}
 			router.RecordInbound(routed)
 			_ = link.Receive(frame.SrcDevice, payload, packet.LinkPathRelay)
+			log.Printf("LAN relay frame received: src=%s path=%s bytes=%d", frame.SrcDevice, lanPathRelayHTTP, len(payload))
 			if err := adapter.WritePacket(payload); err != nil {
 				log.Printf("LAN packet write failed: src=%s bytes=%d err=%v", frame.SrcDevice, len(payload), err)
 			}

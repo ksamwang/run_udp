@@ -54,7 +54,7 @@
 - [x] P2P punch / ack 成功后尽快切换 raw IP 包到 datagram path。
 - [x] KCP 仅作为临时兜底、控制确认或未支持 datagram 时的兼容路径。
 - [x] 增加测试覆盖 datagram ready 后 raw IP 包不再落入 KCP stream。
-- [ ] 增加日志或状态字段，区分 `p2p_datagram`、`p2p_kcp`、`relay_http`，便于现场判断真实路径。
+- [x] 增加日志或状态字段，区分 `p2p_datagram`、`p2p_kcp`、`relay_http`，便于现场判断真实路径。
 
 ### P0-3 降低 KCP stream 路径的阻塞影响
 
