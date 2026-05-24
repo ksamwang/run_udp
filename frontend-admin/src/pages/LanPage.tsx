@@ -739,7 +739,11 @@ export function LanPage() {
               { title: '对端', dataIndex: 'peer_id', render: (v) => deviceName(v) },
               { title: '虚拟网卡', dataIndex: 'adapter_state', render: (v) => <Tag color={v === 'up' ? 'green' : 'default'}>{v || '-'}</Tag> },
               { title: 'Peer Path', dataIndex: 'path', render: (v) => <Tag color={v === 'p2p' ? 'cyan' : v === 'relay' ? 'purple' : 'default'}>{v || '-'}</Tag> },
+              { title: '数据路径', dataIndex: 'data_path', render: (v) => <Tag color={pathTagColor(v)}>{v || '-'}</Tag> },
+              { title: '路径原因', dataIndex: 'path_reason', render: (v) => v || '-' },
+              { title: '流量类别', dataIndex: 'traffic_class', render: (v) => v ? <Tag>{v}</Tag> : '-' },
               { title: 'RTT', dataIndex: 'rtt_ms', render: (v) => v ? `${v} ms` : '-' },
+              { title: '估算速率', dataIndex: 'estimated_bps', render: (v) => v ? `${formatBytes(v)}/s` : '-' },
               { title: 'MTU/MSS', render: (_, row) => row.mtu ? `${row.mtu} / ${row.mss || '-'}` : '-' },
               { title: 'TX/RX', render: (_, row) => `${formatBytes(row.tx_bytes)} / ${formatBytes(row.rx_bytes)}` },
               { title: 'Drop Reason', dataIndex: 'drop_reason', render: (v) => v || '-' },
@@ -824,4 +828,19 @@ function formatBytes(value?: number) {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+function pathTagColor(value?: string) {
+  switch (value) {
+    case 'p2p_datagram':
+      return 'green'
+    case 'p2p_kcp':
+      return 'cyan'
+    case 'relay_udp':
+      return 'blue'
+    case 'relay_http':
+      return 'purple'
+    default:
+      return 'default'
+  }
 }

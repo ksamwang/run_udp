@@ -234,12 +234,16 @@ export type VirtualPeerState = {
   network_id: number
   state: string
   path: string
+  data_path: string
+  path_reason: string
+  traffic_class: string
   adapter_state: string
   route_conflict: string
   selected_cidr: string
   mtu: number
   mss: number
   rtt_ms: number
+  estimated_bps: number
   tx_bytes: number
   rx_bytes: number
   drop_reason: string

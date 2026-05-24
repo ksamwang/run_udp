@@ -83,6 +83,7 @@ func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun
 	go sendPackets(ctx, serverHTTP, link, p2p, outbound)
 	go pollRelayPackets(ctx, serverHTTP, adapter, router, link, p2p, deviceID)
 	go refreshLANPeers(ctx, serverHTTP, router, link, p2p, resp, identity, deviceID)
+	go reportLANPeerRuntime(ctx, serverHTTP, router, link, p2p, resp, deviceID, networkID)
 	<-ctx.Done()
 	log.Printf("LAN packet runtime stopped")
 }
@@ -548,24 +549,25 @@ type lanP2P struct {
 }
 
 type lanP2PPeer struct {
-	id            string
-	publicKey     string
-	x25519Pub     string
-	addr          atomic.Pointer[net.UDPAddr]
-	upnpAddr      atomic.Pointer[net.UDPAddr]
-	punched       atomic.Bool
-	punching      atomic.Bool
-	datagramReady atomic.Bool
-	connected     atomic.Bool
-	isRelay       atomic.Bool
-	registers     atomic.Uint64
-	openFailures  atomic.Uint64
-	relaySince    atomic.Int64
-	tx            *packet.Codec
-	rx            *packet.Codec
-	pc            *tunnel.PacketConn
-	kcp           net.Conn
-	kcpMu         sync.Mutex
+	id               string
+	publicKey        string
+	x25519Pub        string
+	addr             atomic.Pointer[net.UDPAddr]
+	upnpAddr         atomic.Pointer[net.UDPAddr]
+	punched          atomic.Bool
+	punching         atomic.Bool
+	datagramReady    atomic.Bool
+	connected        atomic.Bool
+	isRelay          atomic.Bool
+	registers        atomic.Uint64
+	openFailures     atomic.Uint64
+	relaySince       atomic.Int64
+	lastTrafficClass atomic.Value
+	tx               *packet.Codec
+	rx               *packet.Codec
+	pc               *tunnel.PacketConn
+	kcp              net.Conn
+	kcpMu            sync.Mutex
 }
 
 func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, resp lanBootstrapResponse, identity lan.Identity, deviceID string) *lanP2P {
@@ -701,6 +703,7 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 	if peer == nil {
 		return packet.ErrLinkUnavailable
 	}
+	peer.lastTrafficClass.Store(classifyLANFrame(frame))
 	if peer.datagramReady.Load() {
 		addr := peer.addr.Load()
 		if err := lantransport.Send(p.currentConn(), addr, peer.tx, frame.Payload); err == nil {
@@ -812,6 +815,40 @@ func (p *lanP2P) OpenRelayFrame(frame packet.RoutedFrame) (packet.RoutedFrame, e
 	}
 	frame.Payload = plain
 	return frame, nil
+}
+
+func (p *lanP2P) peerDataPath(peerID string) (string, string) {
+	peer := p.peer(peerID)
+	if peer == nil {
+		return "", "peer_unavailable"
+	}
+	if peer.datagramReady.Load() && !peer.isRelay.Load() {
+		return lanPathP2PDatagram, "datagram_ready"
+	}
+	if peer.connected.Load() {
+		if peer.isRelay.Load() {
+			return lanPathRelayUDP, "relay_mode"
+		}
+		return lanPathP2PKCP, "kcp_connected"
+	}
+	if peer.isRelay.Load() {
+		return lanPathRelayUDP, "p2p_timeout"
+	}
+	if peer.punched.Load() {
+		return "", "punched_waiting_tunnel"
+	}
+	return "", "p2p_connecting"
+}
+
+func (p *lanP2P) currentTrafficClass(peerID string) string {
+	peer := p.peer(peerID)
+	if peer == nil {
+		return ""
+	}
+	if value, ok := peer.lastTrafficClass.Load().(string); ok {
+		return value
+	}
+	return ""
 }
 
 func (p *lanP2P) peer(id string) *lanP2PPeer {
@@ -1670,6 +1707,100 @@ func refreshLANPeers(ctx context.Context, serverHTTP string, router *packet.Rout
 			lastConfig = resp.ConfigVersion
 		}
 	}
+}
+
+func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet.Router, link *packet.LinkManager, p2p *lanP2P, resp lanBootstrapResponse, deviceID string, networkID int64) {
+	serverHTTP = strings.TrimRight(strings.TrimSpace(serverHTTP), "/")
+	if serverHTTP == "" || link == nil {
+		return
+	}
+	mtu := lanNetworkMTU(resp.Network)
+	mss := lanNetworkMSS(resp.Network, mtu)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	lastBytes := map[string]uint64{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		sessions := link.Sessions()
+		routerStats := packet.RouterStats{}
+		if router != nil {
+			routerStats = router.Stats()
+		}
+		for _, session := range sessions {
+			tx := session.TxBytes
+			rx := session.RxBytes
+			total := tx + rx
+			prev := lastBytes[session.PeerID]
+			lastBytes[session.PeerID] = total
+			estimatedBps := int64(0)
+			if total >= prev {
+				estimatedBps = int64(total-prev) / 10
+			}
+			dataPath, reason := "", ""
+			if p2p != nil {
+				dataPath, reason = p2p.peerDataPath(session.PeerID)
+			}
+			if dataPath == "" {
+				dataPath = lanDataPathFromSession(session)
+			}
+			if reason == "" {
+				reason = lanPathReasonFromSession(session)
+			}
+			state := store.VirtualPeerState{
+				DeviceID: deviceID, PeerID: session.PeerID, NetworkID: networkID, State: session.State, Path: session.Path,
+				DataPath: dataPath, PathReason: reason, TrafficClass: lanCurrentTrafficClass(p2p, session.PeerID),
+				AdapterState: "up", MTU: mtu, MSS: mss, TxBytes: int64(tx), RxBytes: int64(rx), EstimatedBps: estimatedBps,
+				LastError: session.LastError, LastTransitionAt: session.LastSeenAt.Format(time.RFC3339),
+			}
+			if session.LastRecvAt.After(session.LastSentAt) {
+				state.LastHandshakeAt = session.LastRecvAt.Format(time.RFC3339)
+			} else if !session.LastSentAt.IsZero() {
+				state.LastHandshakeAt = session.LastSentAt.Format(time.RFC3339)
+			}
+			if routerStats.Drops.PeerUnavailable > 0 {
+				state.DropReason = "peer_unavailable"
+			}
+			if err := reportLANStatus(ctx, serverHTTP, state); err != nil {
+				log.Printf("LAN peer status report failed: peer=%s err=%v", session.PeerID, err)
+				continue
+			}
+			log.Printf("LAN peer status reported: peer=%s path=%s data_path=%s reason=%s traffic=%s tx=%d rx=%d bps=%d",
+				session.PeerID, state.Path, state.DataPath, state.PathReason, state.TrafficClass, state.TxBytes, state.RxBytes, state.EstimatedBps)
+		}
+	}
+}
+
+func lanDataPathFromSession(session packet.PeerSession) string {
+	switch session.Path {
+	case packet.LinkPathP2P:
+		return lanPathP2PKCP
+	case packet.LinkPathRelay:
+		return lanPathRelayHTTP
+	default:
+		return ""
+	}
+}
+
+func lanPathReasonFromSession(session packet.PeerSession) string {
+	switch session.Path {
+	case packet.LinkPathP2P:
+		return "link_p2p"
+	case packet.LinkPathRelay:
+		return "link_relay"
+	default:
+		return "link_unavailable"
+	}
+}
+
+func lanCurrentTrafficClass(p2p *lanP2P, peerID string) string {
+	if p2p == nil {
+		return ""
+	}
+	return p2p.currentTrafficClass(peerID)
 }
 
 func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {

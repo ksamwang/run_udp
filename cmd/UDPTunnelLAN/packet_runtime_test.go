@@ -542,6 +542,13 @@ func TestLANP2PSendPrefersDatagramBeforeKCP(t *testing.T) {
 	if payload, err := readLANFrame(kcpRight); err == nil {
 		t.Fatalf("KCP should not receive datagram-preferred payload: %q", payload)
 	}
+	if got := p.currentTrafficClass("dev-b"); got != lanTrafficInteractive {
+		t.Fatalf("traffic class=%q, want %q", got, lanTrafficInteractive)
+	}
+	dataPath, reason := p.peerDataPath("dev-b")
+	if dataPath != lanPathP2PDatagram || reason != "datagram_ready" {
+		t.Fatalf("bad peer data path: path=%q reason=%q", dataPath, reason)
+	}
 }
 
 func TestLANP2PSendFallsBackToKCPWhenDatagramUnavailable(t *testing.T) {

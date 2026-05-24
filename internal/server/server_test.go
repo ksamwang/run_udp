@@ -418,9 +418,10 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 
 	statusRec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{
 		"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID,
-		"state": "connected", "path": "p2p", "adapter_state": "up", "route_conflict": "none",
+		"state": "connected", "path": "p2p", "data_path": "p2p_datagram", "path_reason": "datagram_ready", "traffic_class": "interactive",
+		"adapter_state": "up", "route_conflict": "none",
 		"selected_cidr": "172.16.10.0/24", "mtu": 1280, "mss": 1200,
-		"rtt_ms": 12, "tx_bytes": 100, "rx_bytes": 200,
+		"rtt_ms": 12, "estimated_bps": 300, "tx_bytes": 100, "rx_bytes": 200,
 	}, nil)
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("status status=%d body=%s", statusRec.Code, statusRec.Body.String())
@@ -441,7 +442,8 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(states) != 1 || states[0].Path != "p2p" || states[0].RTTMs != 12 ||
-		states[0].AdapterState != "up" || states[0].MSS != 1200 {
+		states[0].AdapterState != "up" || states[0].MSS != 1200 || states[0].DataPath != "p2p_datagram" ||
+		states[0].PathReason != "datagram_ready" || states[0].TrafficClass != "interactive" || states[0].EstimatedBps != 300 {
 		t.Fatalf("bad peer states: %+v", states)
 	}
 	deviceStatesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/device-states?network_id="+strconv.FormatInt(network.ID, 10), nil)
