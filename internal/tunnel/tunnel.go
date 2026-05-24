@@ -21,6 +21,7 @@ import (
 	kcp "github.com/xtaci/kcp-go/v5"
 
 	"udp_tunnel_demo/internal/secure"
+	"udp_tunnel_demo/internal/store"
 )
 
 // IsProtocolJSON 判断一个 UDP 载荷是不是我们自己的 JSON 协议包。
@@ -225,7 +226,9 @@ type ProfileConfig struct {
 
 func profileConfig(profile string) ProfileConfig {
 	switch profile {
-	case "bulk":
+	case store.ProfileBulk:
+		return ProfileConfig{KCPWindow: 8192, UDPSocketBuffer: 16 * 1024 * 1024}
+	case store.ProfileLANPacket:
 		return ProfileConfig{KCPWindow: 8192, UDPSocketBuffer: 16 * 1024 * 1024}
 	default:
 		return ProfileConfig{KCPWindow: 1024}

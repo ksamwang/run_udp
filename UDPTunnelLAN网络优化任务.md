@@ -32,10 +32,10 @@
 
 任务：
 
-- [ ] 为 `lan-packet` 增加独立 profile config，不影响 `interactive` 和 `bulk`。
-- [ ] 将 LAN KCP window 提升到接近 bulk 的级别，作为第一轮吞吐优化。
-- [ ] 为 LAN KCP 路径设置较大的 UDP read/write buffer。
-- [ ] 增加测试覆盖 `lan-packet` profile 使用独立参数。
+- [x] 为 `lan-packet` 增加独立 profile config，不影响 `interactive` 和 `bulk`。
+- [x] 将 LAN KCP window 提升到接近 bulk 的级别，作为第一轮吞吐优化。
+- [x] 为 LAN KCP 路径设置较大的 UDP read/write buffer。
+- [x] 增加测试覆盖 `lan-packet` profile 使用独立参数。
 - [ ] 压测 P2P KCP 路径吞吐，记录优化前后差异。
 
 ### P0-2 优先使用 UDP datagram fast path 承载原始 IP 包
