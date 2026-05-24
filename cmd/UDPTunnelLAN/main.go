@@ -171,6 +171,7 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 	}
 	adapterState := "not_configured"
 	runtimeState := "bootstrap"
+	routeConflict := "none"
 	lastError := ""
 	selectedCIDR := resp.Network.CIDR
 	mtu := wintun.DefaultMTU
@@ -182,7 +183,9 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 		state, configured, err := configureLANAdapter(resp.Address.VirtualIP, resp.Network.CIDR, mtu)
 		if err != nil {
 			adapterState = "error"
+			runtimeState = "error"
 			lastError = err.Error()
+			routeConflict = lanRouteConflictStatus(state)
 			log.Printf("LAN adapter configure failed: %v", err)
 		} else {
 			adapter = configured
@@ -202,7 +205,7 @@ func bootstrapAndRun(ctx context.Context, cfg lan.Config, identity lan.Identity)
 	}
 	state := store.VirtualPeerState{
 		DeviceID: deviceID, NetworkID: resp.Network.ID, State: runtimeState, AdapterState: adapterState,
-		SelectedCIDR: selectedCIDR, MTU: mtu, MSS: mss,
+		RouteConflict: routeConflict, SelectedCIDR: selectedCIDR, MTU: mtu, MSS: mss,
 		LastError: lastError, LastTransitionAt: time.Now().Format(time.RFC3339),
 	}
 	if err := reportLANStatus(ctx, cfg.ServerHTTP, state); err != nil {
@@ -220,10 +223,10 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, *
 	if err != nil {
 		return state, nil, err
 	}
-	selectedCIDR := state.SelectedCIDR
-	if selectedCIDR == "" {
-		selectedCIDR = cidr
+	if err := validateLANRouteSelection(virtualIP, cidr, state); err != nil {
+		return state, nil, err
 	}
+	selectedCIDR := cidr
 	adapter, err := wintun.OpenOrCreate(wintun.Config{
 		Name: wintun.DefaultAdapterName,
 		IP:   net.ParseIP(virtualIP),
@@ -243,6 +246,41 @@ func configureLANAdapter(virtualIP, cidr string, mtu int) (wintun.SystemState, *
 		return state, nil, err
 	}
 	return state, adapter, nil
+}
+
+func validateLANRouteSelection(virtualIP, cidr string, state wintun.SystemState) error {
+	if state.Conflict.Conflicts {
+		return fmt.Errorf("LAN route conflict: requested=%s existing=%s interface=%s; change LAN network CIDR in admin console",
+			cidr, state.Conflict.Existing.CIDR, state.Conflict.Existing.Interface)
+	}
+	selected := strings.TrimSpace(state.SelectedCIDR)
+	if selected == "" {
+		selected = cidr
+	}
+	if selected != cidr {
+		return fmt.Errorf("LAN selected CIDR mismatch: server=%s selected=%s; change LAN network CIDR in admin console", cidr, selected)
+	}
+	ip := net.ParseIP(strings.TrimSpace(virtualIP)).To4()
+	_, network, err := net.ParseCIDR(cidr)
+	if ip == nil || err != nil || !network.Contains(ip) {
+		return fmt.Errorf("LAN virtual IP %q is outside server CIDR %q", virtualIP, cidr)
+	}
+	return nil
+}
+
+func lanRouteConflictStatus(state wintun.SystemState) string {
+	if !state.Conflict.Conflicts {
+		return "none"
+	}
+	existing := strings.TrimSpace(state.Conflict.Existing.CIDR)
+	if existing == "" {
+		existing = strings.TrimSpace(state.Conflict.CIDR)
+	}
+	iface := strings.TrimSpace(state.Conflict.Existing.Interface)
+	if iface == "" {
+		return existing
+	}
+	return existing + " via " + iface
 }
 
 func buildPacketRuntime(resp lanBootstrapResponse, deviceID string, mtu int) (*packet.Router, *packet.LinkManager, error) {

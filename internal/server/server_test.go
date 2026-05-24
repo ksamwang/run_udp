@@ -324,6 +324,7 @@ func TestLANBootstrapRepairsEmptyVirtualIP(t *testing.T) {
 func TestLANPacketRelayDisabledByDefault(t *testing.T) {
 	a := newTestApp(t)
 	a.cfg.AllowRelay = false
+	a.cfg.LANAllowRelay = false
 	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/send", map[string]any{
 		"device_id": "dev-a",
 		"frames": []map[string]any{{
@@ -344,7 +345,8 @@ func TestLANPacketRelayDisabledByDefault(t *testing.T) {
 
 func TestLANPacketRelaySendAndPoll(t *testing.T) {
 	a := newTestApp(t)
-	a.cfg.AllowRelay = true
+	a.cfg.AllowRelay = false
+	a.cfg.LANAllowRelay = true
 	send := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/send", map[string]any{
 		"device_id": "dev-a",
 		"frames": []map[string]any{{
@@ -376,6 +378,21 @@ func TestLANPacketRelaySendAndPoll(t *testing.T) {
 	}
 	if len(pollResp.Frames) != 1 || pollResp.Frames[0].SrcDevice != "dev-a" || pollResp.Frames[0].Payload != "AQID" {
 		t.Fatalf("bad poll response: %+v", pollResp.Frames)
+	}
+}
+
+func TestLANPacketRelayUsesLANSpecificSwitch(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.AllowRelay = true
+	a.cfg.LANAllowRelay = false
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/packets/send", map[string]any{
+		"device_id": "dev-a",
+		"frames": []map[string]any{{
+			"network_id": 1, "src_device": "dev-a", "dst_device": "dev-b", "type": 1, "payload": "AQID",
+		}},
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("lan relay should ignore allow_relay and use lan_allow_relay, status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -587,6 +604,59 @@ func TestLANRegisterPairsPeers(t *testing.T) {
 	}
 	if _, ok := a.pairs.Load("127.0.0.1:15002"); !ok {
 		t.Fatalf("missing LAN relay route for dev-b")
+	}
+}
+
+func TestLANRegisterDeletesOldRouteOnSocketChange(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	idA, _ := lan.GenerateIdentity()
+	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-a", Algorithm: lan.IdentityKeyAlgorithm, PublicKey: idA.PublicKey}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ts := time.Now().Unix()
+	payload := "x25519-a"
+	first := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 16001}
+	second := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 16002}
+	msg := &protocol.Message{
+		Type: protocol.MsgLANRegister, From: "dev-a", Peer: "dev-b", Profile: store.ProfileLANPacket,
+		Payload: payload, Timestamp: ts, Signature: mustSignRegisterPayload(t, idA, "dev-a", "dev-b", store.ProfileLANPacket, ts, payload),
+	}
+	a.handleLANRegister(conn, first, msg)
+	a.pairs.Store(first.String(), pairRoute{dst: second, lastSeen: time.Now(), sessionID: 1})
+	a.handleLANRegister(conn, second, msg)
+	if _, ok := a.pairs.Load(first.String()); ok {
+		t.Fatal("old LAN pair route should be deleted after socket change")
+	}
+	if got := a.lanPeers["dev-a"][peerSlotKey("dev-b", store.ProfileLANPacket)].addr.String(); got != second.String() {
+		t.Fatalf("new LAN peer address not stored, got %s", got)
+	}
+}
+
+func TestCleanupExpiredLANPeers(t *testing.T) {
+	a := newTestApp(t)
+	now := time.Now()
+	a.cfg.PeerTTL = time.Second
+	a.mu.Lock()
+	a.lanPeers["dev-a"] = map[string]*peer{
+		peerSlotKey("dev-b", store.ProfileLANPacket): {
+			id: "dev-a", want: "dev-b", profile: store.ProfileLANPacket,
+			addr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 17001}, lastSeen: now.Add(-2 * time.Second),
+		},
+	}
+	a.pairs.Store("127.0.0.1:17001", pairRoute{dst: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 17002}, lastSeen: now, sessionID: 1})
+	a.cleanupExpiredPeers(now)
+	a.mu.Unlock()
+	if len(a.lanPeers) != 0 {
+		t.Fatalf("expired LAN peers not cleaned: %+v", a.lanPeers)
+	}
+	if _, ok := a.pairs.Load("127.0.0.1:17001"); ok {
+		t.Fatal("expired LAN peer route not deleted")
 	}
 }
 
@@ -818,6 +888,9 @@ func TestApplyStoredSettingsUsesSystemSettings(t *testing.T) {
 	if err := a.db.PutSystemSetting(ctx, settingAllowRelay, "false"); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.db.PutSystemSetting(ctx, settingLANAllowRelay, "true"); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.db.PutSystemSetting(ctx, settingClientLogLevel, "debug"); err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +899,7 @@ func TestApplyStoredSettingsUsesSystemSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if a.cfg.PeerTTL != 45*time.Second || a.cfg.AllowRelay || a.cfg.ClientLogLevel != "debug" {
+	if a.cfg.PeerTTL != 45*time.Second || a.cfg.AllowRelay || !a.cfg.LANAllowRelay || a.cfg.ClientLogLevel != "debug" {
 		t.Fatalf("settings not applied from database: %+v", a.cfg)
 	}
 	if got, err := a.db.GetSystemSetting(ctx, settingPairTTL); err != nil || got != config.DefaultServer().PairTTL.String() {
@@ -864,6 +937,7 @@ func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
 		"pair_ttl":                                 "1m",
 		"relay_idle_timeout":                       "2m",
 		"allow_relay":                              false,
+		"lan_allow_relay":                          true,
 		"allow_legacy":                             false,
 		"client_no_upnp":                           true,
 		"client_upnp_timeout":                      "2s",
@@ -889,6 +963,13 @@ func TestHandleSettingsPersistsSystemSettings(t *testing.T) {
 	}
 	if got != "debug" {
 		t.Fatalf("expected setting in system settings table, got %q", got)
+	}
+	lanRelay, err := a.db.GetSystemSetting(context.Background(), settingLANAllowRelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lanRelay != "true" || !a.cfg.LANAllowRelay {
+		t.Fatalf("expected LAN relay setting persisted, got=%q cfg=%v", lanRelay, a.cfg.LANAllowRelay)
 	}
 	legacy, err := a.db.GetMeta(context.Background(), "setting_client_log_level")
 	if err != nil {
@@ -1154,6 +1235,7 @@ func TestEndToEndAdminAgentBootstrapFlow(t *testing.T) {
 		"pair_ttl":                                 "1m",
 		"relay_idle_timeout":                       "2m",
 		"allow_relay":                              true,
+		"lan_allow_relay":                          true,
 		"allow_legacy":                             false,
 		"client_no_upnp":                           true,
 		"client_upnp_timeout":                      "3s",

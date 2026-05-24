@@ -144,6 +144,7 @@ func (r *Router) RouteOutbound(packet []byte) (RoutedFrame, error) {
 	}
 	switch header.Protocol {
 	case IPv4ProtocolTCP:
+	case IPv4ProtocolUDP:
 	case IPv4ProtocolICMP:
 		// ICMP is useful for diagnostics, but TCP remains the first product path.
 	default:
@@ -346,6 +347,10 @@ func ParseIPv4(packet []byte) (IPv4Header, error) {
 			header.DestPort = int(binary.BigEndian.Uint16(tcp[2:4]))
 			header.TCPSYN = tcp[13]&0x02 != 0
 		}
+	} else if header.Protocol == IPv4ProtocolUDP && totalLen >= ihl+8 {
+		udp := packet[ihl:totalLen]
+		header.SourcePort = int(binary.BigEndian.Uint16(udp[0:2]))
+		header.DestPort = int(binary.BigEndian.Uint16(udp[2:4]))
 	}
 	return header, nil
 }

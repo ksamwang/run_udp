@@ -71,7 +71,7 @@ func (r *lanPacketRelay) Poll(deviceID string, max int) []lanPacketRelayFrame {
 }
 
 func (a *App) handleLANPacketSend(w http.ResponseWriter, r *http.Request) {
-	if !a.currentAllowRelay() {
+	if !a.currentLANAllowRelay() {
 		writeJSONOrError(w, nil, badRequest("relay_disabled", "LAN packet relay is disabled"))
 		return
 	}
@@ -104,7 +104,7 @@ func (a *App) handleLANPacketSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleLANPacketPoll(w http.ResponseWriter, r *http.Request) {
-	if !a.currentAllowRelay() {
+	if !a.currentLANAllowRelay() {
 		writeJSONOrError(w, nil, badRequest("relay_disabled", "LAN packet relay is disabled"))
 		return
 	}

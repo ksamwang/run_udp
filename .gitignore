@@ -6,6 +6,11 @@
 *.exe~
 *.out
 *.test
+.gocache*/
+.codex-index*
+
+# 临时备份
+*.go.[0-9]*
 
 # 日志
 *.log

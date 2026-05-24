@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"udp_tunnel_demo/internal/store"
+	"udp_tunnel_demo/internal/vnet"
+	"udp_tunnel_demo/internal/wintun"
 )
 
 func TestRequestLANBootstrap(t *testing.T) {
@@ -71,5 +73,42 @@ func TestReportLANStatus(t *testing.T) {
 	}
 	if got.DeviceID != "dev-a" || got.NetworkID != 7 || got.AdapterState != "not_configured" {
 		t.Fatalf("bad status: %+v", got)
+	}
+}
+
+func TestValidateLANRouteSelectionRejectsConflict(t *testing.T) {
+	err := validateLANRouteSelection("172.16.10.2", "172.16.10.0/24", wintun.SystemState{
+		Conflict: vnet.Conflict{
+			CIDR: "172.16.10.0/24", Existing: vnet.Route{CIDR: "172.16.10.0/24", Interface: "vpn"}, Conflicts: true,
+		},
+		SelectedCIDR: "172.16.11.0/24",
+	})
+	if err == nil {
+		t.Fatal("expected route conflict error")
+	}
+}
+
+func TestValidateLANRouteSelectionRejectsVirtualIPOutsideCIDR(t *testing.T) {
+	err := validateLANRouteSelection("172.16.11.2", "172.16.10.0/24", wintun.SystemState{SelectedCIDR: "172.16.10.0/24"})
+	if err == nil {
+		t.Fatal("expected virtual IP mismatch error")
+	}
+}
+
+func TestValidateLANRouteSelectionAcceptsServerCIDR(t *testing.T) {
+	if err := validateLANRouteSelection("172.16.10.2", "172.16.10.0/24", wintun.SystemState{SelectedCIDR: "172.16.10.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLANRouteConflictStatusReportsExistingRoute(t *testing.T) {
+	got := lanRouteConflictStatus(wintun.SystemState{
+		Conflict: vnet.Conflict{
+			CIDR: "172.16.10.0/24", Existing: vnet.Route{CIDR: "172.16.10.0/24", Interface: "vpn"}, Conflicts: true,
+		},
+		SelectedCIDR: "172.16.11.0/24",
+	})
+	if got != "172.16.10.0/24 via vpn" {
+		t.Fatalf("bad route conflict status: %q", got)
 	}
 }

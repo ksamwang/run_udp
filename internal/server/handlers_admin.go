@@ -159,6 +159,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"pair_ttl":                                 a.cfg.PairTTL.String(),
 			"relay_idle_timeout":                       a.cfg.RelayIdleTimeout.String(),
 			"allow_relay":                              a.cfg.AllowRelay,
+			"lan_allow_relay":                          a.cfg.LANAllowRelay,
 			"allow_legacy":                             a.cfg.AllowLegacy,
 			"client_no_upnp":                           a.cfg.ClientNoUPnP,
 			"client_upnp_timeout":                      a.cfg.ClientUPnPTimeout.String(),
@@ -184,6 +185,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			PairTTL                       string `json:"pair_ttl"`
 			RelayIdleTimeout              string `json:"relay_idle_timeout"`
 			AllowRelay                    bool   `json:"allow_relay"`
+			LANAllowRelay                 bool   `json:"lan_allow_relay"`
 			AllowLegacy                   bool   `json:"allow_legacy"`
 			ClientNoUPnP                  bool   `json:"client_no_upnp"`
 			ClientUPnPTimeout             string `json:"client_upnp_timeout"`
@@ -242,6 +244,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		a.cfg.PairTTL = pairTTL
 		a.cfg.RelayIdleTimeout = relayIdle
 		a.cfg.AllowRelay = req.AllowRelay
+		a.cfg.LANAllowRelay = req.LANAllowRelay
 		a.cfg.AllowLegacy = req.AllowLegacy
 		a.cfg.ClientNoUPnP = req.ClientNoUPnP
 		a.cfg.ClientUPnPTimeout = clientUPnPTimeout
@@ -263,6 +266,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 			settingPairTTL:                       pairTTL.String(),
 			settingRelayIdleTimeout:              relayIdle.String(),
 			settingAllowRelay:                    strconv.FormatBool(req.AllowRelay),
+			settingLANAllowRelay:                 strconv.FormatBool(req.LANAllowRelay),
 			settingAllowLegacy:                   strconv.FormatBool(req.AllowLegacy),
 			settingClientNoUPnP:                  strconv.FormatBool(req.ClientNoUPnP),
 			settingClientUPnPTimeout:             clientUPnPTimeout.String(),

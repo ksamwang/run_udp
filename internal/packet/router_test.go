@@ -35,6 +35,42 @@ func TestRouteOutboundTCPToVirtualAddress(t *testing.T) {
 	}
 }
 
+func TestRouteOutboundUDPToVirtualAddress(t *testing.T) {
+	router := newTestRouter(t, RouterConfig{
+		NetworkID: 1, SourceDeviceID: "dev-a", MTU: 1280,
+		Addresses: []store.VirtualAddress{
+			{NetworkID: 1, DeviceID: "dev-a", VirtualIP: "172.16.10.1"},
+			{NetworkID: 1, DeviceID: "dev-b", VirtualIP: "172.16.10.2"},
+		},
+		PeerAvailable: map[string]bool{"dev-b": true},
+	})
+
+	frame, err := router.RouteOutbound(udpPacket(t, "172.16.10.1", "172.16.10.2", 50000, 53, []byte{1, 2, 3}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.DstDevice != "dev-b" || frame.Header.Protocol != IPv4ProtocolUDP || frame.Header.DestPort != 53 {
+		t.Fatalf("bad udp route: %+v", frame)
+	}
+}
+
+func TestRouteOutboundUDPDenyACL(t *testing.T) {
+	router := newTestRouter(t, RouterConfig{
+		NetworkID: 1, SourceDeviceID: "dev-a", MTU: 1280,
+		Addresses: []store.VirtualAddress{{NetworkID: 1, DeviceID: "dev-b", VirtualIP: "172.16.10.2"}},
+		ACLRules: []store.VirtualACLRule{{
+			NetworkID: 1, SourceDeviceID: "dev-a", TargetDeviceID: "dev-b",
+			Protocol: "udp", PortStart: 53, PortEnd: 53, Action: "deny", Enabled: true,
+		}},
+		PeerAvailable: map[string]bool{"dev-b": true},
+	})
+
+	_, err := router.RouteOutbound(udpPacket(t, "172.16.10.1", "172.16.10.2", 50000, 53, []byte{1}))
+	if !errors.Is(err, ErrACLDeny) {
+		t.Fatalf("expected udp acl deny, got %v", err)
+	}
+}
+
 func TestRouteOutboundDenyACL(t *testing.T) {
 	router := newTestRouter(t, RouterConfig{
 		NetworkID: 1, SourceDeviceID: "dev-a", MTU: 1280,
@@ -209,5 +245,34 @@ func tcpSYNPacket(t *testing.T, src, dst string, srcPort, dstPort, mss int) []by
 		t.Fatal(err)
 	}
 	recomputeTCPChecksum(pkt, header)
+	return pkt
+}
+
+func udpPacket(t *testing.T, src, dst string, srcPort, dstPort int, payload []byte) []byte {
+	t.Helper()
+	srcIP := net.ParseIP(src).To4()
+	dstIP := net.ParseIP(dst).To4()
+	if srcIP == nil || dstIP == nil {
+		t.Fatal("bad test ip")
+	}
+	ipHeaderLen := 20
+	udpHeaderLen := 8
+	totalLen := ipHeaderLen + udpHeaderLen + len(payload)
+	pkt := make([]byte, totalLen)
+	pkt[0] = 0x45
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(totalLen))
+	binary.BigEndian.PutUint16(pkt[4:6], 1)
+	binary.BigEndian.PutUint16(pkt[6:8], 0x4000)
+	pkt[8] = 64
+	pkt[9] = IPv4ProtocolUDP
+	copy(pkt[12:16], srcIP)
+	copy(pkt[16:20], dstIP)
+	recomputeIPv4HeaderChecksum(pkt[:ipHeaderLen])
+
+	udp := pkt[ipHeaderLen:]
+	binary.BigEndian.PutUint16(udp[0:2], uint16(srcPort))
+	binary.BigEndian.PutUint16(udp[2:4], uint16(dstPort))
+	binary.BigEndian.PutUint16(udp[4:6], uint16(udpHeaderLen+len(payload)))
+	copy(udp[udpHeaderLen:], payload)
 	return pkt
 }

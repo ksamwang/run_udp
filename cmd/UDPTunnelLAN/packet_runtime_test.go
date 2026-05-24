@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"net"
@@ -73,6 +75,383 @@ func TestRelayDisabledErrorIsVisible(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "relay_disabled") {
 		t.Fatalf("expected relay_disabled error, got %v", err)
+	}
+}
+
+func TestSealRelayFramesRequiresPeerCodec(t *testing.T) {
+	p := &lanP2P{peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b"}}}
+	frames, err := p.SealRelayFrames([]packet.RoutedFrame{{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: []byte{1, 2, 3}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("relay must not send plaintext without codec: %+v", frames)
+	}
+}
+
+func TestSealAndOpenRelayFrameUsesPacketCodec(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	txB, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pA := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b", tx: txA, rx: rxA}}}
+	pB := &lanP2P{deviceID: "dev-b", peers: map[string]*lanP2PPeer{"dev-a": {id: "dev-a", tx: txB, rx: rxB}}}
+	plain := []byte{0x45, 0, 1, 2}
+	sealed, err := pA.SealRelayFrames([]packet.RoutedFrame{{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: plain}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed) != 1 || string(sealed[0].Payload) == string(plain) {
+		t.Fatalf("relay payload must be encrypted: %+v", sealed)
+	}
+	opened, err := pB.OpenRelayFrame(sealed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(opened.Payload) != string(plain) {
+		t.Fatalf("bad opened payload: %v", opened.Payload)
+	}
+}
+
+func TestPostRelayFramesReceivesEncryptedPayload(t *testing.T) {
+	encrypted := []byte("encrypted-frame")
+	var got lanRelayFrame
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/lan/packets/send" {
+			t.Fatalf("bad path: %s", r.URL.Path)
+		}
+		var req struct {
+			DeviceID string          `json:"device_id"`
+			Frames   []lanRelayFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		got = req.Frames[0]
+		_ = json.NewEncoder(w).Encode(map[string]int{"accepted": 1})
+	}))
+	defer srv.Close()
+
+	if err := postRelayFrames(context.Background(), srv.URL, []packet.RoutedFrame{{
+		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: encrypted,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(got.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != string(encrypted) {
+		t.Fatalf("postRelayFrames should transport already encrypted payload, got %q", decoded)
+	}
+}
+
+func BenchmarkRelayFrameEnvelopeEncoding(b *testing.B) {
+	frame := lanRelayFrame{
+		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", Type: packet.TypeIPv4,
+		Payload: base64.StdEncoding.EncodeToString(make([]byte, 1024)),
+	}
+	b.Run("json-base64", func(b *testing.B) {
+		payload := struct {
+			DeviceID string          `json:"device_id"`
+			Frames   []lanRelayFrame `json:"frames"`
+		}{DeviceID: "dev-a", Frames: []lanRelayFrame{frame}}
+		b.ReportAllocs()
+		b.SetBytes(1024)
+		for i := 0; i < b.N; i++ {
+			buf, err := json.Marshal(payload)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var out struct {
+				DeviceID string          `json:"device_id"`
+				Frames   []lanRelayFrame `json:"frames"`
+			}
+			if err := json.Unmarshal(buf, &out); err != nil {
+				b.Fatal(err)
+			}
+			if len(out.Frames) != 1 {
+				b.Fatal("missing frame")
+			}
+		}
+	})
+	b.Run("binary-envelope", func(b *testing.B) {
+		payload := make([]byte, 1024)
+		b.ReportAllocs()
+		b.SetBytes(int64(len(payload)))
+		for i := 0; i < b.N; i++ {
+			buf := encodeBenchRelayBinaryFrame(7, "dev-a", "dev-b", packet.TypeIPv4, payload)
+			networkID, src, dst, typ, decoded, err := decodeBenchRelayBinaryFrame(buf)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if networkID != 7 || src != "dev-a" || dst != "dev-b" || typ != packet.TypeIPv4 || len(decoded) != len(payload) {
+				b.Fatal("bad decoded frame")
+			}
+		}
+	})
+}
+
+func encodeBenchRelayBinaryFrame(networkID int64, src, dst string, typ byte, payload []byte) []byte {
+	buf := make([]byte, 0, 8+1+2+len(src)+2+len(dst)+4+len(payload))
+	buf = binary.BigEndian.AppendUint64(buf, uint64(networkID))
+	buf = append(buf, typ)
+	buf = binary.BigEndian.AppendUint16(buf, uint16(len(src)))
+	buf = append(buf, src...)
+	buf = binary.BigEndian.AppendUint16(buf, uint16(len(dst)))
+	buf = append(buf, dst...)
+	buf = binary.BigEndian.AppendUint32(buf, uint32(len(payload)))
+	buf = append(buf, payload...)
+	return buf
+}
+
+func decodeBenchRelayBinaryFrame(buf []byte) (int64, string, string, byte, []byte, error) {
+	r := bytes.NewReader(buf)
+	var networkID uint64
+	if err := binary.Read(r, binary.BigEndian, &networkID); err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	typ, err := r.ReadByte()
+	if err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	src, err := readBenchBinaryString(r)
+	if err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	dst, err := readBenchBinaryString(r)
+	if err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	var n uint32
+	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	payload := make([]byte, int(n))
+	if _, err := r.Read(payload); err != nil {
+		return 0, "", "", 0, nil, err
+	}
+	return int64(networkID), src, dst, typ, payload, nil
+}
+
+func readBenchBinaryString(r *bytes.Reader) (string, error) {
+	var n uint16
+	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
+		return "", err
+	}
+	buf := make([]byte, int(n))
+	if _, err := r.Read(buf); err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+func TestSendPacketsUsesHTTPRelayWhenP2PUnavailable(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got lanRelayFrame
+	posted := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/lan/packets/send" {
+			t.Fatalf("bad path: %s", r.URL.Path)
+		}
+		var req struct {
+			DeviceID string          `json:"device_id"`
+			Frames   []lanRelayFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.DeviceID != "dev-a" || len(req.Frames) != 1 {
+			t.Fatalf("bad relay request: %+v", req)
+		}
+		got = req.Frames[0]
+		posted <- struct{}{}
+		_ = json.NewEncoder(w).Encode(map[string]int{"accepted": 1})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 1)
+	p2p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": {id: "dev-b", tx: txA, rx: rxA}}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	go sendPackets(ctx, srv.URL, link, p2p, outbound)
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("plain")}
+
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for HTTP relay fallback")
+	}
+	wire, err := base64.StdEncoding.DecodeString(got.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wire) == "plain" {
+		t.Fatal("HTTP relay must not carry plaintext payload")
+	}
+	plain, err := rxB.Open(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "plain" {
+		t.Fatalf("bad relayed payload: %q", plain)
+	}
+}
+
+func TestSendPacketsReplaysPendingWhenDatagramBecomesReady(t *testing.T) {
+	left, right, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer left.Close()
+	defer right.Close()
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	peer.addr.Store(right.LocalAddr().(*net.UDPAddr))
+	p2p := &lanP2P{conn: left, deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: "dev-b", Addr: right.LocalAddr().String()}, packet.PeerEndpoint{Addr: "http-relay"}, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outbound := make(chan packet.RoutedFrame, 1)
+	go sendPackets(ctx, "", link, p2p, outbound)
+	outbound <- packet.RoutedFrame{NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4, Payload: []byte("queued")}
+	time.Sleep(100 * time.Millisecond)
+	peer.datagramReady.Store(true)
+
+	buf := make([]byte, 2048)
+	_ = right.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := right.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := rxB.Open(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "queued" {
+		t.Fatalf("pending frame not replayed via datagram: %q", plain)
+	}
+}
+
+func TestLANP2PSendPrefersDatagramBeforeKCP(t *testing.T) {
+	udpLeft, udpRight, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpLeft.Close()
+	defer udpRight.Close()
+	kcpLeft, kcpRight := net.Pipe()
+	defer kcpLeft.Close()
+	defer kcpRight.Close()
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rxB, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA, kcp: kcpLeft}
+	peer.addr.Store(udpRight.LocalAddr().(*net.UDPAddr))
+	peer.datagramReady.Store(true)
+	peer.connected.Store(true)
+	p := &lanP2P{conn: udpLeft, deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	if err := p.Send(packet.RoutedFrame{DstDevice: "dev-b", Payload: []byte("datagram")}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2048)
+	_ = udpRight.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := udpRight.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := rxB.Open(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "datagram" {
+		t.Fatalf("bad datagram payload: %q", plain)
+	}
+	_ = kcpRight.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if payload, err := readLANFrame(kcpRight); err == nil {
+		t.Fatalf("KCP should not receive datagram-preferred payload: %q", payload)
+	}
+}
+
+func TestLANP2PSendFallsBackToKCPWhenDatagramUnavailable(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	peer := &lanP2PPeer{id: "dev-b", kcp: left}
+	peer.connected.Store(true)
+	p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Send(packet.RoutedFrame{DstDevice: "dev-b", Payload: []byte("kcp")})
+	}()
+	got, err := readLANFrame(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "kcp" {
+		t.Fatalf("bad fallback payload: %q", got)
 	}
 }
 
@@ -236,8 +615,9 @@ func TestLANP2PStartsPunchToUPnPAddrAfterPeerInfo(t *testing.T) {
 	expectPunch(upnpConn, "upnp")
 }
 
-func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
+func TestLANP2PPeerInfoLeavesReadyRelayMode(t *testing.T) {
 	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000}
+	directAddr := "203.0.113.10:40000"
 	left, right := net.Pipe()
 	defer left.Close()
 	defer right.Close()
@@ -251,11 +631,17 @@ func TestLANP2PIgnoresPeerInfoInRelayMode(t *testing.T) {
 	peer.addr.Store(relayAddr)
 	peer.isRelay.Store(true)
 	peer.connected.Store(true)
-	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: "203.0.113.10:40000"}
+	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: directAddr}
 	b, _ := protocol.Encode(msg)
-	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
-	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
-		t.Fatalf("relay addr overwritten by peer info: %v", got)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.handleControl(ctx, b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
+	cancel()
+	if peer.isRelay.Load() || peer.connected.Load() || peer.punched.Load() || !peer.punching.Load() {
+		t.Fatalf("peer must leave ready relay mode: relay=%v connected=%v punched=%v punching=%v", peer.isRelay.Load(), peer.connected.Load(), peer.punched.Load(), peer.punching.Load())
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != directAddr {
+		t.Fatalf("peer info must install direct address, got %v", got)
 	}
 }
 
@@ -274,7 +660,10 @@ func TestLANP2PPeerInfoLeavesUnreadyRelayMode(t *testing.T) {
 	peer.punched.Store(true)
 	msg := &protocol.Message{Type: protocol.MsgPeerInfo, Peer: "dev-b", Profile: "lan-packet", Addr: directAddr}
 	b, _ := protocol.Encode(msg)
-	p.handleControl(context.Background(), b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.handleControl(ctx, b, relayAddr, nil, nil, packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"}))
+	cancel()
 	if peer.isRelay.Load() || peer.punched.Load() || !peer.punching.Load() {
 		t.Fatalf("peer must leave unready relay mode: relay=%v punched=%v punching=%v", peer.isRelay.Load(), peer.punched.Load(), peer.punching.Load())
 	}
@@ -567,4 +956,17 @@ func TestConfirmLANKCPReadyListenerSendsAck(t *testing.T) {
 
 func testDeadline() time.Time {
 	return time.Now().Add(2 * time.Second)
+}
+
+func udpPair() (*net.UDPConn, *net.UDPConn, error) {
+	left, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		return nil, nil, err
+	}
+	right, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		_ = left.Close()
+		return nil, nil, err
+	}
+	return left, right, nil
 }

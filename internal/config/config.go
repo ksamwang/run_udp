@@ -26,6 +26,7 @@ type Server struct {
 	PairTTL                       time.Duration `json:"pair_ttl"`
 	RelayIdleTimeout              time.Duration `json:"relay_idle_timeout"`
 	AllowRelay                    bool          `json:"allow_relay"`
+	LANAllowRelay                 bool          `json:"lan_allow_relay"`
 	AllowLegacy                   bool          `json:"allow_legacy"`
 	ClientNoUPnP                  bool          `json:"client_no_upnp"`
 	ClientUPnPTimeout             time.Duration `json:"client_upnp_timeout"`
@@ -72,6 +73,7 @@ func DefaultServer() Server {
 		PairTTL:              2 * time.Minute,
 		RelayIdleTimeout:     5 * time.Minute,
 		AllowRelay:           false,
+		LANAllowRelay:        false,
 		AllowLegacy:          false,
 		ClientNoUPnP:         c.NoUPnP,
 		ClientUPnPTimeout:    c.UPnPTimeout,

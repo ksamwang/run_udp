@@ -11,6 +11,7 @@ const (
 	settingPairTTL                       = "pair_ttl"
 	settingRelayIdleTimeout              = "relay_idle_timeout"
 	settingAllowRelay                    = "allow_relay"
+	settingLANAllowRelay                 = "lan_allow_relay"
 	settingAllowLegacy                   = "allow_legacy"
 	settingClientNoUPnP                  = "client_no_upnp"
 	settingClientUPnPTimeout             = "client_upnp_timeout"
@@ -46,6 +47,7 @@ func (a *App) ensureDefaultSettings(ctx context.Context) error {
 		settingPairTTL:                       a.cfg.PairTTL.String(),
 		settingRelayIdleTimeout:              a.cfg.RelayIdleTimeout.String(),
 		settingAllowRelay:                    strconv.FormatBool(a.cfg.AllowRelay),
+		settingLANAllowRelay:                 strconv.FormatBool(a.cfg.LANAllowRelay),
 		settingAllowLegacy:                   strconv.FormatBool(a.cfg.AllowLegacy),
 		settingClientNoUPnP:                  strconv.FormatBool(a.cfg.ClientNoUPnP),
 		settingClientUPnPTimeout:             a.cfg.ClientUPnPTimeout.String(),
@@ -114,6 +116,7 @@ func (a *App) applySystemSettingsLocked(ctx context.Context) error {
 		dst *bool
 	}{
 		{settingAllowRelay, &a.cfg.AllowRelay},
+		{settingLANAllowRelay, &a.cfg.LANAllowRelay},
 		{settingAllowLegacy, &a.cfg.AllowLegacy},
 		{settingClientNoUPnP, &a.cfg.ClientNoUPnP},
 		{settingClientTrayEnabled, &a.cfg.ClientTrayEnabled},
@@ -177,6 +180,12 @@ func (a *App) currentAllowRelay() bool {
 	a.cfgMu.RLock()
 	defer a.cfgMu.RUnlock()
 	return a.cfg.AllowRelay
+}
+
+func (a *App) currentLANAllowRelay() bool {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.cfg.LANAllowRelay
 }
 
 func (a *App) currentAllowLegacy() bool {

@@ -282,8 +282,12 @@ func (a *App) handleLANRegister(conn *net.UDPConn, src *net.UDPAddr, msg *protoc
 		byWant = map[string]*peer{}
 		a.lanPeers[msg.From] = byWant
 	}
+	slot := peerSlotKey(msg.Peer, profile)
+	if old, ok := byWant[slot]; ok && old.addr.String() != src.String() {
+		a.pairs.Delete(old.addr.String())
+	}
 	self := &peer{id: msg.From, addr: cloneUDP(src), upnpAddr: msg.UpnpAddr, lanKey: msg.Payload, want: msg.Peer, profile: profile, lastSeen: time.Now()}
-	byWant[peerSlotKey(msg.Peer, profile)] = self
+	byWant[slot] = self
 	other, ok := a.lookupLANPeerLocked(msg.Peer, msg.From, profile)
 	if !ok {
 		log.Printf("  waiting for LAN peer %s to register want=%s profile=%s known_lan_devices=%d...", msg.Peer, msg.From, profile, len(a.lanPeers))
@@ -331,17 +335,7 @@ func (a *App) cleanupLoop() {
 		pairTTL := a.currentPairTTL()
 		relayIdle := a.currentRelayIdleTimeout()
 		a.mu.Lock()
-		for from, byWant := range a.peers {
-			for want, p := range byWant {
-				if now.Sub(p.lastSeen) > peerTTL {
-					delete(byWant, want)
-					a.pairs.Delete(p.addr.String())
-				}
-			}
-			if len(byWant) == 0 {
-				delete(a.peers, from)
-			}
-		}
+		a.cleanupExpiredPeers(now)
 		a.mu.Unlock()
 		a.pairs.Range(func(key, value any) bool {
 			route := value.(pairRoute)
@@ -352,5 +346,31 @@ func (a *App) cleanupLoop() {
 		})
 		_ = a.db.MarkOfflineBefore(rctx(), now.Add(-peerTTL))
 		_ = a.db.EndIdleSessions(rctx(), now.Add(-relayIdle))
+	}
+}
+
+func (a *App) cleanupExpiredPeers(now time.Time) {
+	peerTTL := a.currentPeerTTL()
+	for from, byWant := range a.peers {
+		for want, p := range byWant {
+			if now.Sub(p.lastSeen) > peerTTL {
+				delete(byWant, want)
+				a.pairs.Delete(p.addr.String())
+			}
+		}
+		if len(byWant) == 0 {
+			delete(a.peers, from)
+		}
+	}
+	for from, byWant := range a.lanPeers {
+		for want, p := range byWant {
+			if now.Sub(p.lastSeen) > peerTTL {
+				delete(byWant, want)
+				a.pairs.Delete(p.addr.String())
+			}
+		}
+		if len(byWant) == 0 {
+			delete(a.lanPeers, from)
+		}
 	}
 }
