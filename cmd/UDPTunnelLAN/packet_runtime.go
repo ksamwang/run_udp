@@ -36,7 +36,7 @@ const (
 	lanPacketPollInterval = 10 * time.Millisecond
 	lanConfigRefreshEvery = 10 * time.Second
 	lanUPnPTimeout        = 4 * time.Second
-	lanPunchTimeout       = 5 * time.Second
+	lanPunchTimeout       = 30 * time.Second
 	lanTunnelRetryDelay   = 3 * time.Second
 	lanRelayRotateAfter   = 3
 	lanRelayMaxAge        = 60 * time.Second
