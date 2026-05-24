@@ -37,6 +37,8 @@ func (a *App) httpMux() http.Handler {
 	admin.Any("/tunnel-states", ginWrap(a.requireAdmin(a.handleTunnelStates)))
 	admin.Any("/metrics", ginWrap(a.requireAdmin(a.handleMetrics)))
 	admin.Any("/audit-events", ginWrap(a.requireAdmin(a.handleAuditEvents)))
+	admin.Any("/releases/:product/upload", ginWrap(a.requireAdmin(a.handleAdminReleaseUpload)))
+	admin.Any("/releases/validate-url", ginWrap(a.requireAdmin(a.handleAdminReleaseValidateURL)))
 	admin.Any("/settings", ginWrap(a.requireAdmin(a.handleSettings)))
 	admin.POST("/password", ginWrap(a.requireAdmin(a.handleChangePassword)))
 	admin.Any("/lan/networks", ginWrap(a.requireAdmin(a.handleAdminLANNetworks)))

@@ -6,9 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -1132,6 +1136,71 @@ func TestHandleLANRelease(t *testing.T) {
 	}
 }
 
+func TestHandleAdminReleaseUploadPersistsSHA256(t *testing.T) {
+	a := newTestApp(t)
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "client.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(part, "installer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := newJSONRequest(t, http.MethodPost, "/api/admin/releases/client/upload", nil)
+	req.Body = io.NopCloser(body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+adminToken(t, a))
+	rec := httptest.NewRecorder()
+	a.httpMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp releaseUploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.SHA256 != "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c" {
+		t.Fatalf("unexpected sha: %+v", resp)
+	}
+	if _, err := os.Stat(filepath.Clean(resp.File)); err != nil {
+		t.Fatalf("uploaded file missing: %v", err)
+	}
+	if got, err := a.db.GetSystemSetting(context.Background(), settingClientReleaseSHA256); err != nil || got != resp.SHA256 {
+		t.Fatalf("sha setting not persisted, got=%q err=%v", got, err)
+	}
+}
+
+func TestHandleAdminReleaseValidateURL(t *testing.T) {
+	a := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/releases/validate-url", map[string]any{"url": srv.URL})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doAdminJSON(t, a, http.MethodPost, "/api/admin/releases/validate-url", map[string]any{"url": "file:///tmp/x"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApplyStoredSettingsUsesSystemSettings(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
@@ -1754,6 +1823,16 @@ func mustSignRegisterPayload(t *testing.T, id lan.Identity, from, peer, profile 
 
 func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	token := adminToken(t, a)
+	req := newJSONRequest(t, method, path, body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	a.httpMux().ServeHTTP(rec, req)
+	return rec
+}
+
+func adminToken(t *testing.T, a *App) string {
+	t.Helper()
 	if _, err := a.db.GetAdminUserByID(context.Background(), defaultAdminUsername); err != nil {
 		hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -1775,11 +1854,7 @@ func doAdminJSON(t *testing.T, a *App, method, path string, body any) *httptest.
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := newJSONRequest(t, method, path, body)
-	req.Header.Set("Authorization", "Bearer "+token)
-	rec := httptest.NewRecorder()
-	a.httpMux().ServeHTTP(rec, req)
-	return rec
+	return token
 }
 
 func doAgentJSON(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {

@@ -1,8 +1,8 @@
 import { ExclamationCircleOutlined, SaveOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Form, Input, InputNumber, Modal, message, Select, Space, Switch, Tabs, Typography } from 'antd'
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, message, Select, Space, Switch, Tabs, Typography, Upload } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { changePassword, getSettings, updateSettings } from '../api/settings'
+import { changePassword, getSettings, updateSettings, uploadReleasePackage, validateReleaseURL } from '../api/settings'
 import type { Settings } from '../types/api'
 
 const { confirm } = Modal
@@ -41,6 +41,9 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
   })
+  const validateURLMutation = useMutation({
+    mutationFn: validateReleaseURL,
+  })
   const passwordMutation = useMutation({
     mutationFn: changePassword,
     onSuccess: () => {
@@ -49,6 +52,21 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '修改密码失败'),
+  })
+  const uploadMutation = useMutation({
+    mutationFn: ({ product, file }: { product: 'client' | 'lan'; file: File }) => uploadReleasePackage(product, file),
+    onSuccess: (resp) => {
+      if (resp.product === 'client') {
+        form.setFieldsValue({ client_release_file: resp.file, client_release_url: '', client_release_sha256: resp.sha256 })
+        setChangedValues((prev) => ({ ...prev, client_release_file: resp.file, client_release_url: '', client_release_sha256: resp.sha256 }))
+      } else {
+        form.setFieldsValue({ lan_release_file: resp.file, lan_release_url: '', lan_release_sha256: resp.sha256 })
+        setChangedValues((prev) => ({ ...prev, lan_release_file: resp.file, lan_release_url: '', lan_release_sha256: resp.sha256 }))
+      }
+      message.success('安装包已上传并计算 SHA256')
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '上传失败'),
   })
   async function submitPassword() {
     const values = passwordForm.getFieldsValue()
@@ -99,11 +117,25 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         content: '这些选项会放宽安全边界或改变连接策略，请确认你了解影响。',
         okText: '继续保存',
         cancelText: '取消',
-        onOk: () => saveMutation.mutate(payload),
+        onOk: () => validateThenSave(payload),
       })
       return
     }
-    saveMutation.mutate(payload)
+    validateThenSave(payload)
+  }
+
+  async function validateThenSave(payload: Settings) {
+    try {
+      if (payload.client_release_url?.trim()) {
+        await validateURLMutation.mutateAsync(payload.client_release_url.trim())
+      }
+      if (payload.lan_release_url?.trim()) {
+        await validateURLMutation.mutateAsync(payload.lan_release_url.trim())
+      }
+      saveMutation.mutate(payload)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '下载 URL 不可访问')
+    }
   }
 
   useEffect(() => {
@@ -189,6 +221,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       label: 'Agent 发布',
       children: (
         <Card>
+          <ReleaseUpload product="client" loading={uploadMutation.isPending} onUpload={(file) => uploadMutation.mutate({ product: 'client', file })} />
           <div className="settings-grid">
             <Form.Item name="client_release_version" label="版本号"><Input /></Form.Item>
             <Form.Item name="client_release_url" label="下载 URL"><Input /></Form.Item>
@@ -206,6 +239,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
       label: 'UDPTunnelLAN 发布',
       children: (
         <Card>
+          <ReleaseUpload product="lan" loading={uploadMutation.isPending} onUpload={(file) => uploadMutation.mutate({ product: 'lan', file })} />
           <div className="settings-grid">
             <Form.Item name="lan_release_version" label="版本号"><Input /></Form.Item>
             <Form.Item name="lan_release_url" label="下载 URL"><Input /></Form.Item>
@@ -247,7 +281,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         </Card>
       ),
     },
-  ], [passwordForm, passwordMutation])
+  ], [passwordForm, passwordMutation, uploadMutation])
 
   return (
     <div className="page-stack">
@@ -259,7 +293,7 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         <Button
           type="primary"
           icon={<SaveOutlined />}
-          loading={saveMutation.isPending}
+          loading={saveMutation.isPending || validateURLMutation.isPending}
           disabled={settings.isLoading || !settings.data}
           onClick={submitSettings}
         >
@@ -288,6 +322,32 @@ export function SettingsPage({ forcePasswordChange }: SettingsPageProps) {
         <Tabs items={tabs} />
       </Form>
     </div>
+  )
+}
+
+function ReleaseUpload({
+  product,
+  loading,
+  onUpload,
+}: {
+  product: 'client' | 'lan'
+  loading: boolean
+  onUpload: (file: File) => void
+}) {
+  return (
+    <Space style={{ marginBottom: 16 }}>
+      <Upload
+        maxCount={1}
+        showUploadList={false}
+        beforeUpload={(file) => {
+          onUpload(file)
+          return false
+        }}
+      >
+        <Button loading={loading}>上传安装包</Button>
+      </Upload>
+      <Typography.Text type="secondary">{product === 'client' ? '上传后回填 Agent 安装包文件和 SHA256。' : '上传后回填 UDPTunnelLAN 安装包文件和 SHA256。'}</Typography.Text>
+    </Space>
   )
 }
 

@@ -29,6 +29,14 @@ export type AuditEvent = {
   created_at: string
 }
 
+export type ReleaseUploadResponse = {
+  product: string
+  file: string
+  url: string
+  sha256: string
+  uploaded_at: string
+}
+
 export type HealthResponse = {
   status: string
   uptime_seconds: number
