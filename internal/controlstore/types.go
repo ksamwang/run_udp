@@ -55,6 +55,7 @@ type Store interface {
 	ListVirtualAddresses(ctx context.Context, networkID int64) ([]store.VirtualAddress, error)
 	GetVirtualAddress(ctx context.Context, networkID int64, deviceID string) (store.VirtualAddress, error)
 	GetVirtualAddressByDevice(ctx context.Context, deviceID string) (store.VirtualAddress, error)
+	DeleteVirtualAddress(ctx context.Context, networkID int64, deviceID string) error
 	UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error
 	GetVirtualDeviceKey(ctx context.Context, deviceID string) (store.VirtualDeviceKey, error)
 	ListVirtualDeviceKeys(ctx context.Context) ([]store.VirtualDeviceKey, error)

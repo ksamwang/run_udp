@@ -17,6 +17,9 @@ import {
   listVirtualNetworks,
   listVirtualPeerStates,
   listVirtualRoutes,
+  reassignVirtualAddress,
+  releaseVirtualAddress,
+  triggerVirtualAddressBootstrap,
   updateVirtualACLRule,
   updateVirtualAddress,
   updateVirtualNetwork,
@@ -171,6 +174,19 @@ export function LanPage() {
       queryClient.invalidateQueries({ queryKey: ['lan', 'addresses'] })
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
+  })
+  const addressActionMutation = useMutation({
+    mutationFn: ({ action, row }: { action: 'release' | 'reassign' | 'bootstrap'; row: VirtualAddress }) => {
+      if (action === 'release') return releaseVirtualAddress(row.device_id, row.network_id)
+      if (action === 'reassign') return reassignVirtualAddress(row.device_id, row.network_id)
+      return triggerVirtualAddressBootstrap(row.device_id, row.network_id)
+    },
+    onSuccess: (_, vars) => {
+      const label = vars.action === 'release' ? '虚拟 IP 已释放' : vars.action === 'reassign' ? '虚拟 IP 已重新分配' : '已触发重新 bootstrap'
+      message.success(label)
+      queryClient.invalidateQueries({ queryKey: ['lan'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '操作失败'),
   })
   const aclMutation = useMutation<unknown, Error, ACLForm>({
     mutationFn: (payload: ACLForm) => editingACL ? updateVirtualACLRule(editingACL.id, payload) : createVirtualACLRule(payload),
@@ -328,11 +344,22 @@ export function LanPage() {
               { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
               {
                 title: '操作',
-                width: 90,
+                width: 220,
                 render: (_, row) => (
-                  <Tooltip title="编辑虚拟 IP">
-                    <Button size="small" icon={<EditOutlined />} onClick={() => setEditingAddress(row)} />
-                  </Tooltip>
+                  <Space>
+                    <Tooltip title="编辑虚拟 IP">
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingAddress(row)} />
+                    </Tooltip>
+                    <Tooltip title="触发重新 bootstrap">
+                      <Button size="small" onClick={() => addressActionMutation.mutate({ action: 'bootstrap', row })} loading={addressActionMutation.isPending}>刷新</Button>
+                    </Tooltip>
+                    <Popconfirm title="重新分配虚拟 IP" description="将释放当前地址并分配该网络中的下一个可用地址。" onConfirm={() => addressActionMutation.mutate({ action: 'reassign', row })}>
+                      <Button size="small" loading={addressActionMutation.isPending}>重分配</Button>
+                    </Popconfirm>
+                    <Popconfirm title="释放虚拟 IP" description="释放后，在线设备下一次 bootstrap 会自动重新分配。" onConfirm={() => addressActionMutation.mutate({ action: 'release', row })}>
+                      <Button size="small" danger loading={addressActionMutation.isPending}>释放</Button>
+                    </Popconfirm>
+                  </Space>
                 ),
               },
             ]}

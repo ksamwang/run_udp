@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -139,6 +141,24 @@ func TestLANAdminAPIs(t *testing.T) {
 	if addrRec.Code != http.StatusOK {
 		t.Fatalf("patch address status=%d body=%s", addrRec.Code, addrRec.Body.String())
 	}
+	badAddr := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/addresses/dev-b", map[string]any{
+		"network_id": network.ID, "virtual_ip": "192.168.1.10", "hostname": "bad",
+	})
+	if badAddr.Code != http.StatusBadRequest {
+		t.Fatalf("bad address status=%d body=%s", badAddr.Code, badAddr.Body.String())
+	}
+	networkAddr := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/addresses/dev-b", map[string]any{
+		"network_id": network.ID, "virtual_ip": "172.16.31.0", "hostname": "bad",
+	})
+	if networkAddr.Code != http.StatusBadRequest {
+		t.Fatalf("network address status=%d body=%s", networkAddr.Code, networkAddr.Body.String())
+	}
+	broadcastAddr := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/addresses/dev-b", map[string]any{
+		"network_id": network.ID, "virtual_ip": "172.16.31.255", "hostname": "bad",
+	})
+	if broadcastAddr.Code != http.StatusBadRequest {
+		t.Fatalf("broadcast address status=%d body=%s", broadcastAddr.Code, broadcastAddr.Body.String())
+	}
 	listAddr := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/addresses?network_id="+strconv.FormatInt(network.ID, 10), nil)
 	if listAddr.Code != http.StatusOK {
 		t.Fatalf("list address status=%d body=%s", listAddr.Code, listAddr.Body.String())
@@ -149,6 +169,31 @@ func TestLANAdminAPIs(t *testing.T) {
 	}
 	if len(addresses) != 1 || addresses[0].VirtualIP != "172.16.31.10" {
 		t.Fatalf("bad addresses: %+v", addresses)
+	}
+	bootstrapAddr := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/addresses/dev-a/bootstrap?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if bootstrapAddr.Code != http.StatusOK {
+		t.Fatalf("bootstrap address status=%d body=%s", bootstrapAddr.Code, bootstrapAddr.Body.String())
+	}
+	reassignAddr := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/addresses/dev-a/reassign?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if reassignAddr.Code != http.StatusOK {
+		t.Fatalf("reassign address status=%d body=%s", reassignAddr.Code, reassignAddr.Body.String())
+	}
+	addr, err := a.db.GetVirtualAddress(ctx, network.ID, "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.VirtualIP == "" || addr.VirtualIP == "172.16.31.10" {
+		t.Fatalf("bad reassigned address: %+v", addr)
+	}
+	releaseAddr := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/addresses/dev-a/release?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if releaseAddr.Code != http.StatusOK {
+		t.Fatalf("release address status=%d body=%s", releaseAddr.Code, releaseAddr.Body.String())
+	}
+	if _, err := a.db.GetVirtualAddress(ctx, network.ID, "dev-a"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("address should be released, err=%v", err)
+	}
+	if _, err := a.allocateVirtualAddress(ctx, network, "dev-a", "office-a"); err != nil {
+		t.Fatal(err)
 	}
 	if err := a.db.UpsertVirtualDeviceKey(ctx, store.VirtualDeviceKey{DeviceID: "dev-a", Algorithm: "ed25519", PublicKey: "pub-a"}); err != nil {
 		t.Fatal(err)
@@ -225,7 +270,7 @@ func TestLANAdminAPIs(t *testing.T) {
 	if patchRoute.Code != http.StatusOK {
 		t.Fatalf("patch route status=%d body=%s", patchRoute.Code, patchRoute.Body.String())
 	}
-	routes, err := a.db.ListVirtualRoutes(ctx, network.ID, "dev-a")
+	routes, err = a.db.ListVirtualRoutes(ctx, network.ID, "dev-a")
 	if err != nil {
 		t.Fatal(err)
 	}

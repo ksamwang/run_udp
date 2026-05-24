@@ -141,11 +141,67 @@ func (a *App) handleAdminLANAddress(w http.ResponseWriter, r *http.Request) {
 			writeJSONOrError(w, nil, err)
 			return
 		}
+		if err := a.validateVirtualAddressCIDR(r.Context(), address); err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
 		err := a.db.UpsertVirtualAddress(r.Context(), address)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	case http.MethodDelete:
+		networkID, err := requiredInt64Query(r, "network_id")
+		if err == nil {
+			err = a.db.DeleteVirtualAddress(r.Context(), networkID, deviceID)
+		}
 		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
 	}
+}
+
+func (a *App) handleAdminLANAddressAction(w http.ResponseWriter, r *http.Request) {
+	deviceID, action := parseLANAddressAction(r.URL.Path)
+	if deviceID == "" || action == "" {
+		writeJSONOrError(w, nil, badRequest("bad_path", "bad address action path"))
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONOrError(w, nil, methodNotAllowed())
+		return
+	}
+	networkID, err := requiredInt64Query(r, "network_id")
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	switch action {
+	case "release":
+		err = a.db.DeleteVirtualAddress(r.Context(), networkID, deviceID)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	case "reassign":
+		err = a.db.DeleteVirtualAddress(r.Context(), networkID, deviceID)
+		if err == nil || errors.Is(err, sql.ErrNoRows) {
+			var network store.VirtualNetwork
+			network, err = a.virtualNetworkByID(r.Context(), networkID)
+			if err == nil {
+				_, err = a.allocateVirtualAddress(r.Context(), network, deviceID, "")
+			}
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	case "bootstrap":
+		err = a.touchVirtualAddress(r.Context(), networkID, deviceID)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	default:
+		writeJSONOrError(w, nil, badRequest("bad_action", "unsupported address action"))
+	}
+}
+
+func parseLANAddressAction(path string) (string, string) {
+	raw := strings.TrimPrefix(path, "/api/admin/lan/addresses/")
+	parts := strings.Split(raw, "/")
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 }
 
 func (a *App) handleAdminLANDeviceKeys(w http.ResponseWriter, r *http.Request) {
@@ -488,6 +544,54 @@ func validateVirtualAddress(address store.VirtualAddress) error {
 	return nil
 }
 
+func (a *App) validateVirtualAddressCIDR(ctx context.Context, address store.VirtualAddress) error {
+	network, err := a.virtualNetworkByID(ctx, address.NetworkID)
+	if err != nil {
+		return err
+	}
+	_, ipNet, err := net.ParseCIDR(network.CIDR)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(strings.TrimSpace(address.VirtualIP)).To4()
+	if ip == nil || !ipNet.Contains(ip) {
+		return badRequest("address_out_of_cidr", "virtual_ip must be inside network cidr")
+	}
+	if ip.Equal(ipNet.IP.To4()) || isIPv4Broadcast(ipNet, ip) {
+		return badRequest("address_reserved", "virtual_ip cannot be network or broadcast address")
+	}
+	return nil
+}
+
+func (a *App) virtualNetworkByID(ctx context.Context, id int64) (store.VirtualNetwork, error) {
+	networks, err := a.db.ListVirtualNetworks(ctx)
+	if err != nil {
+		return store.VirtualNetwork{}, err
+	}
+	for _, network := range networks {
+		if network.ID == id {
+			return network, nil
+		}
+	}
+	return store.VirtualNetwork{}, sql.ErrNoRows
+}
+
+func (a *App) touchVirtualAddress(ctx context.Context, networkID int64, deviceID string) error {
+	address, err := a.db.GetVirtualAddress(ctx, networkID, deviceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		network, err := a.virtualNetworkByID(ctx, networkID)
+		if err != nil {
+			return err
+		}
+		_, err = a.allocateVirtualAddress(ctx, network, deviceID, "")
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	return a.db.UpsertVirtualAddress(ctx, address)
+}
+
 func decodeVirtualACLRule(r *http.Request) (store.VirtualACLRule, error) {
 	var rule store.VirtualACLRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
@@ -567,6 +671,17 @@ func optionalInt64Query(r *http.Request, key string) (int64, error) {
 		return 0, badRequest("bad_"+key, "bad "+key)
 	}
 	return id, nil
+}
+
+func requiredInt64Query(r *http.Request, key string) (int64, error) {
+	value, err := optionalInt64Query(r, key)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, badRequest("missing_"+key, key+" is required")
+	}
+	return value, nil
 }
 
 func lanConfigVersion(network store.VirtualNetwork, addresses []store.VirtualAddress, acl []store.VirtualACLRule, routes []store.VirtualRoute) string {

@@ -37,6 +37,24 @@ export function updateVirtualAddress(deviceID: string, payload: Omit<VirtualAddr
   })
 }
 
+export function releaseVirtualAddress(deviceID: string, networkID: number) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/addresses/${encodeURIComponent(deviceID)}/release?network_id=${networkID}`, {
+    method: 'POST',
+  })
+}
+
+export function reassignVirtualAddress(deviceID: string, networkID: number) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/addresses/${encodeURIComponent(deviceID)}/reassign?network_id=${networkID}`, {
+    method: 'POST',
+  })
+}
+
+export function triggerVirtualAddressBootstrap(deviceID: string, networkID: number) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/addresses/${encodeURIComponent(deviceID)}/bootstrap?network_id=${networkID}`, {
+    method: 'POST',
+  })
+}
+
 export function listVirtualDeviceKeys() {
   return apiRequest<VirtualDeviceKey[]>('/api/admin/lan/device-keys')
 }

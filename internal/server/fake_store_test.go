@@ -594,6 +594,17 @@ func (s *fakeStore) GetVirtualAddressByDevice(ctx context.Context, deviceID stri
 	return newest, nil
 }
 
+func (s *fakeStore) DeleteVirtualAddress(ctx context.Context, networkID int64, deviceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := virtualAddressKey(networkID, deviceID)
+	if _, ok := s.virtualAddrs[key]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(s.virtualAddrs, key)
+	return nil
+}
+
 func (s *fakeStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

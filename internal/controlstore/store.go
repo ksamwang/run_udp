@@ -620,6 +620,17 @@ func (s *MySQLStore) GetVirtualAddressByDevice(ctx context.Context, deviceID str
 	return row.toStore(), err
 }
 
+func (s *MySQLStore) DeleteVirtualAddress(ctx context.Context, networkID int64, deviceID string) error {
+	tx := s.db.WithContext(ctx).Delete(&VirtualAddress{}, "network_id = ? AND device_id = ?", networkID, deviceID)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *MySQLStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
 	now := nowString()
 	if key.CreatedAt == "" {
