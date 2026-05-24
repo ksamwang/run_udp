@@ -5,9 +5,11 @@ import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { listDevices } from '../api/devices'
 import {
+  createVirtualNetwork,
   createVirtualACLRule,
   createVirtualRoute,
   deleteVirtualACLRule,
+  deleteVirtualNetwork,
   deleteVirtualRoute,
   listVirtualACLRules,
   listVirtualAddresses,
@@ -37,10 +39,15 @@ export function LanPage() {
   const [aclFormOpen, setACLFormOpen] = useState(false)
   const [editingRoute, setEditingRoute] = useState<VirtualRoute | null>(null)
   const [routeFormOpen, setRouteFormOpen] = useState(false)
+  const [selectedNetworkID, setSelectedNetworkID] = useState<number | undefined>()
+  const [creatingNetwork, setCreatingNetwork] = useState(false)
 
   const networks = useQuery({ queryKey: ['lan', 'networks'], queryFn: listVirtualNetworks })
-  const defaultNetwork = networks.data?.[0]
-  const networkID = defaultNetwork?.id
+  const currentNetwork = useMemo(() => {
+    const items = networks.data || []
+    return items.find((network) => network.id === selectedNetworkID) || items[0]
+  }, [networks.data, selectedNetworkID])
+  const networkID = currentNetwork?.id
   const addresses = useQuery({
     queryKey: ['lan', 'addresses', networkID],
     queryFn: () => listVirtualAddresses(networkID),
@@ -65,14 +72,20 @@ export function LanPage() {
   const devices = useQuery({ queryKey: ['devices'], queryFn: listDevices })
 
   useEffect(() => {
-    if (defaultNetwork) {
+    if (!selectedNetworkID && networks.data?.[0]) {
+      setSelectedNetworkID(networks.data[0].id)
+    }
+  }, [networks.data, selectedNetworkID])
+
+  useEffect(() => {
+    if (currentNetwork) {
       networkForm.setFieldsValue({
-        name: defaultNetwork.name,
-        cidr: defaultNetwork.cidr,
-        enabled: defaultNetwork.enabled,
+        name: currentNetwork.name,
+        cidr: currentNetwork.cidr,
+        enabled: currentNetwork.enabled,
       })
     }
-  }, [defaultNetwork, networkForm])
+  }, [currentNetwork, networkForm])
 
   useEffect(() => {
     if (editingAddress) {
@@ -117,13 +130,28 @@ export function LanPage() {
   const refreshLAN = () => {
     queryClient.invalidateQueries({ queryKey: ['lan'] })
   }
-  const networkMutation = useMutation({
-    mutationFn: (payload: NetworkForm) => updateVirtualNetwork(defaultNetwork!.id, payload),
-    onSuccess: () => {
-      message.success('虚拟网络已保存')
+  const networkMutation = useMutation<VirtualNetwork | { ok: boolean }, Error, NetworkForm>({
+    mutationFn: (payload: NetworkForm) => creatingNetwork || !networkID ? createVirtualNetwork(payload) : updateVirtualNetwork(networkID, payload),
+    onSuccess: (network) => {
+      message.success(creatingNetwork ? '虚拟网络已创建' : '虚拟网络已保存')
+      if (creatingNetwork && network && 'id' in network) {
+        setSelectedNetworkID(network.id)
+      }
+      setCreatingNetwork(false)
       refreshLAN()
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
+  })
+  const deleteNetworkMutation = useMutation({
+    mutationFn: deleteVirtualNetwork,
+    onSuccess: () => {
+      message.success('虚拟网络已删除')
+      setSelectedNetworkID(undefined)
+      setCreatingNetwork(false)
+      networkForm.resetFields()
+      refreshLAN()
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
   })
   const addressMutation = useMutation({
     mutationFn: ({ deviceID, payload }: { deviceID: string; payload: AddressForm }) => updateVirtualAddress(deviceID, payload),
@@ -186,8 +214,39 @@ export function LanPage() {
             showIcon
             icon={<ExperimentOutlined />}
             message="虚拟局域网为实验功能"
-            description="第一版只开放默认网络，数据模型已支持后续多个虚拟网络。"
+            description="网络归属由服务端后台配置，UDPTunnelLAN 客户端不需要本地选择网络。"
           />
+          <div className="lan-section-toolbar">
+            <Select
+              value={networkID}
+              loading={networks.isLoading}
+              options={(networks.data || []).map((network) => ({ value: network.id, label: `${network.name} (${network.cidr})` }))}
+              onChange={(id) => { setSelectedNetworkID(id); setCreatingNetwork(false) }}
+              placeholder="选择虚拟网络"
+              className="lan-network-select"
+            />
+            <Space>
+              <Button
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setCreatingNetwork(true)
+                  setSelectedNetworkID(undefined)
+                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', enabled: true })
+                }}
+              >
+                新增网络
+              </Button>
+              {currentNetwork && !creatingNetwork ? (
+                <Popconfirm
+                  title="删除虚拟网络"
+                  description="仅空网络可删除。请先处理地址、ACL、路由和状态记录。"
+                  onConfirm={() => deleteNetworkMutation.mutate(currentNetwork.id)}
+                >
+                  <Button danger icon={<DeleteOutlined />} loading={deleteNetworkMutation.isPending}>删除网络</Button>
+                </Popconfirm>
+              ) : null}
+            </Space>
+          </div>
           <Form form={networkForm} layout="vertical" className="lan-form" onFinish={(values) => networkMutation.mutate(values)}>
             <Form.Item name="name" label="网络名称" rules={[{ required: true, message: '请输入网络名称' }]}>
               <Input placeholder="默认虚拟网络" />
@@ -202,9 +261,10 @@ export function LanPage() {
             <Form.Item name="enabled" label="启用 LAN" valuePropName="checked">
               <Switch />
             </Form.Item>
-            <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={networkMutation.isPending} disabled={!defaultNetwork}>
-              保存网络配置
+            <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={networkMutation.isPending} disabled={!creatingNetwork && !currentNetwork}>
+              {creatingNetwork ? '创建网络' : '保存网络配置'}
             </Button>
+            {creatingNetwork ? <Button onClick={() => { setCreatingNetwork(false); setSelectedNetworkID(networks.data?.[0]?.id); networkForm.resetFields() }}>取消</Button> : null}
           </Form>
         </Card>
       ),

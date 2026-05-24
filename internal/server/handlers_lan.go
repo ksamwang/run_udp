@@ -66,11 +66,46 @@ func (a *App) handleAdminLANNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	case http.MethodDelete:
-		err := a.db.DeleteVirtualNetwork(r.Context(), id)
+		err := a.ensureVirtualNetworkEmpty(r.Context(), id)
+		if err == nil {
+			err = a.db.DeleteVirtualNetwork(r.Context(), id)
+		}
 		writeJSONOrError(w, map[string]any{"ok": true}, err)
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
 	}
+}
+
+func (a *App) ensureVirtualNetworkEmpty(ctx context.Context, networkID int64) error {
+	addresses, err := a.db.ListVirtualAddresses(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	if len(addresses) > 0 {
+		return badRequest("network_in_use", "network still has virtual addresses")
+	}
+	acl, err := a.db.ListVirtualACLRules(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	if len(acl) > 0 {
+		return badRequest("network_in_use", "network still has acl rules")
+	}
+	routes, err := a.db.ListVirtualRoutes(ctx, networkID, "")
+	if err != nil {
+		return err
+	}
+	if len(routes) > 0 {
+		return badRequest("network_in_use", "network still has virtual routes")
+	}
+	states, err := a.db.ListVirtualPeerStates(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	if len(states) > 0 {
+		return badRequest("network_in_use", "network still has peer states")
+	}
+	return nil
 }
 
 func (a *App) handleAdminLANAddresses(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +273,7 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
-	network, err := a.db.EnsureDefaultVirtualNetwork(r.Context())
+	network, address, err := a.lanNetworkAndAddress(r.Context(), req.DeviceID)
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -255,16 +290,12 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	address, err := a.db.GetVirtualAddress(r.Context(), network.ID, req.DeviceID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if strings.TrimSpace(address.DeviceID) == "" {
 		address, err = a.allocateVirtualAddress(r.Context(), network, req.DeviceID, strings.TrimSpace(req.DeviceName))
 		if err != nil {
 			writeJSONOrError(w, nil, err)
 			return
 		}
-	} else if err != nil {
-		writeJSONOrError(w, nil, err)
-		return
 	} else if strings.TrimSpace(address.VirtualIP) == "" {
 		address, err = a.allocateVirtualAddress(r.Context(), network, req.DeviceID, firstNonEmpty(address.Hostname, strings.TrimSpace(req.DeviceName)))
 		if err != nil {
@@ -312,6 +343,27 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		ConfigVersion: lanConfigVersion(network, addresses, acl, routes), Server: externalUDPAddr(r, a.cfg.UDPListen), DeviceID: req.DeviceID,
 		DeviceName: strings.TrimSpace(req.DeviceName), Network: network, Address: address, Routes: routes, ACL: acl, Peers: peers,
 	})
+}
+
+func (a *App) lanNetworkAndAddress(ctx context.Context, deviceID string) (store.VirtualNetwork, store.VirtualAddress, error) {
+	address, err := a.db.GetVirtualAddressByDevice(ctx, deviceID)
+	if err == nil {
+		networks, err := a.db.ListVirtualNetworks(ctx)
+		if err != nil {
+			return store.VirtualNetwork{}, store.VirtualAddress{}, err
+		}
+		for _, network := range networks {
+			if network.ID == address.NetworkID {
+				return network, address, nil
+			}
+		}
+		return store.VirtualNetwork{}, store.VirtualAddress{}, sql.ErrNoRows
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return store.VirtualNetwork{}, store.VirtualAddress{}, err
+	}
+	network, err := a.db.EnsureDefaultVirtualNetwork(ctx)
+	return network, store.VirtualAddress{}, err
 }
 
 type virtualAddressStore interface {

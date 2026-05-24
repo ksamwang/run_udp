@@ -143,6 +143,10 @@ body {
   margin-bottom: 16px;
 }
 
+.lan-network-select {
+  min-width: 280px;
+}
+
 .full-width {
   width: 100%;
 }

@@ -611,6 +611,15 @@ func (s *MySQLStore) GetVirtualAddress(ctx context.Context, networkID int64, dev
 	return row.toStore(), err
 }
 
+func (s *MySQLStore) GetVirtualAddressByDevice(ctx context.Context, deviceID string) (store.VirtualAddress, error) {
+	var row VirtualAddress
+	err := s.db.WithContext(ctx).Order("updated_at desc").First(&row, "device_id = ?", deviceID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return store.VirtualAddress{}, sql.ErrNoRows
+	}
+	return row.toStore(), err
+}
+
 func (s *MySQLStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
 	now := nowString()
 	if key.CreatedAt == "" {

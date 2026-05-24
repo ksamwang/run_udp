@@ -5,10 +5,23 @@ export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
 }
 
+export function createVirtualNetwork(payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'enabled'>) {
+  return apiRequest<VirtualNetwork>('/api/admin/lan/networks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function updateVirtualNetwork(id: number, payload: Pick<VirtualNetwork, 'name' | 'cidr' | 'enabled'>) {
   return apiRequest<{ ok: boolean }>(`/api/admin/lan/networks/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  })
+}
+
+export function deleteVirtualNetwork(id: number) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/networks/${id}`, {
+    method: 'DELETE',
   })
 }
 

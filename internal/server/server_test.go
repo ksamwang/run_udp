@@ -118,6 +118,20 @@ func TestLANAdminAPIs(t *testing.T) {
 	if patchNet.Code != http.StatusOK {
 		t.Fatalf("patch network status=%d body=%s", patchNet.Code, patchNet.Body.String())
 	}
+	emptyNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
+		"name": "empty", "cidr": "172.16.32.0/24", "enabled": true,
+	})
+	if emptyNet.Code != http.StatusOK {
+		t.Fatalf("create empty network status=%d body=%s", emptyNet.Code, emptyNet.Body.String())
+	}
+	var emptyNetwork store.VirtualNetwork
+	if err := json.Unmarshal(emptyNet.Body.Bytes(), &emptyNetwork); err != nil {
+		t.Fatal(err)
+	}
+	deleteEmpty := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/networks/"+strconv.FormatInt(emptyNetwork.ID, 10), nil)
+	if deleteEmpty.Code != http.StatusOK {
+		t.Fatalf("delete empty network status=%d body=%s", deleteEmpty.Code, deleteEmpty.Body.String())
+	}
 
 	addrRec := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/addresses/dev-a", map[string]any{
 		"network_id": network.ID, "virtual_ip": "172.16.31.10", "hostname": "office-a", "dns_enabled": true,
@@ -135,6 +149,10 @@ func TestLANAdminAPIs(t *testing.T) {
 	}
 	if len(addresses) != 1 || addresses[0].VirtualIP != "172.16.31.10" {
 		t.Fatalf("bad addresses: %+v", addresses)
+	}
+	deleteInUse := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/networks/"+strconv.FormatInt(network.ID, 10), nil)
+	if deleteInUse.Code != http.StatusBadRequest {
+		t.Fatalf("delete in-use network status=%d body=%s", deleteInUse.Code, deleteInUse.Body.String())
 	}
 
 	aclRec := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/acl", map[string]any{
@@ -313,6 +331,37 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if len(states) != 1 || states[0].Path != "p2p" || states[0].RTTMs != 12 ||
 		states[0].AdapterState != "up" || states[0].MSS != 1200 {
 		t.Fatalf("bad peer states: %+v", states)
+	}
+}
+
+func TestLANBootstrapUsesAssignedNetwork(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	if _, err := a.db.EnsureDefaultVirtualNetwork(ctx); err != nil {
+		t.Fatal(err)
+	}
+	network, err := a.db.CreateVirtualNetwork(ctx, store.VirtualNetwork{Name: "branch", CIDR: "172.16.40.0/24", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "dev-branch", NetworkID: network.ID, VirtualIP: "172.16.40.10", Hostname: "branch",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
+		"device_id": "dev-branch", "device_name": "Branch",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp lanBootstrapResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Network.ID != network.ID || resp.Network.CIDR != "172.16.40.0/24" || resp.Address.VirtualIP != "172.16.40.10" {
+		t.Fatalf("bootstrap did not use assigned network: %+v", resp)
 	}
 }
 

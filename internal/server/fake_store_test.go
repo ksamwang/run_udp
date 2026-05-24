@@ -579,6 +579,21 @@ func (s *fakeStore) GetVirtualAddress(ctx context.Context, networkID int64, devi
 	return address, nil
 }
 
+func (s *fakeStore) GetVirtualAddressByDevice(ctx context.Context, deviceID string) (store.VirtualAddress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var newest store.VirtualAddress
+	for _, address := range s.virtualAddrs {
+		if address.DeviceID == deviceID && (newest.UpdatedAt == "" || address.UpdatedAt >= newest.UpdatedAt) {
+			newest = address
+		}
+	}
+	if newest.DeviceID == "" {
+		return store.VirtualAddress{}, sql.ErrNoRows
+	}
+	return newest, nil
+}
+
 func (s *fakeStore) UpsertVirtualDeviceKey(ctx context.Context, key store.VirtualDeviceKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
