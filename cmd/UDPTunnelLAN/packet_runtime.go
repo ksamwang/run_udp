@@ -639,8 +639,10 @@ type lanP2P struct {
 	peers        map[string]*lanP2PPeer
 	peerMu       sync.RWMutex
 	peerConv     map[uint32]string
+	peerConvProfile map[uint32]string
 	server       *net.UDPAddr
 	pathPolicy   lanPathPolicyConfig
+	tcpFastPath  string
 	deviceID     string
 	identity     lan.Identity
 	adapter      *wintun.Adapter
@@ -675,8 +677,12 @@ type lanP2PPeer struct {
 	lastTrafficClass atomic.Value
 	tx               *packet.Codec
 	rx               *packet.Codec
+	throughputTx     *packet.Codec
+	throughputRx     *packet.Codec
 	pc               *tunnel.PacketConn
+	throughputPC     *tunnel.PacketConn
 	kcp              net.Conn
+	throughputKCP    net.Conn
 	kcpMu            sync.Mutex
 }
 
@@ -699,8 +705,8 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	}
 	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
-		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
-		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
+		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, tcpFastPath: strings.TrimSpace(resp.Network.TCPFastPath), deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
+		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
 	go func() {
 		<-ctx.Done()
@@ -769,6 +775,9 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 	if p.peerConv == nil {
 		p.peerConv = map[uint32]string{}
 	}
+	if p.peerConvProfile == nil {
+		p.peerConvProfile = map[uint32]string{}
+	}
 	if p.registering == nil {
 		p.registering = map[string]bool{}
 	}
@@ -788,11 +797,11 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 		p.peerMu.Lock()
 		if existing := p.peers[peerID]; existing == nil {
 			p.peers[peerID] = &lanP2PPeer{id: peerID, publicKey: peer.PublicKey}
-			p.peerConv[secure.ConvID("", p.deviceID, peerID, store.ProfileLANPacket)] = peerID
+			p.registerPeerConvs(peerID)
 			shouldRegister = true
 		} else {
 			existing.publicKey = peer.PublicKey
-			p.peerConv[secure.ConvID("", p.deviceID, peerID, store.ProfileLANPacket)] = peerID
+			p.registerPeerConvs(peerID)
 			if !p.registering[peerID] {
 				shouldRegister = true
 			}
@@ -826,6 +835,9 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 	if p.pathPolicy.PreferRelay && !peer.datagramReady.Load() {
 		return packet.ErrLinkUnavailable
 	}
+	if p.sendViaFastPath(frame, peer) {
+		return nil
+	}
 	if peer.datagramReady.Load() {
 		addr := peer.addr.Load()
 		if err := lantransport.Send(p.currentConn(), addr, peer.tx, frame.Payload); err == nil {
@@ -851,6 +863,30 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 		payload = sealed
 	}
 	return writeLANFrame(peer.kcp, payload)
+}
+
+func (p *lanP2P) sendViaFastPath(frame packet.RoutedFrame, peer *lanP2PPeer) bool {
+	if peer == nil || !isLANTCPFastPathCandidate(frame) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(p.tcpFastPath), "off") || peer.datagramReady.Load() || peer.throughputKCP == nil {
+		return false
+	}
+	peer.kcpMu.Lock()
+	defer peer.kcpMu.Unlock()
+	if peer.throughputKCP == nil || peer.throughputTx == nil {
+		return false
+	}
+	sealed, err := peer.throughputTx.Seal(frame.Payload)
+	if err != nil {
+		log.Printf("LAN P2P throughput fast path seal failed: peer=%s err=%v", peer.id, err)
+		return false
+	}
+	if err := writeLANFrame(peer.throughputKCP, sealed); err != nil {
+		log.Printf("LAN P2P throughput fast path send failed: peer=%s err=%v", peer.id, err)
+		return false
+	}
+	return true
 }
 
 func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager) bool {
@@ -1428,30 +1464,26 @@ func (p *lanP2P) readLoop(ctx context.Context, conn *net.UDPConn, gen uint64, ad
 			p.handleControl(ctx, data, src, adapter, router, link)
 			continue
 		}
-		peerID := ""
-		if lantransport.IsFrame(data) {
-			peerID = p.peerIDByAddr(src)
-		} else {
-			peerID = p.peerIDByPacket(data, src)
-		}
-		if peerID == "" {
+		peer, profile := p.peerForPacket(data, src)
+		if peer == nil {
 			if src.String() == p.server.String() {
 				log.Printf("LAN P2P ignored non-json control from server: bytes=%d", len(data))
 			}
 			continue
 		}
-		peer := p.peer(peerID)
-		if peer == nil || peer.pc == nil {
-			if peer != nil && lantransport.IsFrame(data) {
+		if lantransport.IsFrame(data) {
+			if peer != nil {
 				p.handleDatagramFrame(adapter, router, link, peer, data)
 			}
 			continue
 		}
-		if lantransport.IsFrame(data) {
-			p.handleDatagramFrame(adapter, router, link, peer, data)
+		if profile == store.ProfileBulk && peer.throughputPC != nil {
+			peer.throughputPC.Feed(data, src)
 			continue
 		}
-		peer.pc.Feed(data, src)
+		if peer.pc != nil {
+			peer.pc.Feed(data, src)
+		}
 	}
 }
 
@@ -1619,6 +1651,115 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 		_ = kcpConn.Close()
 	}()
 	go p.readTunnelFrames(ctx, adapter, router, link, peer, kcpConn)
+	if p.shouldOpenThroughputFastPath(peer) {
+		go p.openThroughputTunnel(ctx, adapter, router, link, peer)
+	}
+}
+
+func (p *lanP2P) shouldOpenThroughputFastPath(peer *lanP2PPeer) bool {
+	if p == nil || peer == nil {
+		return false
+	}
+	switch strings.TrimSpace(p.tcpFastPath) {
+	case "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func (p *lanP2P) openThroughputTunnel(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
+	if peer == nil || adapter == nil || router == nil || link == nil {
+		return
+	}
+	peer.kcpMu.Lock()
+	if peer.throughputPC == nil {
+		peer.throughputPC = p.newPeerPacketConn(&peer.addr)
+	}
+	peer.throughputTx = peer.tx
+	peer.throughputRx = peer.rx
+	peer.kcpMu.Unlock()
+	if peer.throughputPC == nil {
+		return
+	}
+	isListener := p.deviceID < peer.id
+	role := "dialer"
+	if isListener {
+		role = "listener"
+	}
+	convID := secure.ConvID("", p.deviceID, peer.id, store.ProfileBulk)
+	log.Printf("LAN P2P opening throughput fast path tunnel: peer=%s role=%s conv=%d", peer.id, role, convID)
+	conn, err := tunnel.Open(peer.throughputPC, isListener, convID, store.ProfileBulk)
+	if err != nil {
+		log.Printf("LAN P2P throughput fast path open failed: peer=%s err=%v", peer.id, err)
+		return
+	}
+	if err := confirmLANKCPReady(conn, isListener); err != nil {
+		log.Printf("LAN P2P throughput fast path ready check failed: peer=%s err=%v", peer.id, err)
+		_ = conn.Close()
+		return
+	}
+	peer.kcpMu.Lock()
+	peer.throughputKCP = conn
+	peer.throughputTx = peer.tx
+	peer.throughputRx = peer.rx
+	peer.kcpMu.Unlock()
+	go func() {
+		<-ctx.Done()
+		_ = conn.Close()
+	}()
+	go p.readThroughputTunnelFrames(ctx, adapter, router, link, peer, conn)
+	log.Printf("LAN P2P throughput fast path ready: peer=%s role=%s", peer.id, role)
+}
+
+func (p *lanP2P) registerPeerConvs(peerID string) {
+	if p == nil || strings.TrimSpace(peerID) == "" {
+		return
+	}
+	if p.peerConv == nil {
+		p.peerConv = map[uint32]string{}
+	}
+	if p.peerConvProfile == nil {
+		p.peerConvProfile = map[uint32]string{}
+	}
+	lanConv := secure.ConvID("", p.deviceID, peerID, store.ProfileLANPacket)
+	bulkConv := secure.ConvID("", p.deviceID, peerID, store.ProfileBulk)
+	p.peerConv[lanConv] = peerID
+	p.peerConvProfile[lanConv] = store.ProfileLANPacket
+	p.peerConv[bulkConv] = peerID
+	p.peerConvProfile[bulkConv] = store.ProfileBulk
+}
+
+func (p *lanP2P) readThroughputTunnelFrames(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer, conn net.Conn) {
+	for {
+		payload, err := readLANFrame(conn)
+		if err != nil {
+			if ctx.Err() == nil && !errors.Is(err, io.EOF) {
+				log.Printf("LAN P2P throughput fast path read failed: peer=%s err=%v", peer.id, err)
+			}
+			peer.kcpMu.Lock()
+			if peer.throughputKCP == conn {
+				peer.throughputKCP = nil
+				peer.throughputPC = nil
+			}
+			peer.kcpMu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		if peer.throughputRx != nil {
+			plain, err := peer.throughputRx.Open(payload)
+			if err != nil {
+				log.Printf("LAN P2P throughput fast path decrypt failed: peer=%s err=%v", peer.id, err)
+				continue
+			}
+			payload = plain
+		}
+		router.RecordInbound(packet.RoutedFrame{SrcDevice: peer.id, DstDevice: p.deviceID, Payload: payload, PacketType: packet.TypeIPv4})
+		_ = link.Receive(peer.id, payload, packet.LinkPathP2P)
+		if err := adapter.WritePacket(payload); err != nil {
+			log.Printf("LAN P2P throughput fast path write failed: peer=%s bytes=%d err=%v", peer.id, len(payload), err)
+		}
+	}
 }
 
 func confirmLANKCPReady(conn net.Conn, listener bool) error {
@@ -1872,21 +2013,29 @@ func (p *lanP2P) peerIDByAddr(addr *net.UDPAddr) string {
 	return ""
 }
 
-func (p *lanP2P) peerIDByPacket(data []byte, addr *net.UDPAddr) string {
-	if id := p.peerIDByConv(data); id != "" {
-		return id
+func (p *lanP2P) peerForPacket(data []byte, addr *net.UDPAddr) (*lanP2PPeer, string) {
+	if id, profile := p.peerIDByConv(data); id != "" {
+		return p.peer(id), profile
 	}
-	return p.peerIDByAddr(addr)
+	return p.peer(p.peerIDByAddr(addr)), ""
 }
 
-func (p *lanP2P) peerIDByConv(data []byte) string {
-	if len(data) < 4 {
+func (p *lanP2P) peerIDByPacket(data []byte, addr *net.UDPAddr) string {
+	peer, _ := p.peerForPacket(data, addr)
+	if peer == nil {
 		return ""
+	}
+	return peer.id
+}
+
+func (p *lanP2P) peerIDByConv(data []byte) (string, string) {
+	if len(data) < 4 {
+		return "", ""
 	}
 	conv := binary.LittleEndian.Uint32(data[:4])
 	p.peerMu.RLock()
 	defer p.peerMu.RUnlock()
-	return p.peerConv[conv]
+	return p.peerConv[conv], p.peerConvProfile[conv]
 }
 
 func refreshLANPeers(ctx context.Context, serverHTTP string, router *packet.Router, link *packet.LinkManager, p2p *lanP2P, initial lanBootstrapResponse, identity lan.Identity, deviceID string) {

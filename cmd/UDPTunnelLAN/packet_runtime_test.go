@@ -355,6 +355,25 @@ func TestLANTCPFastPathDecision(t *testing.T) {
 	}
 }
 
+func TestLANPeerConvRegistersBulkAndPacketProfiles(t *testing.T) {
+	p := &lanP2P{deviceID: "dev-a", peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}}
+	p.registerPeerConvs("dev-b")
+	lanConv := secure.ConvID("", "dev-a", "dev-b", store.ProfileLANPacket)
+	bulkConv := secure.ConvID("", "dev-a", "dev-b", store.ProfileBulk)
+	if got, profile := p.peerIDByConv(makeConvBytes(lanConv)); got != "dev-b" || profile != store.ProfileLANPacket {
+		t.Fatalf("lan conv mismatch got=%q profile=%q", got, profile)
+	}
+	if got, profile := p.peerIDByConv(makeConvBytes(bulkConv)); got != "dev-b" || profile != store.ProfileBulk {
+		t.Fatalf("bulk conv mismatch got=%q profile=%q", got, profile)
+	}
+}
+
+func makeConvBytes(conv uint32) []byte {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, conv)
+	return b
+}
+
 func TestLANWintunReadStatsClassifiesPackets(t *testing.T) {
 	stats := &lanWintunReadStats{lastLog: time.Now()}
 	icmp := make([]byte, 40)
