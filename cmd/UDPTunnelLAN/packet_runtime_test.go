@@ -287,10 +287,27 @@ func TestLANTCPFastPathCandidate(t *testing.T) {
 			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolUDP, DestPort: 53}, Payload: []byte("dns")},
 			want:  false,
 		},
+		{
+			name:  "off disables candidate",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445}, Payload: bytes.Repeat([]byte{1}, 1400)},
+			want:  false,
+		},
+		{
+			name:  "force enables non-syn tcp",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 8080}, Payload: []byte("small")},
+			want:  true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isLANTCPFastPathCandidate(tt.frame); got != tt.want {
+			policy := "auto"
+			if tt.name == "off disables candidate" {
+				policy = "off"
+			}
+			if tt.name == "force enables non-syn tcp" {
+				policy = "force"
+			}
+			if got := isLANTCPFastPathCandidateForPolicy(tt.frame, policy); got != tt.want {
 				t.Fatalf("isLANTCPFastPathCandidate=%v, want %v", got, tt.want)
 			}
 		})

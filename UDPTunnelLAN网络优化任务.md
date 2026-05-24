@@ -108,7 +108,7 @@
 - [x] 识别可进入 fast path 的 TCP 流量，例如 RDP、SMB、文件传输或后台配置的端口集合。
 - [ ] fast path 采用类似 Agent 的 TCP stream 转发模型，但实现独立于 `cmd/client`。
 - [ ] fast path 与原始 IP 包路径共存，不能破坏 ICMP、UDP 和普通三层互通。
-- [ ] 管理后台增加 TCP fast path 策略配置和状态展示。
+- [x] 管理后台增加 TCP fast path 策略配置和状态展示。
 - [ ] 增加测试覆盖 fast path 开启、关闭、fallback 到通用三层路径。
 
 ### P1-2 在 HTTP relay 保留期间做临时优化

@@ -526,7 +526,7 @@ func (s *MySQLStore) RevokeExpiredAdminRefreshTokens(ctx context.Context, cutoff
 
 func (s *MySQLStore) EnsureDefaultVirtualNetwork(ctx context.Context) (store.VirtualNetwork, error) {
 	now := nowString()
-	row := VirtualNetwork{Name: "Default Network", CIDR: "172.16.10.0/24", PathPolicy: "prefer_p2p", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	row := VirtualNetwork{Name: "Default Network", CIDR: "172.16.10.0/24", PathPolicy: "prefer_p2p", TCPFastPath: "auto", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "cidr"}},
 		DoNothing: true,
@@ -555,7 +555,7 @@ func (s *MySQLStore) ListVirtualNetworks(ctx context.Context) ([]store.VirtualNe
 func (s *MySQLStore) CreateVirtualNetwork(ctx context.Context, network store.VirtualNetwork) (store.VirtualNetwork, error) {
 	now := nowString()
 	row := VirtualNetwork{
-		Name: network.Name, CIDR: network.CIDR, MTU: network.MTU, MSS: network.MSS, PathPolicy: normalizeVirtualNetworkPathPolicy(network.PathPolicy), Enabled: network.Enabled,
+		Name: network.Name, CIDR: network.CIDR, MTU: network.MTU, MSS: network.MSS, PathPolicy: normalizeVirtualNetworkPathPolicy(network.PathPolicy), TCPFastPath: normalizeVirtualNetworkTCPFastPath(network.TCPFastPath), Enabled: network.Enabled,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if row.Name == "" {
@@ -569,7 +569,7 @@ func (s *MySQLStore) CreateVirtualNetwork(ctx context.Context, network store.Vir
 
 func (s *MySQLStore) UpdateVirtualNetwork(ctx context.Context, id int64, network store.VirtualNetwork) error {
 	values := map[string]any{
-		"name": network.Name, "cidr": network.CIDR, "mtu": network.MTU, "mss": network.MSS, "path_policy": normalizeVirtualNetworkPathPolicy(network.PathPolicy), "enabled": network.Enabled, "updated_at": nowString(),
+		"name": network.Name, "cidr": network.CIDR, "mtu": network.MTU, "mss": network.MSS, "path_policy": normalizeVirtualNetworkPathPolicy(network.PathPolicy), "tcp_fast_path": normalizeVirtualNetworkTCPFastPath(network.TCPFastPath), "enabled": network.Enabled, "updated_at": nowString(),
 	}
 	tx := s.db.WithContext(ctx).Model(&VirtualNetwork{}).Where("id = ?", id).Updates(values)
 	if tx.Error != nil {
@@ -1082,7 +1082,7 @@ func (u AdminUser) toStore() store.AdminUser {
 
 func (n VirtualNetwork) toStore() store.VirtualNetwork {
 	return store.VirtualNetwork{
-		ID: n.ID, Name: n.Name, CIDR: n.CIDR, MTU: n.MTU, MSS: n.MSS, PathPolicy: normalizeVirtualNetworkPathPolicy(n.PathPolicy), Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
+		ID: n.ID, Name: n.Name, CIDR: n.CIDR, MTU: n.MTU, MSS: n.MSS, PathPolicy: normalizeVirtualNetworkPathPolicy(n.PathPolicy), TCPFastPath: normalizeVirtualNetworkTCPFastPath(n.TCPFastPath), Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 	}
 }
 
@@ -1092,6 +1092,15 @@ func normalizeVirtualNetworkPathPolicy(policy string) string {
 		return policy
 	default:
 		return "prefer_p2p"
+	}
+}
+
+func normalizeVirtualNetworkTCPFastPath(value string) string {
+	switch value {
+	case "auto", "off", "force":
+		return value
+	default:
+		return "auto"
 	}
 }
 

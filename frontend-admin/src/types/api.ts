@@ -164,6 +164,7 @@ export type VirtualNetwork = {
   mtu: number
   mss: number
   path_policy: string
+  tcp_fast_path: string
   enabled: boolean
   created_at: string
   updated_at: string

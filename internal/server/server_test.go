@@ -106,7 +106,7 @@ func TestLANAdminAPIs(t *testing.T) {
 	}
 
 	createNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
-		"name": "office", "cidr": "172.16.30.0/24", "mtu": 1400, "mss": 1200, "path_policy": "prefer_p2p", "enabled": true,
+		"name": "office", "cidr": "172.16.30.0/24", "mtu": 1400, "mss": 1200, "path_policy": "prefer_p2p", "tcp_fast_path": "auto", "enabled": true,
 	})
 	if createNet.Code != http.StatusOK {
 		t.Fatalf("create network status=%d body=%s", createNet.Code, createNet.Body.String())
@@ -115,15 +115,28 @@ func TestLANAdminAPIs(t *testing.T) {
 	if err := json.Unmarshal(createNet.Body.Bytes(), &network); err != nil {
 		t.Fatal(err)
 	}
-	if network.ID == 0 || network.CIDR != "172.16.30.0/24" || network.MTU != 1400 || network.MSS != 1200 || network.PathPolicy != "prefer_p2p" {
+	if network.ID == 0 || network.CIDR != "172.16.30.0/24" || network.MTU != 1400 || network.MSS != 1200 || network.PathPolicy != "prefer_p2p" || network.TCPFastPath != "auto" {
 		t.Fatalf("bad network: %+v", network)
 	}
 
 	patchNet := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/networks/"+strconv.FormatInt(network.ID, 10), map[string]any{
-		"name": "office-2", "cidr": "172.16.31.0/24", "mtu": 1280, "mss": 1180, "path_policy": "auto", "enabled": false,
+		"name": "office-2", "cidr": "172.16.31.0/24", "mtu": 1280, "mss": 1180, "path_policy": "auto", "tcp_fast_path": "force", "enabled": false,
 	})
 	if patchNet.Code != http.StatusOK {
 		t.Fatalf("patch network status=%d body=%s", patchNet.Code, patchNet.Body.String())
+	}
+	networks, err := a.db.ListVirtualNetworks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range networks {
+		if item.ID == network.ID {
+			network = item
+			break
+		}
+	}
+	if network.PathPolicy != "auto" || network.TCPFastPath != "force" {
+		t.Fatalf("bad patched network policy: %+v", network)
 	}
 	emptyNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
 		"name": "empty", "cidr": "172.16.32.0/24", "enabled": true,

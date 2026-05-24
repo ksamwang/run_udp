@@ -34,7 +34,7 @@ import {
 } from '../api/lan'
 import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
-type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'enabled'>
+type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'tcp_fast_path' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
 type ACLForm = VirtualACLRulePayload
 type RouteForm = VirtualRoutePayload
@@ -114,6 +114,7 @@ export function LanPage() {
         mtu: currentNetwork.mtu || 0,
         mss: currentNetwork.mss || 0,
         path_policy: currentNetwork.path_policy || 'prefer_p2p',
+        tcp_fast_path: currentNetwork.tcp_fast_path || 'auto',
         enabled: currentNetwork.enabled,
       })
     }
@@ -191,6 +192,7 @@ export function LanPage() {
     return m
   }, [deviceKeys.data])
   const currentPathPolicy = pathPolicyLabel(currentNetwork?.path_policy)
+  const currentTCPFastPath = tcpFastPathLabel(currentNetwork?.tcp_fast_path)
   const currentMTU = currentNetwork?.mtu || 1280
   const currentMSS = currentNetwork?.mss || Math.max(currentMTU - 40, 536)
 
@@ -346,7 +348,7 @@ export function LanPage() {
                 onClick={() => {
                   setCreatingNetwork(true)
                   setSelectedNetworkID(undefined)
-                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', mtu: 0, mss: 0, path_policy: 'prefer_p2p', enabled: true })
+                  networkForm.setFieldsValue({ name: '', cidr: '172.16.10.0/24', mtu: 0, mss: 0, path_policy: 'prefer_p2p', tcp_fast_path: 'auto', enabled: true })
                 }}
               >
                 新增网络
@@ -365,6 +367,7 @@ export function LanPage() {
           <Space wrap className="lan-section-toolbar">
             <Tag color="cyan">路径策略：{currentPathPolicy}</Tag>
             <Tag color="green">流量策略：交互低延迟 / 文件吞吐优先</Tag>
+            <Tag color="blue">TCP Fast Path：{currentTCPFastPath}</Tag>
             <Tag>MTU/MSS：{currentMTU} / {currentMSS}</Tag>
           </Space>
           <Form form={networkForm} layout="vertical" className="lan-form" onFinish={(values) => networkMutation.mutate(values)}>
@@ -393,6 +396,15 @@ export function LanPage() {
                   { value: 'auto', label: '自动' },
                   { value: 'prefer_relay', label: '优先 Relay' },
                   { value: 'relay_only', label: '仅 Relay' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="tcp_fast_path" label="TCP Fast Path" initialValue="auto">
+              <Select
+                options={[
+                  { value: 'auto', label: '自动识别' },
+                  { value: 'off', label: '关闭' },
+                  { value: 'force', label: '强制优先' },
                 ]}
               />
             </Form.Item>
@@ -919,5 +931,17 @@ function pathPolicyLabel(value?: string) {
     case 'prefer_p2p':
     default:
       return '优先 P2P'
+  }
+}
+
+function tcpFastPathLabel(value?: string) {
+  switch (value || 'auto') {
+    case 'off':
+      return '关闭'
+    case 'force':
+      return '强制优先'
+    case 'auto':
+    default:
+      return '自动识别'
   }
 }

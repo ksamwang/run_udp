@@ -451,6 +451,16 @@ func classifyLANFrame(frame packet.RoutedFrame) string {
 }
 
 func isLANTCPFastPathCandidate(frame packet.RoutedFrame) bool {
+	return isLANTCPFastPathCandidateForPolicy(frame, "auto")
+}
+
+func isLANTCPFastPathCandidateForPolicy(frame packet.RoutedFrame, policy string) bool {
+	switch strings.TrimSpace(policy) {
+	case "off":
+		return false
+	case "force":
+		return frame.Header.Protocol == packet.IPv4ProtocolTCP && !frame.Header.TCPSYN
+	}
 	header := frame.Header
 	if header.Protocol != packet.IPv4ProtocolTCP || header.TCPSYN {
 		return false

@@ -803,6 +803,7 @@ func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {
 	network.Name = strings.TrimSpace(network.Name)
 	network.CIDR = strings.TrimSpace(network.CIDR)
 	network.PathPolicy = strings.TrimSpace(network.PathPolicy)
+	network.TCPFastPath = strings.TrimSpace(network.TCPFastPath)
 	if network.Name == "" || network.CIDR == "" {
 		return network, badRequest("bad_network", "name and cidr are required")
 	}
@@ -825,6 +826,14 @@ func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {
 		}
 	default:
 		return network, badRequest("bad_network", "path_policy is invalid")
+	}
+	switch network.TCPFastPath {
+	case "", "auto", "off", "force":
+		if network.TCPFastPath == "" {
+			network.TCPFastPath = "auto"
+		}
+	default:
+		return network, badRequest("bad_network", "tcp_fast_path is invalid")
 	}
 	return network, nil
 }

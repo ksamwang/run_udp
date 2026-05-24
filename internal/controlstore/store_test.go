@@ -203,11 +203,11 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	if defaultNetwork2.ID != defaultNetwork.ID {
 		return failf("default network should be stable: first=%+v second=%+v", defaultNetwork, defaultNetwork2)
 	}
-	network2, err := s.CreateVirtualNetwork(ctx, store.VirtualNetwork{Name: "codex-test-lab", CIDR: "172.16.20.0/24", MTU: 1400, MSS: 1200, PathPolicy: "prefer_p2p", Enabled: true})
+	network2, err := s.CreateVirtualNetwork(ctx, store.VirtualNetwork{Name: "codex-test-lab", CIDR: "172.16.20.0/24", MTU: 1400, MSS: 1200, PathPolicy: "prefer_p2p", TCPFastPath: "auto", Enabled: true})
 	if err != nil {
 		return err
 	}
-	if network2.MTU != 1400 || network2.MSS != 1200 || network2.PathPolicy != "prefer_p2p" {
+	if network2.MTU != 1400 || network2.MSS != 1200 || network2.PathPolicy != "prefer_p2p" || network2.TCPFastPath != "auto" {
 		return failf("bad virtual network mtu/mss: %+v", network2)
 	}
 	networks, err := s.ListVirtualNetworks(ctx)
@@ -217,8 +217,17 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	if len(networks) < 2 {
 		return failf("expected at least two virtual networks: %+v", networks)
 	}
-	if err := s.UpdateVirtualNetwork(ctx, network2.ID, store.VirtualNetwork{Name: "codex-test-lab2", CIDR: "172.16.21.0/24", MTU: 1280, MSS: 1180, PathPolicy: "auto", Enabled: false}); err != nil {
+	if err := s.UpdateVirtualNetwork(ctx, network2.ID, store.VirtualNetwork{Name: "codex-test-lab2", CIDR: "172.16.21.0/24", MTU: 1280, MSS: 1180, PathPolicy: "auto", TCPFastPath: "force", Enabled: false}); err != nil {
 		return err
+	}
+	networks, err = s.ListVirtualNetworks(ctx)
+	if err != nil {
+		return err
+	}
+	for _, network := range networks {
+		if network.ID == network2.ID && (network.PathPolicy != "auto" || network.TCPFastPath != "force") {
+			return failf("bad updated network policy: %+v", network)
+		}
 	}
 	if err := s.UpsertVirtualAddress(ctx, store.VirtualAddress{
 		DeviceID: "codex-test-A", NetworkID: defaultNetwork.ID, VirtualIP: "172.16.10.10", Hostname: "office-a", DNSEnabled: true,
