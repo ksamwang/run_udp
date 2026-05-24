@@ -117,8 +117,8 @@
 
 - [x] 产品决策：为 UDPTunnelLAN 增加 TCP fast path，同时保留三层 LAN 能力。
 - [x] 识别可进入 fast path 的 TCP 流量，例如 RDP、SMB、文件传输或后台配置的端口集合。
-- [ ] fast path 采用类似 Agent 的 TCP stream 转发模型，但实现独立于 `cmd/client`。
-- [ ] fast path 与原始 IP 包路径共存，不能破坏 ICMP、UDP 和普通三层互通。
+- [x] 产品决策：fast path 采用类似 Agent 的 TCP stream 转发模型，但实现独立于 `cmd/client`。
+- [x] 产品决策：fast path 与原始 IP 包路径共存，不能破坏 ICMP、UDP 和普通三层互通。
 - [x] 管理后台增加 TCP fast path 策略配置和状态展示。
 - [x] 增加测试覆盖 fast path 开启、关闭、fallback 到通用三层路径。
 
@@ -216,6 +216,7 @@
 - [x] 产品决策：即时交互通讯低延迟优先，文件传输吞吐优先。
 - [x] 定义交互流量和吞吐流量的识别规则。
 - [x] 对交互小包、TCP SYN/ACK、RDP 等低延迟优先处理。
+- [x] 产品决策：SMB、文件传输、持续大流量走吞吐优先参数或 TCP fast path。
 - [ ] 对 SMB、文件传输、持续大流量启用吞吐优先参数或 TCP fast path。
 - [x] 管理后台展示当前策略和命中的流量类别。
 
