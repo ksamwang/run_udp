@@ -155,10 +155,10 @@
 
 任务：
 
-- [ ] 区分早期关键包和普通数据包，优先保留 TCP SYN、ICMP echo、DNS 等小包。
-- [ ] 调整 pending queue 的容量、TTL 和淘汰策略。
-- [ ] 增加 pending queue 指标：当前长度、丢弃数、过期数、按协议统计。
-- [ ] 路径就绪后快速 replay pending 包，减少用户第一次连接失败概率。
+- [x] 区分早期关键包和普通数据包，优先保留 TCP SYN、ICMP echo、DNS 等小包。
+- [x] 调整 pending queue 的容量、TTL 和淘汰策略。
+- [x] 增加 pending queue 指标：当前长度、丢弃数、过期数、按协议统计。
+- [x] 路径就绪后快速 replay pending 包，减少用户第一次连接失败概率。
 
 ### P2-3 优化 Wintun 读写和批处理
 

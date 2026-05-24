@@ -196,6 +196,35 @@ func TestLANPendingQueuePrioritizesInteractiveFrames(t *testing.T) {
 	}
 }
 
+func TestLANPendingQueueKeepsCriticalFramesWhenFull(t *testing.T) {
+	q := newLANPendingQueue(2, 0, time.Minute)
+	q.Add([]packet.RoutedFrame{
+		{
+			DstDevice: "dev-b", Payload: bytes.Repeat([]byte{1}, 1400),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
+		},
+		{
+			DstDevice: "dev-b", Payload: []byte("syn"),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 3389, TCPSYN: true},
+		},
+		{
+			DstDevice: "dev-b", Payload: []byte("dns"),
+			Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolUDP, DestPort: 53},
+		},
+	})
+	frames := q.Frames()
+	if len(frames) != 2 {
+		t.Fatalf("expected two frames, got %d", len(frames))
+	}
+	if string(frames[0].Payload) != "syn" || string(frames[1].Payload) != "dns" {
+		t.Fatalf("critical frames should be preserved, got %q/%q", frames[0].Payload, frames[1].Payload)
+	}
+	stats := q.Stats()
+	if stats.Dropped != 1 || stats.Frames != 2 || stats.Added != 3 || stats.TCP != 2 || stats.UDP != 1 {
+		t.Fatalf("bad pending stats: %+v", stats)
+	}
+}
+
 func BenchmarkRelayFrameEnvelopeEncoding(b *testing.B) {
 	frame := lanRelayFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", Type: packet.TypeIPv4,

@@ -46,8 +46,8 @@ const (
 	lanKCPReadyTimeout    = 35 * time.Second
 	lanRelayBackoff       = 500 * time.Millisecond
 	lanPendingTTL         = 5 * time.Second
-	lanPendingMaxFrames   = 64
-	lanPendingMaxBytes    = 512 * 1024
+	lanPendingMaxFrames   = 128
+	lanPendingMaxBytes    = 1024 * 1024
 	lanDatagramReadyFrame = "UDPTunnelLAN-DATAGRAM-READY"
 )
 
@@ -167,6 +167,8 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		if len(frames) == 0 {
 			return
 		}
+		stats := pending.Stats()
+		log.Printf("LAN pending replay: frames=%d bytes=%d added=%d dropped=%d expired=%d tcp=%d udp=%d icmp=%d", stats.Frames, stats.Bytes, stats.Added, stats.Dropped, stats.Expired, stats.TCP, stats.UDP, stats.ICMP)
 		delivered := map[int]bool{}
 		relay := make([]packet.RoutedFrame, 0, len(frames))
 		for i, frame := range frames {
@@ -265,6 +267,18 @@ type lanPendingQueue struct {
 	bytes     int
 	frames    []lanPendingFrame
 	nextID    uint64
+	stats     lanPendingStats
+}
+
+type lanPendingStats struct {
+	Frames  int
+	Bytes   int
+	Added   uint64
+	Dropped uint64
+	Expired uint64
+	TCP     uint64
+	UDP     uint64
+	ICMP    uint64
 }
 
 func newLANPendingQueue(maxFrames, maxBytes int, ttl time.Duration) *lanPendingQueue {
@@ -279,6 +293,15 @@ func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
 		size := len(frame.Payload)
 		q.frames = append(q.frames, lanPendingFrame{frame: frame, at: now, size: size, id: q.nextID})
 		q.bytes += size
+		q.stats.Added++
+		switch frame.Header.Protocol {
+		case packet.IPv4ProtocolTCP:
+			q.stats.TCP++
+		case packet.IPv4ProtocolUDP:
+			q.stats.UDP++
+		case packet.IPv4ProtocolICMP:
+			q.stats.ICMP++
+		}
 		q.trim()
 	}
 }
@@ -376,6 +399,14 @@ func (q *lanPendingQueue) Bytes() int {
 	return q.bytes
 }
 
+func (q *lanPendingQueue) Stats() lanPendingStats {
+	q.prune(time.Now())
+	stats := q.stats
+	stats.Frames = len(q.frames)
+	stats.Bytes = q.bytes
+	return stats
+}
+
 func (q *lanPendingQueue) prune(now time.Time) {
 	if q == nil || q.ttl <= 0 {
 		return
@@ -384,6 +415,7 @@ func (q *lanPendingQueue) prune(now time.Time) {
 	q.bytes = 0
 	for _, item := range q.frames {
 		if now.Sub(item.at) > q.ttl {
+			q.stats.Expired++
 			continue
 		}
 		next = append(next, item)
@@ -394,10 +426,28 @@ func (q *lanPendingQueue) prune(now time.Time) {
 
 func (q *lanPendingQueue) trim() {
 	for len(q.frames) > q.maxFrames || (q.maxBytes > 0 && q.bytes > q.maxBytes) {
-		q.bytes -= q.frames[0].size
-		copy(q.frames, q.frames[1:])
+		dropIndex := q.dropCandidateIndex()
+		q.bytes -= q.frames[dropIndex].size
+		q.stats.Dropped++
+		copy(q.frames[dropIndex:], q.frames[dropIndex+1:])
 		q.frames = q.frames[:len(q.frames)-1]
 	}
+}
+
+func (q *lanPendingQueue) dropCandidateIndex() int {
+	if len(q.frames) == 0 {
+		return 0
+	}
+	dropIndex := 0
+	dropPriority := lanFramePriority(q.frames[0].frame)
+	for i := 1; i < len(q.frames); i++ {
+		priority := lanFramePriority(q.frames[i].frame)
+		if priority > dropPriority {
+			dropIndex = i
+			dropPriority = priority
+		}
+	}
+	return dropIndex
 }
 
 type lanP2P struct {
