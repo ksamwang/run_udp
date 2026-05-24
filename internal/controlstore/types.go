@@ -74,4 +74,5 @@ type Store interface {
 	DeleteVirtualRoute(ctx context.Context, id int64) error
 	PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error
 	ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error)
+	ListVirtualPeerPathEvents(ctx context.Context, networkID int64, deviceID, peerID string, limit int) ([]store.VirtualPeerPathEvent, error)
 }

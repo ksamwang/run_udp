@@ -253,6 +253,20 @@ export type VirtualPeerState = {
   updated_at: string
 }
 
+export type VirtualPeerPathEvent = {
+  id: number
+  device_id: string
+  peer_id: string
+  network_id: number
+  path: string
+  data_path: string
+  path_reason: string
+  traffic_class: string
+  tx_bytes: number
+  rx_bytes: number
+  created_at: string
+}
+
 export type VirtualDeviceState = {
   device_id: string
   network_id: number

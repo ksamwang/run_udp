@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualDeviceKey, VirtualDeviceState, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualDeviceKey, VirtualDeviceState, VirtualNetwork, VirtualPeerPathEvent, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
@@ -139,6 +139,14 @@ export function deleteVirtualRoute(id: number) {
 export function listVirtualPeerStates(networkID?: number) {
   const query = networkID ? `?network_id=${networkID}` : ''
   return apiRequest<VirtualPeerState[]>(`/api/admin/lan/peer-states${query}`)
+}
+
+export function listVirtualPeerPathEvents(networkID?: number, limit = 200) {
+  const params = new URLSearchParams()
+  if (networkID) params.set('network_id', String(networkID))
+  if (limit) params.set('limit', String(limit))
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<VirtualPeerPathEvent[]>(`/api/admin/lan/path-events${query}`)
 }
 
 export function listVirtualDeviceStates(networkID?: number) {

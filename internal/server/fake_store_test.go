@@ -31,7 +31,9 @@ type fakeStore struct {
 	virtualACLs    map[int64]store.VirtualACLRule
 	virtualRoutes  map[string]store.VirtualRoute
 	virtualPeers   map[string]store.VirtualPeerState
+	virtualEvents  []store.VirtualPeerPathEvent
 	nextLANID      int64
+	nextLANEventID int64
 	auditEvents    []store.AuditEvent
 	nextAuditID    int64
 }
@@ -53,6 +55,7 @@ func newFakeStore() *fakeStore {
 		virtualACLs:    map[int64]store.VirtualACLRule{},
 		virtualRoutes:  map[string]store.VirtualRoute{},
 		virtualPeers:   map[string]store.VirtualPeerState{},
+		virtualEvents:  []store.VirtualPeerPathEvent{},
 	}
 }
 
@@ -852,7 +855,17 @@ func (s *fakeStore) PutVirtualPeerState(ctx context.Context, state store.Virtual
 		state.LastTransitionAt = nowTestString()
 	}
 	state.UpdatedAt = nowTestString()
-	s.virtualPeers[virtualPeerKey(state.NetworkID, state.DeviceID, state.PeerID)] = state
+	key := virtualPeerKey(state.NetworkID, state.DeviceID, state.PeerID)
+	previous, hasPrevious := s.virtualPeers[key]
+	s.virtualPeers[key] = state
+	if !hasPrevious || previous.Path != state.Path || previous.DataPath != state.DataPath || previous.PathReason != state.PathReason {
+		s.nextLANEventID++
+		s.virtualEvents = append(s.virtualEvents, store.VirtualPeerPathEvent{
+			ID: s.nextLANEventID, DeviceID: state.DeviceID, PeerID: state.PeerID, NetworkID: state.NetworkID,
+			Path: state.Path, DataPath: state.DataPath, PathReason: state.PathReason, TrafficClass: state.TrafficClass,
+			TxBytes: state.TxBytes, RxBytes: state.RxBytes, CreatedAt: state.UpdatedAt,
+		})
+	}
 	return nil
 }
 
@@ -864,6 +877,31 @@ func (s *fakeStore) ListVirtualPeerStates(ctx context.Context, networkID int64) 
 		if networkID == 0 || state.NetworkID == networkID {
 			out = append(out, state)
 		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) ListVirtualPeerPathEvents(ctx context.Context, networkID int64, deviceID, peerID string, limit int) ([]store.VirtualPeerPathEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	peerID = strings.TrimSpace(peerID)
+	out := make([]store.VirtualPeerPathEvent, 0)
+	for i := len(s.virtualEvents) - 1; i >= 0 && len(out) < limit; i-- {
+		event := s.virtualEvents[i]
+		if networkID > 0 && event.NetworkID != networkID {
+			continue
+		}
+		if deviceID != "" && event.DeviceID != deviceID {
+			continue
+		}
+		if peerID != "" && event.PeerID != peerID {
+			continue
+		}
+		out = append(out, event)
 	}
 	return out, nil
 }

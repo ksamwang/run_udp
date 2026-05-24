@@ -19,6 +19,7 @@ import {
   listVirtualDeviceGroups,
   listVirtualDeviceStates,
   listVirtualNetworks,
+  listVirtualPeerPathEvents,
   listVirtualPeerStates,
   listVirtualRoutes,
   reassignVirtualAddress,
@@ -74,6 +75,12 @@ export function LanPage() {
   const states = useQuery({
     queryKey: ['lan', 'peer-states', networkID],
     queryFn: () => listVirtualPeerStates(networkID),
+    enabled: Boolean(networkID),
+    refetchInterval: 10000,
+  })
+  const pathEvents = useQuery({
+    queryKey: ['lan', 'path-events', networkID],
+    queryFn: () => listVirtualPeerPathEvents(networkID),
     enabled: Boolean(networkID),
     refetchInterval: 10000,
   })
@@ -757,6 +764,30 @@ export function LanPage() {
         </Card>
       ),
     },
+    {
+      key: 'path-events',
+      label: '路径时间线',
+      children: (
+        <Card>
+          <Table
+            rowKey={(row) => row.id}
+            loading={pathEvents.isLoading}
+            dataSource={pathEvents.data || []}
+            columns={[
+              { title: '时间', dataIndex: 'created_at', render: formatTime },
+              { title: '设备', dataIndex: 'device_id', render: (v) => deviceName(v) },
+              { title: '对端', dataIndex: 'peer_id', render: (v) => deviceName(v) },
+              { title: 'Peer Path', dataIndex: 'path', render: (v) => <Tag color={v === 'p2p' ? 'cyan' : v === 'relay' ? 'purple' : 'default'}>{v || '-'}</Tag> },
+              { title: '数据路径', dataIndex: 'data_path', render: (v) => <Tag color={pathTagColor(v)}>{v || '-'}</Tag> },
+              { title: '切换原因', dataIndex: 'path_reason', render: (v) => v || '-' },
+              { title: '流量类别', dataIndex: 'traffic_class', render: (v) => v ? <Tag>{v}</Tag> : '-' },
+              { title: 'TX/RX', render: (_, row) => `${formatBytes(row.tx_bytes)} / ${formatBytes(row.rx_bytes)}` },
+            ]}
+            scroll={{ x: 1200 }}
+          />
+        </Card>
+      ),
+    },
   ]
 
   return (
@@ -766,7 +797,7 @@ export function LanPage() {
           <Typography.Title level={3}>虚拟局域网</Typography.Title>
           <Typography.Text type="secondary">管理默认虚拟网络、设备虚拟 IP、ACL 和 LAN 运行状态。</Typography.Text>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={refreshLAN} loading={networks.isFetching || addresses.isFetching || acl.isFetching || states.isFetching}>
+        <Button icon={<ReloadOutlined />} onClick={refreshLAN} loading={networks.isFetching || addresses.isFetching || acl.isFetching || states.isFetching || pathEvents.isFetching}>
           刷新
         </Button>
       </div>

@@ -225,3 +225,19 @@ type VirtualPeerState struct {
 }
 
 func (VirtualPeerState) TableName() string { return "virtual_peer_states" }
+
+type VirtualPeerPathEvent struct {
+	ID           int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	DeviceID     string `gorm:"index:idx_virtual_peer_path_events_lookup,priority:2;size:191;not null;column:device_id"`
+	PeerID       string `gorm:"index:idx_virtual_peer_path_events_lookup,priority:3;size:191;not null;column:peer_id"`
+	NetworkID    int64  `gorm:"index:idx_virtual_peer_path_events_lookup,priority:1;not null;column:network_id"`
+	Path         string `gorm:"size:32;not null;default:'';column:path"`
+	DataPath     string `gorm:"size:32;not null;default:'';column:data_path"`
+	PathReason   string `gorm:"size:128;not null;default:'';column:path_reason"`
+	TrafficClass string `gorm:"size:32;not null;default:'';column:traffic_class"`
+	TxBytes      int64  `gorm:"not null;default:0;column:tx_bytes"`
+	RxBytes      int64  `gorm:"not null;default:0;column:rx_bytes"`
+	CreatedAt    string `gorm:"index;size:64;not null;column:created_at"`
+}
+
+func (VirtualPeerPathEvent) TableName() string { return "virtual_peer_path_events" }

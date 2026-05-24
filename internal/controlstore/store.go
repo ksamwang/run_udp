@@ -68,6 +68,7 @@ func (s *MySQLStore) AutoMigrate() error {
 		&VirtualACLRule{},
 		&VirtualRoute{},
 		&VirtualPeerState{},
+		&VirtualPeerPathEvent{},
 	)
 }
 
@@ -914,6 +915,15 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 	if state.LastTransitionAt == "" {
 		state.LastTransitionAt = now
 	}
+	var previous VirtualPeerState
+	hasPrevious := false
+	if err := s.db.WithContext(ctx).
+		Where("device_id = ? AND peer_id = ? AND network_id = ?", state.DeviceID, state.PeerID, state.NetworkID).
+		First(&previous).Error; err == nil {
+		hasPrevious = true
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	row := VirtualPeerState{
 		DeviceID: state.DeviceID, PeerID: state.PeerID, NetworkID: state.NetworkID,
 		State: state.State, Path: state.Path, DataPath: state.DataPath, PathReason: state.PathReason, TrafficClass: state.TrafficClass,
@@ -922,7 +932,7 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 		TxBytes: state.TxBytes, RxBytes: state.RxBytes, DropReason: state.DropReason, LastError: state.LastError, LastHandshakeAt: state.LastHandshakeAt,
 		LastTransitionAt: state.LastTransitionAt, UpdatedAt: now,
 	}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "device_id"}, {Name: "peer_id"}, {Name: "network_id"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"state": row.State, "path": row.Path, "data_path": row.DataPath, "path_reason": row.PathReason, "traffic_class": row.TrafficClass,
@@ -931,7 +941,20 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 			"rx_bytes": row.RxBytes, "estimated_bps": row.EstimatedBps, "drop_reason": row.DropReason, "last_error": row.LastError,
 			"last_handshake_at": row.LastHandshakeAt, "last_transition_at": row.LastTransitionAt, "updated_at": row.UpdatedAt,
 		}),
-	}).Create(&row).Error
+	}).Create(&row).Error; err != nil {
+		return err
+	}
+	if !hasPrevious || previous.Path != row.Path || previous.DataPath != row.DataPath || previous.PathReason != row.PathReason {
+		event := VirtualPeerPathEvent{
+			DeviceID: row.DeviceID, PeerID: row.PeerID, NetworkID: row.NetworkID,
+			Path: row.Path, DataPath: row.DataPath, PathReason: row.PathReason, TrafficClass: row.TrafficClass,
+			TxBytes: row.TxBytes, RxBytes: row.RxBytes, CreatedAt: now,
+		}
+		if err := s.db.WithContext(ctx).Create(&event).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *MySQLStore) ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error) {
@@ -944,6 +967,31 @@ func (s *MySQLStore) ListVirtualPeerStates(ctx context.Context, networkID int64)
 		return nil, err
 	}
 	out := make([]store.VirtualPeerState, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) ListVirtualPeerPathEvents(ctx context.Context, networkID int64, deviceID, peerID string, limit int) ([]store.VirtualPeerPathEvent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	var rows []VirtualPeerPathEvent
+	q := s.db.WithContext(ctx).Order("id DESC").Limit(limit)
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if strings.TrimSpace(deviceID) != "" {
+		q = q.Where("device_id = ?", strings.TrimSpace(deviceID))
+	}
+	if strings.TrimSpace(peerID) != "" {
+		q = q.Where("peer_id = ?", strings.TrimSpace(peerID))
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualPeerPathEvent, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.toStore())
 	}
@@ -1095,6 +1143,14 @@ func (p VirtualPeerState) toStore() store.VirtualPeerState {
 		MTU: p.MTU, MSS: p.MSS, RTTMs: p.RTTMs, EstimatedBps: p.EstimatedBps, TxBytes: p.TxBytes, RxBytes: p.RxBytes, DropReason: p.DropReason,
 		LastError: p.LastError, LastHandshakeAt: p.LastHandshakeAt, LastTransitionAt: p.LastTransitionAt,
 		UpdatedAt: p.UpdatedAt,
+	}
+}
+
+func (e VirtualPeerPathEvent) toStore() store.VirtualPeerPathEvent {
+	return store.VirtualPeerPathEvent{
+		ID: e.ID, DeviceID: e.DeviceID, PeerID: e.PeerID, NetworkID: e.NetworkID,
+		Path: e.Path, DataPath: e.DataPath, PathReason: e.PathReason, TrafficClass: e.TrafficClass,
+		TxBytes: e.TxBytes, RxBytes: e.RxBytes, CreatedAt: e.CreatedAt,
 	}
 }
 

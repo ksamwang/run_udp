@@ -210,6 +210,20 @@ type VirtualPeerState struct {
 	UpdatedAt        string `json:"updated_at"`
 }
 
+type VirtualPeerPathEvent struct {
+	ID           int64  `json:"id"`
+	DeviceID     string `json:"device_id"`
+	PeerID       string `json:"peer_id"`
+	NetworkID    int64  `json:"network_id"`
+	Path         string `json:"path"`
+	DataPath     string `json:"data_path"`
+	PathReason   string `json:"path_reason"`
+	TrafficClass string `json:"traffic_class"`
+	TxBytes      int64  `json:"tx_bytes"`
+	RxBytes      int64  `json:"rx_bytes"`
+	CreatedAt    string `json:"created_at"`
+}
+
 const (
 	ProfileInteractive = "interactive"
 	ProfileBulk        = "bulk"

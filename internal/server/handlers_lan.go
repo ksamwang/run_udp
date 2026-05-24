@@ -494,6 +494,26 @@ func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleAdminLANPathEvents(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		limit, err := optionalIntQuery(r, "limit")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		events, err := a.db.ListVirtualPeerPathEvents(r.Context(), networkID, r.URL.Query().Get("device_id"), r.URL.Query().Get("peer_id"), limit)
+		writeJSONOrError(w, events, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
 func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID     string   `json:"device_id"`
@@ -945,6 +965,18 @@ func optionalInt64Query(r *http.Request, key string) (int64, error) {
 		return 0, badRequest("bad_"+key, "bad "+key)
 	}
 	return id, nil
+}
+
+func optionalIntQuery(r *http.Request, key string) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, badRequest("bad_"+key, "bad "+key)
+	}
+	return value, nil
 }
 
 func requiredInt64Query(r *http.Request, key string) (int64, error) {

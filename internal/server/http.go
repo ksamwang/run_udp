@@ -55,6 +55,7 @@ func (a *App) httpMux() http.Handler {
 	admin.Any("/lan/routes/:id", ginWrap(a.requireAdmin(a.handleAdminLANRoute)))
 	admin.Any("/lan/device-states", ginWrap(a.requireAdmin(a.handleAdminLANDeviceStates)))
 	admin.Any("/lan/peer-states", ginWrap(a.requireAdmin(a.handleAdminLANPeerStates)))
+	admin.Any("/lan/path-events", ginWrap(a.requireAdmin(a.handleAdminLANPathEvents)))
 
 	agent := r.Group("/api/agent")
 	agent.POST("/bootstrap", ginWrap(a.handleAgentBootstrap))

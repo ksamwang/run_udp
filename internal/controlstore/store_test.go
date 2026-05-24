@@ -324,6 +324,20 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 		peerStates[0].TrafficClass != "interactive" || peerStates[0].EstimatedBps != 300 {
 		return failf("bad virtual peer states: %+v", peerStates)
 	}
+	if err := s.PutVirtualPeerState(ctx, store.VirtualPeerState{
+		DeviceID: "codex-test-A", PeerID: "codex-test-B", NetworkID: defaultNetwork.ID,
+		State: "connected", Path: "relay", DataPath: "relay_udp", PathReason: "p2p_timeout", TrafficClass: "throughput",
+		TxBytes: 300, RxBytes: 400,
+	}); err != nil {
+		return err
+	}
+	events, err := s.ListVirtualPeerPathEvents(ctx, defaultNetwork.ID, "codex-test-A", "codex-test-B", 10)
+	if err != nil {
+		return err
+	}
+	if len(events) != 2 || events[0].DataPath != "relay_udp" || events[1].DataPath != "p2p_datagram" {
+		return failf("bad virtual peer path events: %+v", events)
+	}
 	if err := s.DeleteVirtualACLRule(ctx, acl.ID); err != nil {
 		return err
 	}
