@@ -24,6 +24,7 @@ func TestRequestLANBootstrap(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(lanBootstrapResponse{
 			Version:       1,
 			ConfigVersion: "v1",
+			STUNAltPort:   7002,
 			Network:       store.VirtualNetwork{ID: 7, Name: "default", CIDR: "172.16.10.0/24", MTU: 1400, MSS: 1180, PathPolicy: "prefer_p2p", Enabled: true},
 			Address:       store.VirtualAddress{DeviceID: "dev-a", NetworkID: 7, VirtualIP: "172.16.10.2"},
 			Peers:         []lanBootstrapPeer{{DeviceID: "dev-b", VirtualIP: "172.16.10.3"}},
@@ -37,7 +38,7 @@ func TestRequestLANBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DeviceID != "dev-a" || got.PublicKey != "pub" || resp.Network.ID != 7 || resp.Network.MTU != 1400 || resp.Network.MSS != 1180 || resp.Network.PathPolicy != "prefer_p2p" || resp.Address.VirtualIP != "172.16.10.2" || len(resp.Peers) != 1 {
+	if got.DeviceID != "dev-a" || got.PublicKey != "pub" || resp.Network.ID != 7 || resp.Network.MTU != 1400 || resp.Network.MSS != 1180 || resp.Network.PathPolicy != "prefer_p2p" || resp.STUNAltPort != 7002 || resp.Address.VirtualIP != "172.16.10.2" || len(resp.Peers) != 1 {
 		t.Fatalf("bad bootstrap got=%+v resp=%+v", got, resp)
 	}
 }

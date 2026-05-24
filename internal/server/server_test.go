@@ -390,6 +390,9 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if resp.Server == "" {
 		t.Fatalf("bootstrap should return UDP rendezvous server: %+v", resp)
 	}
+	if resp.STUNAltPort == 0 {
+		t.Fatalf("bootstrap should return STUN alt port: %+v", resp)
+	}
 	if len(resp.Peers) != 1 || resp.Peers[0].DeviceID != "dev-b" {
 		t.Fatalf("bad bootstrap peers: %+v", resp.Peers)
 	}
@@ -1034,6 +1037,56 @@ func TestLANPeerInfoIsPlainJSONWhenServerPSKConfigured(t *testing.T) {
 	}
 	if msg.Type != protocol.MsgPeerInfo || msg.Peer != "dev-b" || msg.Payload != "x25519-b" {
 		t.Fatalf("bad peer info: %+v", msg)
+	}
+}
+
+func TestLANPlainSTUNResponse(t *testing.T) {
+	a := newTestApp(t)
+	codec, err := secure.NewCodec(a.cfg.PSK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.codec = codec
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	req, _ := protocol.Encode(&protocol.Message{Type: protocol.MsgStunReq})
+	if _, err := client.WriteToUDP(req, conn.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1024)
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	n, src, err := conn.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := append([]byte(nil), buf[:n]...)
+	if _, _, ok := a.openPacket(data); ok {
+		t.Fatal("plain LAN STUN must not require encrypted control frame")
+	}
+	msg, err := protocol.Decode(data)
+	if err != nil || msg.Type != protocol.MsgStunReq {
+		t.Fatalf("bad plain stun request: msg=%+v err=%v", msg, err)
+	}
+	a.writePlainControl(conn, src, &protocol.Message{Type: protocol.MsgStunResp, Addr: src.String()})
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	n, _, err = client.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err = protocol.Decode(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != protocol.MsgStunResp || msg.Addr != client.LocalAddr().String() {
+		t.Fatalf("bad plain stun response: %+v", msg)
 	}
 }
 

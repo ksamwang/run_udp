@@ -1223,6 +1223,111 @@ func TestLANP2PRelayFailureDoesNotRotateWhenAnotherPeerReady(t *testing.T) {
 	}
 }
 
+func TestLANP2PBadNATEnablesRelayWithoutWaitingPunchTimeout(t *testing.T) {
+	p := &lanP2P{
+		server:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000},
+		pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p"},
+		peers:      map[string]*lanP2PPeer{"dev-b": {id: "dev-b"}},
+	}
+	p.natType.Store("symmetric_nat")
+
+	p.enableRelayForBadNAT(context.Background())
+
+	peer := p.peer("dev-b")
+	if peer == nil || !peer.isRelay.Load() || !peer.punched.Load() {
+		t.Fatalf("bad NAT should enable relay immediately: %+v", peer)
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != p.server.String() {
+		t.Fatalf("bad relay addr: %v", got)
+	}
+}
+
+func TestLANP2PBadNATStillSwitchesBackToDatagram(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	peerAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 30000}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	peer.isRelay.Store(true)
+	peer.punched.Store(true)
+	p := &lanP2P{
+		deviceID: "dev-a", pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p"},
+		peers: map[string]*lanP2PPeer{"dev-b": peer},
+	}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	msg := &protocol.Message{Type: protocol.MsgPunchAck, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	wire, _ := protocol.Encode(msg)
+
+	p.handleControl(context.Background(), wire, peerAddr, nil, nil, link)
+
+	if !peer.datagramReady.Load() || peer.isRelay.Load() {
+		t.Fatalf("datagram ready should switch relay peer back to P2P: ready=%v relay=%v", peer.datagramReady.Load(), peer.isRelay.Load())
+	}
+	session, ok := link.Session("dev-b")
+	if !ok || session.Path != packet.LinkPathP2P {
+		t.Fatalf("link should switch to P2P datagram: ok=%v session=%+v", ok, session)
+	}
+}
+
+func TestDetectLANNATClassifiesStableAndSymmetricMapping(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	primary, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+	alt, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alt.Close()
+	serveSTUN := func(c *net.UDPConn, observed string) {
+		go func() {
+			buf := make([]byte, 1024)
+			n, src, err := c.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			msg, err := protocol.Decode(buf[:n])
+			if err != nil || msg.Type != protocol.MsgStunReq {
+				return
+			}
+			if observed == "" {
+				observed = src.String()
+			}
+			wire, _ := protocol.Encode(&protocol.Message{Type: protocol.MsgStunResp, Addr: observed})
+			_, _ = c.WriteToUDP(wire, src)
+		}()
+	}
+
+	serveSTUN(primary, "198.51.100.10:40000")
+	serveSTUN(alt, "198.51.100.10:40000")
+	if got := detectLANNAT(context.Background(), conn, primary.LocalAddr().(*net.UDPAddr), alt.LocalAddr().(*net.UDPAddr).Port); got != "stable_mapping" {
+		t.Fatalf("bad stable NAT classification: %s", got)
+	}
+	serveSTUN(primary, "198.51.100.10:40001")
+	serveSTUN(alt, "198.51.100.10:40002")
+	if got := detectLANNAT(context.Background(), conn, primary.LocalAddr().(*net.UDPAddr), alt.LocalAddr().(*net.UDPAddr).Port); got != "symmetric_nat" {
+		t.Fatalf("bad symmetric NAT classification: %s", got)
+	}
+}
+
 func TestLANRuntimeNATTypeAndFallbackReason(t *testing.T) {
 	relayPeer := &lanP2PPeer{id: "dev-b"}
 	relayPeer.isRelay.Store(true)

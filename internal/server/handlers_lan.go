@@ -22,6 +22,7 @@ type lanBootstrapResponse struct {
 	Capabilities  []string               `json:"capabilities"`
 	ConfigVersion string                 `json:"config_version"`
 	Server        string                 `json:"server"`
+	STUNAltPort   int                    `json:"stun_alt_port"`
 	DeviceID      string                 `json:"device_id"`
 	DeviceName    string                 `json:"device_name"`
 	Network       store.VirtualNetwork   `json:"network"`
@@ -668,7 +669,7 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, lanBootstrapResponse{
 		Version: lanBootstrapVersion, Capabilities: []string{"ipv4", "tcp", "rdp"},
-		ConfigVersion: lanConfigVersion(network, addresses, acl, routes), Server: externalUDPAddr(r, a.cfg.UDPListen), DeviceID: req.DeviceID,
+		ConfigVersion: lanConfigVersion(network, addresses, acl, routes), Server: externalUDPAddr(r, a.cfg.UDPListen), STUNAltPort: portFromAddr(a.cfg.StunAltListen, 7002), DeviceID: req.DeviceID,
 		DeviceName: strings.TrimSpace(req.DeviceName), Network: network, Address: address, Routes: routes, ACL: acl, Peers: peers,
 	})
 }

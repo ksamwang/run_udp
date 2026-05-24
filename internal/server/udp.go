@@ -32,6 +32,10 @@ func (a *App) runStunAlt() {
 			log.Printf("stun-alt read error: %v", err)
 			continue
 		}
+		if msg, err := protocol.Decode(buf[:n]); err == nil && msg.Type == protocol.MsgStunReq {
+			a.writePlainControl(conn, src, &protocol.Message{Type: protocol.MsgStunResp, Addr: src.String()})
+			continue
+		}
 		kind, payload, ok := a.openPacket(buf[:n])
 		if !ok || kind != secure.KindControl {
 			continue
@@ -74,6 +78,8 @@ func (a *App) runUDP() {
 		if !ok {
 			if msg, err := protocol.Decode(data); err == nil && msg.Type == protocol.MsgLANRegister {
 				a.handleLANRegister(conn, src, msg)
+			} else if err == nil && msg.Type == protocol.MsgStunReq {
+				a.writePlainControl(conn, src, &protocol.Message{Type: protocol.MsgStunResp, Addr: src.String()})
 			} else if len(data) > 0 && data[0] == '{' {
 				log.Printf("plain UDP control ignored from %s: %v", src, err)
 			}

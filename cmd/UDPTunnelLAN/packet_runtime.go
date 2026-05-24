@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,7 @@ const (
 )
 
 var tryLANUPnPFunc = tryLANUPnP
+var detectLANNATFunc = detectLANNAT
 
 type lanRelayFrame struct {
 	NetworkID int64  `json:"network_id"`
@@ -566,6 +568,7 @@ type lanP2P struct {
 	readLoopGen  atomic.Uint64
 	rotating     atomic.Bool
 	lastRotation atomic.Int64
+	natType      atomic.Value
 }
 
 type lanP2PPeer struct {
@@ -617,10 +620,14 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 		p.closeCurrentSocket()
 	}()
 	if upnpMapping != nil {
+		p.natType.Store("upnp_mapped")
 		go p.refreshCurrentUPnPMapping(ctx)
+	} else {
+		p.natType.Store(detectLANNATFunc(ctx, conn, server, resp.STUNAltPort))
 	}
-	p.startReadLoop(ctx)
 	p.UpsertPeers(ctx, identity, resp.Peers)
+	p.enableRelayForBadNAT(ctx)
+	p.startReadLoop(ctx)
 	log.Printf("LAN P2P started: socket=%s server=%s upnp=%q peers=%d", conn.LocalAddr(), server, upnpAddr, len(resp.Peers))
 	return p
 }
@@ -980,6 +987,77 @@ func (p *lanP2P) writeControl(dst *net.UDPAddr, msg *protocol.Message) {
 	}
 }
 
+func (p *lanP2P) enableRelayForBadNAT(ctx context.Context) {
+	natType, _ := p.natType.Load().(string)
+	if natType != "symmetric_nat" {
+		return
+	}
+	p.peerMu.RLock()
+	ids := make([]string, 0, len(p.peers))
+	for id := range p.peers {
+		ids = append(ids, id)
+	}
+	p.peerMu.RUnlock()
+	for _, id := range ids {
+		p.enableRelayMode(ctx, id, "nat_symmetric_fast_relay")
+	}
+}
+
+func detectLANNAT(ctx context.Context, conn *net.UDPConn, server *net.UDPAddr, altPort int) string {
+	if conn == nil || server == nil || altPort <= 0 {
+		return "unknown"
+	}
+	alt := cloneUDPAddr(server)
+	alt.Port = altPort
+	primary, ok1 := requestLANSTUN(ctx, conn, server)
+	secondary, ok2 := requestLANSTUN(ctx, conn, alt)
+	if !ok1 || !ok2 {
+		return "unknown"
+	}
+	if stunPort(primary) != 0 && stunPort(secondary) != 0 && stunPort(primary) != stunPort(secondary) {
+		return "symmetric_nat"
+	}
+	return "stable_mapping"
+}
+
+func requestLANSTUN(ctx context.Context, conn *net.UDPConn, dst *net.UDPAddr) (string, bool) {
+	msg := &protocol.Message{Type: protocol.MsgStunReq}
+	wire, _ := protocol.Encode(msg)
+	if _, err := conn.WriteToUDP(wire, dst); err != nil {
+		return "", false
+	}
+	deadline := time.Now().Add(800 * time.Millisecond)
+	if v, ok := ctx.Deadline(); ok && v.Before(deadline) {
+		deadline = v
+	}
+	_ = conn.SetReadDeadline(deadline)
+	defer conn.SetReadDeadline(time.Time{})
+	buf := make([]byte, 2048)
+	for {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			return "", false
+		}
+		resp, err := protocol.Decode(buf[:n])
+		if err != nil || resp.Type != protocol.MsgStunResp {
+			continue
+		}
+		return resp.Addr, resp.Addr != ""
+	}
+}
+
+func stunPort(addr string) int {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 	t := time.NewTimer(lanPunchTimeout)
 	defer t.Stop()
@@ -1012,7 +1090,7 @@ func (p *lanP2P) enableRelayMode(ctx context.Context, peerID, reason string) {
 	}
 	peer.punched.Store(true)
 	log.Printf("LAN P2P relay mode: peer=%s reason=%s policy=%s", peer.id, reason, p.pathPolicy.Name)
-	if !p.pathPolicy.RelayOnly {
+	if !p.pathPolicy.RelayOnly && p.adapter != nil && p.router != nil && p.link != nil {
 		go p.openTunnel(ctx, p.adapter, p.router, p.link, peer)
 	}
 }
@@ -1632,7 +1710,7 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		if !relayActive || !p.pathPolicy.RelayOnly {
 			peer.addr.Store(addr)
 		}
-		if peer.pc == nil && !relayActive {
+		if peer.pc == nil {
 			peer.pc = p.newPeerPacketConn(&peer.addr)
 		}
 		if strings.TrimSpace(msg.UpnpAddr) != "" {
@@ -1852,6 +1930,9 @@ func lanNATTypeForPeer(p2p *lanP2P, peerID, dataPath string) string {
 	}
 	if strings.TrimSpace(p2p.upnpAddr) != "" {
 		return "upnp_mapped"
+	}
+	if value, ok := p2p.natType.Load().(string); ok && strings.TrimSpace(value) != "" && value != "unknown" {
+		return value
 	}
 	if p2p.pathPolicy.RelayOnly {
 		return "relay_only"
