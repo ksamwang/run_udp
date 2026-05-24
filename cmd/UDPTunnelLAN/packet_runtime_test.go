@@ -521,7 +521,7 @@ func TestSendPacketsRelayOnlySkipsDatagramAndUsesUDPRelay(t *testing.T) {
 	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
 	peer.addr.Store(p2pConn.LocalAddr().(*net.UDPAddr))
 	peer.datagramReady.Store(true)
-	p2p := &lanP2P{conn: clientConn, server: serverConn.LocalAddr().(*net.UDPAddr), deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	p2p := &lanP2P{conn: clientConn, server: serverConn.LocalAddr().(*net.UDPAddr), pathPolicy: lanPathPolicyConfig{Name: "relay_only", PreferRelay: true, RelayOnly: true}, deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
 	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -702,6 +702,93 @@ func TestLANP2PPunchAckUsesDatagramWithoutOpeningKCP(t *testing.T) {
 	}
 	if frame.Path != packet.LinkPathP2P {
 		t.Fatalf("expected p2p link path, got %q", frame.Path)
+	}
+}
+
+func TestLANP2PPreferRelaySwitchesBackToDatagramWhenReady(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	peerAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 21010}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	peer.isRelay.Store(true)
+	peer.punched.Store(true)
+	peer.addr.Store(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 17000})
+	p := &lanP2P{deviceID: "dev-a", pathPolicy: lanPathPolicyConfig{Name: "prefer_relay", PreferRelay: true}, peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a"})
+	msg := &protocol.Message{Type: protocol.MsgPunchAck, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	b, _ := protocol.Encode(msg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.handleControl(ctx, b, peerAddr, nil, nil, link)
+
+	if peer.isRelay.Load() {
+		t.Fatal("prefer_relay should switch back to direct datagram when P2P is ready")
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != peerAddr.String() {
+		t.Fatalf("bad direct peer addr: %v", got)
+	}
+	dataPath, reason := p.peerDataPath("dev-b")
+	if dataPath != lanPathP2PDatagram || reason != "datagram_ready" {
+		t.Fatalf("bad data path after switch: path=%q reason=%q", dataPath, reason)
+	}
+	if frame, err := link.Send("dev-b", []byte("probe")); err != nil || frame.Path != packet.LinkPathP2P {
+		t.Fatalf("expected p2p link after switch, frame=%+v err=%v", frame, err)
+	}
+}
+
+func TestLANP2PRelayOnlyDoesNotSwitchBackToDatagram(t *testing.T) {
+	privA, pubA, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privB, pubB, err := newX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	txA, rxA, err := lanPeerCodecsFromX25519(privA, pubB, "dev-a", "dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lanPeerCodecsFromX25519(privB, pubA, "dev-b", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	relayAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 17000}
+	directAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 21011}
+	peer := &lanP2PPeer{id: "dev-b", tx: txA, rx: rxA}
+	peer.isRelay.Store(true)
+	peer.punched.Store(true)
+	peer.addr.Store(relayAddr)
+	p := &lanP2P{deviceID: "dev-a", pathPolicy: lanPathPolicyConfig{Name: "relay_only", PreferRelay: true, RelayOnly: true}, peers: map[string]*lanP2PPeer{"dev-b": peer}}
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: "dev-a", ForceRelay: true})
+	msg := &protocol.Message{Type: protocol.MsgPunchAck, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	b, _ := protocol.Encode(msg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.handleControl(ctx, b, directAddr, nil, nil, link)
+
+	if !peer.isRelay.Load() {
+		t.Fatal("relay_only must stay on relay after datagram-ready ack")
+	}
+	if got := peer.addr.Load(); got == nil || got.String() != relayAddr.String() {
+		t.Fatalf("relay_only should keep relay addr, got=%v", got)
+	}
+	if dataPath, _ := p.peerDataPath("dev-b"); dataPath != lanPathRelayUDP {
+		t.Fatalf("relay_only data path=%q, want %q", dataPath, lanPathRelayUDP)
 	}
 }
 

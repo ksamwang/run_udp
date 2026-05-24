@@ -237,7 +237,7 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		delivered := map[int]bool{}
 		relay := make([]packet.RoutedFrame, 0, len(frames))
 		for i, frame := range frames {
-			if !pathPolicy.PreferRelay && p2p != nil && p2p.Send(frame) == nil {
+			if p2p != nil && p2p.Send(frame) == nil {
 				_, _ = link.Send(frame.DstDevice, frame.Payload)
 				delivered[i] = true
 				continue
@@ -725,10 +725,13 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 	if peer == nil {
 		return packet.ErrLinkUnavailable
 	}
-	if p.pathPolicy.RelayOnly || p.pathPolicy.PreferRelay {
+	if p.pathPolicy.RelayOnly {
 		return packet.ErrLinkUnavailable
 	}
 	peer.lastTrafficClass.Store(classifyLANFrame(frame))
+	if p.pathPolicy.PreferRelay && !peer.datagramReady.Load() {
+		return packet.ErrLinkUnavailable
+	}
 	if peer.datagramReady.Load() {
 		addr := peer.addr.Load()
 		if err := lantransport.Send(p.currentConn(), addr, peer.tx, frame.Payload); err == nil {
@@ -757,13 +760,18 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 }
 
 func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager) bool {
-	if peer == nil || peer.isRelay.Load() || !peer.datagramReady.Load() || peer.tx == nil || peer.rx == nil {
+	if peer == nil || !peer.datagramReady.Load() || peer.tx == nil || peer.rx == nil {
+		return false
+	}
+	if peer.isRelay.Load() && p.pathPolicy.RelayOnly {
 		return false
 	}
 	addr := peer.addr.Load()
 	if addr == nil {
 		return false
 	}
+	peer.isRelay.Store(false)
+	peer.relaySince.Store(0)
 	if link != nil {
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: addr.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 	}
@@ -1621,7 +1629,9 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			return
 		}
 		relayActive := peer.isRelay.Load()
-		peer.addr.Store(addr)
+		if !relayActive || !p.pathPolicy.RelayOnly {
+			peer.addr.Store(addr)
+		}
 		if peer.pc == nil && !relayActive {
 			peer.pc = p.newPeerPacketConn(&peer.addr)
 		}
@@ -1650,13 +1660,13 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P punch ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
-		if !peer.isRelay.Load() {
+		if !peer.isRelay.Load() || !p.pathPolicy.RelayOnly {
 			peer.addr.Store(cloneUDPAddr(src))
 		}
 		if msg.Payload == lanDatagramReadyFrame && peer.tx != nil && peer.rx != nil {
 			peer.datagramReady.Store(true)
 		}
-		if peer.punched.CompareAndSwap(false, true) {
+		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && peer.datagramReady.Load() && !p.pathPolicy.RelayOnly) {
 			log.Printf("LAN P2P punched via incoming punch: peer=%s addr=%s", peer.id, src)
 			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
 		}
@@ -1671,13 +1681,13 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 			log.Printf("LAN P2P punch ack ignored: unknown peer=%s addr=%s", msg.From, src)
 			return
 		}
-		if !peer.isRelay.Load() {
+		if !peer.isRelay.Load() || !p.pathPolicy.RelayOnly {
 			peer.addr.Store(cloneUDPAddr(src))
 		}
 		if msg.Payload == lanDatagramReadyFrame && peer.tx != nil && peer.rx != nil {
 			peer.datagramReady.Store(true)
 		}
-		if peer.punched.CompareAndSwap(false, true) {
+		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && peer.datagramReady.Load() && !p.pathPolicy.RelayOnly) {
 			log.Printf("LAN P2P punched via ack: peer=%s addr=%s", peer.id, src)
 			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
 		}

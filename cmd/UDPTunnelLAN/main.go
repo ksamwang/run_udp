@@ -310,7 +310,7 @@ func buildPacketRuntime(resp lanBootstrapResponse, deviceID string, mtu int) (*p
 		return nil, nil, err
 	}
 	pathPolicy := newLANPathPolicy(resp.Network)
-	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: deviceID, ForceRelay: pathPolicy.PreferRelay})
+	link := packet.NewLinkManager(packet.LinkConfig{DeviceID: deviceID, ForceRelay: pathPolicy.RelayOnly})
 	upsertLinkPeers(link, resp.Peers, false)
 	return router, link, nil
 }
