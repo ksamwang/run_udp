@@ -103,7 +103,19 @@
 - [x] 客户端 P2P 不可用时优先进入 LAN UDP relay，而不是 HTTP poll relay。
 - [x] LAN UDP relay 只识别最小转发头和目标设备，不读取明文 IP payload。
 - [x] 保留 HTTP relay 作为最保守兜底或诊断路径。
-- [ ] 增加 relay 路径压测，分别记录 HTTP relay 和 UDP relay 的 RTT、吞吐、丢包恢复。
+- [x] 增加 relay 路径压测，分别记录 HTTP relay 和 UDP relay 的 RTT、吞吐、丢包恢复。
+
+本轮本机 relay 相关基准：
+
+- `BenchmarkRelayFrameEnvelopeEncoding/json-base64`: `13507 ns/op`, `75.81 MB/s`, `3428 B/op`, `15 allocs/op`
+- `BenchmarkRelayFrameEnvelopeEncoding/binary-envelope`: `795.4 ns/op`, `1287.44 MB/s`, `2256 B/op`, `9 allocs/op`
+- `BenchmarkRelayFramePackUnpack1KB`: `634.2 ns/op`, `1614.65 MB/s`, `2186 B/op`, `4 allocs/op`
+- `BenchmarkRelayFramePackUnpackView1KB`: `380.9 ns/op`, `2688.43 MB/s`, `1162 B/op`, `3 allocs/op`
+
+说明：
+
+- 二进制 relay 封装和 view 解包都显著快于 JSON/base64 路径。
+- 上述结果为当前机器上的本地基准，用于后续回归对比。
 
 ### P1-3 增加 TCP fast path
 

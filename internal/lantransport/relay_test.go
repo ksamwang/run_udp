@@ -50,3 +50,41 @@ func TestRelayFrameRejectsBadInput(t *testing.T) {
 		t.Fatal("bad frame must be rejected")
 	}
 }
+
+func BenchmarkRelayFramePackUnpack1KB(b *testing.B) {
+	frame := RelayFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: make([]byte, 1024)}
+	b.SetBytes(int64(len(frame.Payload)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		packed, err := PackRelayFrame(frame)
+		if err != nil {
+			b.Fatal(err)
+		}
+		decoded, err := UnpackRelayFrame(packed)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if decoded.SrcDevice != frame.SrcDevice || decoded.DstDevice != frame.DstDevice || len(decoded.Payload) != len(frame.Payload) {
+			b.Fatal("bad relay frame round trip")
+		}
+	}
+}
+
+func BenchmarkRelayFramePackUnpackView1KB(b *testing.B) {
+	frame := RelayFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: make([]byte, 1024)}
+	b.SetBytes(int64(len(frame.Payload)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		packed, err := PackRelayFrame(frame)
+		if err != nil {
+			b.Fatal(err)
+		}
+		decoded, err := UnpackRelayFrameView(packed)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if decoded.SrcDevice != frame.SrcDevice || decoded.DstDevice != frame.DstDevice || len(decoded.Payload) != len(frame.Payload) {
+			b.Fatal("bad relay frame view round trip")
+		}
+	}
+}
