@@ -193,6 +193,8 @@ type VirtualPeerState struct {
 	Path             string `json:"path"`
 	DataPath         string `json:"data_path"`
 	PathReason       string `json:"path_reason"`
+	NATType          string `json:"nat_type"`
+	FallbackReason   string `json:"fallback_reason"`
 	TrafficClass     string `json:"traffic_class"`
 	AdapterState     string `json:"adapter_state"`
 	RouteConflict    string `json:"route_conflict"`

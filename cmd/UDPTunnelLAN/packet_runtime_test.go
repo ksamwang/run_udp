@@ -1223,6 +1223,45 @@ func TestLANP2PRelayFailureDoesNotRotateWhenAnotherPeerReady(t *testing.T) {
 	}
 }
 
+func TestLANRuntimeNATTypeAndFallbackReason(t *testing.T) {
+	relayPeer := &lanP2PPeer{id: "dev-b"}
+	relayPeer.isRelay.Store(true)
+	p := &lanP2P{
+		pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p"},
+		peers:      map[string]*lanP2PPeer{"dev-b": relayPeer},
+	}
+	if got := lanNATTypeForPeer(p, "dev-b", lanPathRelayUDP); got != "relay_required" {
+		t.Fatalf("bad relay nat type: %s", got)
+	}
+	if got := lanFallbackReason(p, lanPathRelayUDP, "p2p_timeout"); got != "p2p_timeout" {
+		t.Fatalf("bad relay fallback reason: %s", got)
+	}
+	if got := lanFallbackReason(p, lanPathP2PDatagram, "datagram_ready"); got != "" {
+		t.Fatalf("p2p path must not report fallback reason: %s", got)
+	}
+
+	preferRelay := &lanP2P{pathPolicy: lanPathPolicyConfig{Name: "prefer_relay", PreferRelay: true}}
+	if got := lanNATTypeForPeer(preferRelay, "dev-b", lanPathRelayUDP); got != "relay_first" {
+		t.Fatalf("bad prefer-relay nat type: %s", got)
+	}
+	if got := lanFallbackReason(preferRelay, lanPathRelayUDP, "relay_mode"); got != "path_policy_prefer_relay" {
+		t.Fatalf("bad prefer-relay fallback reason: %s", got)
+	}
+
+	relayOnly := &lanP2P{pathPolicy: lanPathPolicyConfig{Name: "relay_only", PreferRelay: true, RelayOnly: true}}
+	if got := lanNATTypeForPeer(relayOnly, "dev-b", lanPathRelayUDP); got != "relay_only" {
+		t.Fatalf("bad relay-only nat type: %s", got)
+	}
+	if got := lanFallbackReason(relayOnly, lanPathRelayUDP, "relay_mode"); got != "path_policy_relay_only" {
+		t.Fatalf("bad relay-only fallback reason: %s", got)
+	}
+
+	upnp := &lanP2P{pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p"}, upnpAddr: "203.0.113.10:30000"}
+	if got := lanNATTypeForPeer(upnp, "dev-b", lanPathP2PDatagram); got != "upnp_mapped" {
+		t.Fatalf("bad upnp nat type: %s", got)
+	}
+}
+
 func TestLANKCPFrameRoundTrip(t *testing.T) {
 	var buf strings.Builder
 	if err := writeLANFrame(&buf, []byte{1, 2, 3}); err != nil {

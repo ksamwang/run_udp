@@ -764,7 +764,9 @@ export function LanPage() {
               { title: '虚拟网卡', dataIndex: 'adapter_state', render: (v) => <Tag color={v === 'up' ? 'green' : 'default'}>{v || '-'}</Tag> },
               { title: 'Peer Path', dataIndex: 'path', render: (v) => <Tag color={v === 'p2p' ? 'cyan' : v === 'relay' ? 'purple' : 'default'}>{v || '-'}</Tag> },
               { title: '数据路径', dataIndex: 'data_path', render: (v) => <Tag color={pathTagColor(v)}>{v || '-'}</Tag> },
+              { title: 'NAT', dataIndex: 'nat_type', render: (v) => v || '-' },
               { title: '路径原因', dataIndex: 'path_reason', render: (v) => v || '-' },
+              { title: 'Fallback 原因', dataIndex: 'fallback_reason', render: (v) => v || '-' },
               { title: '流量类别', dataIndex: 'traffic_class', render: (v) => v ? <Tag>{v}</Tag> : '-' },
               { title: 'RTT', dataIndex: 'rtt_ms', render: (v) => v ? `${v} ms` : '-' },
               { title: '估算速率', dataIndex: 'estimated_bps', render: (v) => v ? `${formatBytes(v)}/s` : '-' },
@@ -776,7 +778,7 @@ export function LanPage() {
               { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
               { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
             ]}
-            scroll={{ x: 1500 }}
+            scroll={{ x: 1700 }}
           />
         </Card>
       ),

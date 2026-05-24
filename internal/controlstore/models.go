@@ -207,6 +207,8 @@ type VirtualPeerState struct {
 	Path             string `gorm:"size:32;not null;default:'';column:path"`
 	DataPath         string `gorm:"size:32;not null;default:'';column:data_path"`
 	PathReason       string `gorm:"size:128;not null;default:'';column:path_reason"`
+	NATType          string `gorm:"size:64;not null;default:'';column:nat_type"`
+	FallbackReason   string `gorm:"size:128;not null;default:'';column:fallback_reason"`
 	TrafficClass     string `gorm:"size:32;not null;default:'';column:traffic_class"`
 	AdapterState     string `gorm:"size:32;not null;default:'';column:adapter_state"`
 	RouteConflict    string `gorm:"type:text;not null;column:route_conflict"`

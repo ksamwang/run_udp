@@ -236,6 +236,8 @@ export type VirtualPeerState = {
   path: string
   data_path: string
   path_reason: string
+  nat_type: string
+  fallback_reason: string
   traffic_class: string
   adapter_state: string
   route_conflict: string

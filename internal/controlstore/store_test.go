@@ -307,7 +307,8 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	}
 	if err := s.PutVirtualPeerState(ctx, store.VirtualPeerState{
 		DeviceID: "codex-test-A", PeerID: "codex-test-B", NetworkID: defaultNetwork.ID,
-		State: "connected", Path: "p2p", DataPath: "p2p_datagram", PathReason: "datagram_ready", TrafficClass: "interactive",
+		State: "connected", Path: "p2p", DataPath: "p2p_datagram", PathReason: "datagram_ready",
+		NATType: "unknown", TrafficClass: "interactive",
 		AdapterState: "up", RouteConflict: "172.16.10.0/24 overlaps vpn",
 		SelectedCIDR: "172.16.11.0/24", MTU: 1280, MSS: 1200, RTTMs: 10, EstimatedBps: 300, TxBytes: 100, RxBytes: 200,
 		LastHandshakeAt: "2026-05-23T01:00:00Z",
@@ -321,12 +322,13 @@ func exerciseVirtualLANStore(ctx context.Context, s Store) error {
 	if len(peerStates) != 1 || peerStates[0].Path != "p2p" || peerStates[0].TxBytes != 100 ||
 		peerStates[0].AdapterState != "up" || peerStates[0].SelectedCIDR != "172.16.11.0/24" || peerStates[0].MSS != 1200 ||
 		peerStates[0].DataPath != "p2p_datagram" || peerStates[0].PathReason != "datagram_ready" ||
-		peerStates[0].TrafficClass != "interactive" || peerStates[0].EstimatedBps != 300 {
+		peerStates[0].NATType != "unknown" || peerStates[0].TrafficClass != "interactive" || peerStates[0].EstimatedBps != 300 {
 		return failf("bad virtual peer states: %+v", peerStates)
 	}
 	if err := s.PutVirtualPeerState(ctx, store.VirtualPeerState{
 		DeviceID: "codex-test-A", PeerID: "codex-test-B", NetworkID: defaultNetwork.ID,
-		State: "connected", Path: "relay", DataPath: "relay_udp", PathReason: "p2p_timeout", TrafficClass: "throughput",
+		State: "connected", Path: "relay", DataPath: "relay_udp", PathReason: "p2p_timeout",
+		NATType: "relay_required", FallbackReason: "p2p_timeout", TrafficClass: "throughput",
 		TxBytes: 300, RxBytes: 400,
 	}); err != nil {
 		return err

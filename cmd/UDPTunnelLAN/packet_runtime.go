@@ -1798,9 +1798,11 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 			if reason == "" {
 				reason = lanPathReasonFromSession(session)
 			}
+			natType := lanNATTypeForPeer(p2p, session.PeerID, dataPath)
+			fallbackReason := lanFallbackReason(p2p, dataPath, reason)
 			state := store.VirtualPeerState{
 				DeviceID: deviceID, PeerID: session.PeerID, NetworkID: networkID, State: session.State, Path: session.Path,
-				DataPath: dataPath, PathReason: reason, TrafficClass: lanCurrentTrafficClass(p2p, session.PeerID),
+				DataPath: dataPath, PathReason: reason, NATType: natType, FallbackReason: fallbackReason, TrafficClass: lanCurrentTrafficClass(p2p, session.PeerID),
 				AdapterState: "up", MTU: mtu, MSS: mss, TxBytes: int64(tx), RxBytes: int64(rx), EstimatedBps: estimatedBps,
 				LastError: session.LastError, LastTransitionAt: session.LastSeenAt.Format(time.RFC3339),
 			}
@@ -1816,8 +1818,8 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 				log.Printf("LAN peer status report failed: peer=%s err=%v", session.PeerID, err)
 				continue
 			}
-			log.Printf("LAN peer status reported: peer=%s path=%s data_path=%s reason=%s traffic=%s tx=%d rx=%d bps=%d",
-				session.PeerID, state.Path, state.DataPath, state.PathReason, state.TrafficClass, state.TxBytes, state.RxBytes, state.EstimatedBps)
+			log.Printf("LAN peer status reported: peer=%s path=%s data_path=%s reason=%s nat=%s fallback=%s traffic=%s tx=%d rx=%d bps=%d",
+				session.PeerID, state.Path, state.DataPath, state.PathReason, state.NATType, state.FallbackReason, state.TrafficClass, state.TxBytes, state.RxBytes, state.EstimatedBps)
 		}
 	}
 }
@@ -1842,6 +1844,44 @@ func lanPathReasonFromSession(session packet.PeerSession) string {
 	default:
 		return "link_unavailable"
 	}
+}
+
+func lanNATTypeForPeer(p2p *lanP2P, peerID, dataPath string) string {
+	if p2p == nil {
+		return ""
+	}
+	if strings.TrimSpace(p2p.upnpAddr) != "" {
+		return "upnp_mapped"
+	}
+	if p2p.pathPolicy.RelayOnly {
+		return "relay_only"
+	}
+	if p2p.pathPolicy.PreferRelay && strings.HasPrefix(dataPath, "relay_") {
+		return "relay_first"
+	}
+	peer := p2p.peer(peerID)
+	if peer != nil && peer.isRelay.Load() {
+		return "relay_required"
+	}
+	return "unknown"
+}
+
+func lanFallbackReason(p2p *lanP2P, dataPath, pathReason string) string {
+	if !strings.HasPrefix(dataPath, "relay_") {
+		return ""
+	}
+	if p2p != nil {
+		if p2p.pathPolicy.RelayOnly {
+			return "path_policy_relay_only"
+		}
+		if p2p.pathPolicy.PreferRelay {
+			return "path_policy_prefer_relay"
+		}
+	}
+	if strings.TrimSpace(pathReason) != "" {
+		return pathReason
+	}
+	return "relay_fallback"
 }
 
 func lanCurrentTrafficClass(p2p *lanP2P, peerID string) string {

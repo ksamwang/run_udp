@@ -926,7 +926,7 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 	}
 	row := VirtualPeerState{
 		DeviceID: state.DeviceID, PeerID: state.PeerID, NetworkID: state.NetworkID,
-		State: state.State, Path: state.Path, DataPath: state.DataPath, PathReason: state.PathReason, TrafficClass: state.TrafficClass,
+		State: state.State, Path: state.Path, DataPath: state.DataPath, PathReason: state.PathReason, NATType: state.NATType, FallbackReason: state.FallbackReason, TrafficClass: state.TrafficClass,
 		AdapterState: state.AdapterState, RouteConflict: state.RouteConflict,
 		SelectedCIDR: state.SelectedCIDR, MTU: state.MTU, MSS: state.MSS, RTTMs: state.RTTMs, EstimatedBps: state.EstimatedBps,
 		TxBytes: state.TxBytes, RxBytes: state.RxBytes, DropReason: state.DropReason, LastError: state.LastError, LastHandshakeAt: state.LastHandshakeAt,
@@ -935,7 +935,8 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "device_id"}, {Name: "peer_id"}, {Name: "network_id"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"state": row.State, "path": row.Path, "data_path": row.DataPath, "path_reason": row.PathReason, "traffic_class": row.TrafficClass,
+			"state": row.State, "path": row.Path, "data_path": row.DataPath, "path_reason": row.PathReason, "nat_type": row.NATType,
+			"fallback_reason": row.FallbackReason, "traffic_class": row.TrafficClass,
 			"adapter_state": row.AdapterState, "route_conflict": row.RouteConflict,
 			"selected_cidr": row.SelectedCIDR, "mtu": row.MTU, "mss": row.MSS, "rtt_ms": row.RTTMs, "tx_bytes": row.TxBytes,
 			"rx_bytes": row.RxBytes, "estimated_bps": row.EstimatedBps, "drop_reason": row.DropReason, "last_error": row.LastError,
@@ -1138,7 +1139,7 @@ func (r VirtualRoute) toStore() store.VirtualRoute {
 func (p VirtualPeerState) toStore() store.VirtualPeerState {
 	return store.VirtualPeerState{
 		DeviceID: p.DeviceID, PeerID: p.PeerID, NetworkID: p.NetworkID, State: p.State, Path: p.Path,
-		DataPath: p.DataPath, PathReason: p.PathReason, TrafficClass: p.TrafficClass,
+		DataPath: p.DataPath, PathReason: p.PathReason, NATType: p.NATType, FallbackReason: p.FallbackReason, TrafficClass: p.TrafficClass,
 		AdapterState: p.AdapterState, RouteConflict: p.RouteConflict, SelectedCIDR: p.SelectedCIDR,
 		MTU: p.MTU, MSS: p.MSS, RTTMs: p.RTTMs, EstimatedBps: p.EstimatedBps, TxBytes: p.TxBytes, RxBytes: p.RxBytes, DropReason: p.DropReason,
 		LastError: p.LastError, LastHandshakeAt: p.LastHandshakeAt, LastTransitionAt: p.LastTransitionAt,

@@ -142,7 +142,7 @@
 - [ ] 为 UDPTunnelLAN 引入 NAT 探测或复用服务端可提供的 NAT 判断结果。
 - [x] 对后台配置为优先 relay 或仅 relay 的场景直接进入 relay 数据面，同时保留 P2P 后台注册/打洞。
 - [ ] 保留用户确认的“初始 P2P 尝试 30 秒”语义，但允许坏 NAT 快速启用 relay 承接流量。
-- [ ] 后台状态展示 NAT 类型、当前路径和 fallback 原因。
+- [x] 后台状态展示 NAT 类型、当前路径和 fallback 原因。
 - [x] 管理后台提供路径策略配置，第一阶段默认 `优先 P2P`，后续可扩展自动、优先 relay、仅 relay。
 - [x] 增加测试覆盖 relay-first、P2P 后台打通后切换回 P2P。
 

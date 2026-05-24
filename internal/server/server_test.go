@@ -429,6 +429,7 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	statusRec = doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{
 		"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID,
 		"state": "connected", "path": "relay", "data_path": "relay_udp", "path_reason": "p2p_timeout", "traffic_class": "throughput",
+		"nat_type": "relay_required", "fallback_reason": "p2p_timeout",
 		"adapter_state": "up", "selected_cidr": "172.16.10.0/24", "mtu": 1280, "mss": 1200,
 		"tx_bytes": 300, "rx_bytes": 400,
 	}, nil)
@@ -452,7 +453,8 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if len(states) != 1 || states[0].Path != "relay" ||
 		states[0].AdapterState != "up" || states[0].MSS != 1200 || states[0].DataPath != "relay_udp" ||
-		states[0].PathReason != "p2p_timeout" || states[0].TrafficClass != "throughput" || states[0].TxBytes != 300 {
+		states[0].PathReason != "p2p_timeout" || states[0].NATType != "relay_required" ||
+		states[0].FallbackReason != "p2p_timeout" || states[0].TrafficClass != "throughput" || states[0].TxBytes != 300 {
 		t.Fatalf("bad peer states: %+v", states)
 	}
 	eventsRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/path-events?network_id="+strconv.FormatInt(network.ID, 10), nil)
