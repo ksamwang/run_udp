@@ -439,6 +439,25 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		states[0].AdapterState != "up" || states[0].MSS != 1200 {
 		t.Fatalf("bad peer states: %+v", states)
 	}
+	deviceStatesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/device-states?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if deviceStatesRec.Code != http.StatusOK {
+		t.Fatalf("admin lan device states status=%d body=%s", deviceStatesRec.Code, deviceStatesRec.Body.String())
+	}
+	var deviceStates []lanDeviceState
+	if err := json.Unmarshal(deviceStatesRec.Body.Bytes(), &deviceStates); err != nil {
+		t.Fatal(err)
+	}
+	var devAState lanDeviceState
+	for _, state := range deviceStates {
+		if state.DeviceID == "dev-a" {
+			devAState = state
+			break
+		}
+	}
+	if devAState.DeviceID != "dev-a" || devAState.VirtualIP != "172.16.10.10" ||
+		devAState.AdapterState != "up" || devAState.P2PPeers != 1 {
+		t.Fatalf("bad lan device states: %+v", deviceStates)
+	}
 }
 
 func TestLANBootstrapUsesAssignedNetwork(t *testing.T) {

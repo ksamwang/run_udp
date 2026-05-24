@@ -17,6 +17,7 @@ import {
   listVirtualAddresses,
   listVirtualDeviceKeys,
   listVirtualDeviceGroups,
+  listVirtualDeviceStates,
   listVirtualNetworks,
   listVirtualPeerStates,
   listVirtualRoutes,
@@ -73,6 +74,12 @@ export function LanPage() {
   const states = useQuery({
     queryKey: ['lan', 'peer-states', networkID],
     queryFn: () => listVirtualPeerStates(networkID),
+    enabled: Boolean(networkID),
+    refetchInterval: 10000,
+  })
+  const deviceStates = useQuery({
+    queryKey: ['lan', 'device-states', networkID],
+    queryFn: () => listVirtualDeviceStates(networkID),
     enabled: Boolean(networkID),
     refetchInterval: 10000,
   })
@@ -667,6 +674,32 @@ export function LanPage() {
               },
             ]}
             scroll={{ x: 1000 }}
+          />
+        </Card>
+      ),
+    },
+    {
+      key: 'device-status',
+      label: '设备状态',
+      children: (
+        <Card>
+          <Table
+            rowKey={(row) => `${row.network_id}:${row.device_id}`}
+            loading={deviceStates.isLoading}
+            dataSource={deviceStates.data || []}
+            columns={[
+              { title: '设备', dataIndex: 'device_id', render: (v) => deviceName(v) },
+              { title: '虚拟 IP', dataIndex: 'virtual_ip', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
+              { title: '主机名', dataIndex: 'hostname', render: (v) => v || '-' },
+              { title: '虚拟网卡', dataIndex: 'adapter_state', render: (v) => <Tag color={v === 'up' ? 'green' : v === 'error' ? 'red' : 'default'}>{v || '-'}</Tag> },
+              { title: '选择网段', dataIndex: 'selected_cidr', render: (v) => v || '-' },
+              { title: '路由冲突', dataIndex: 'route_conflict', render: (v) => v || '-' },
+              { title: 'P2P/Relay/Down', render: (_, row) => `${row.p2p_peers || 0} / ${row.relay_peers || 0} / ${row.down_peers || 0}` },
+              { title: '最近 Bootstrap', dataIndex: 'last_bootstrap_at', render: formatTime },
+              { title: '最近状态', dataIndex: 'last_status_at', render: formatTime },
+              { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
+            ]}
+            scroll={{ x: 1400 }}
           />
         </Card>
       ),

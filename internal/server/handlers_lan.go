@@ -36,6 +36,22 @@ type lanBootstrapPeer struct {
 	PublicKey string `json:"public_key"`
 }
 
+type lanDeviceState struct {
+	DeviceID        string `json:"device_id"`
+	NetworkID       int64  `json:"network_id"`
+	VirtualIP       string `json:"virtual_ip"`
+	Hostname        string `json:"hostname"`
+	AdapterState    string `json:"adapter_state"`
+	SelectedCIDR    string `json:"selected_cidr"`
+	RouteConflict   string `json:"route_conflict"`
+	P2PPeers        int    `json:"p2p_peers"`
+	RelayPeers      int    `json:"relay_peers"`
+	DownPeers       int    `json:"down_peers"`
+	LastBootstrapAt string `json:"last_bootstrap_at"`
+	LastStatusAt    string `json:"last_status_at"`
+	LastError       string `json:"last_error"`
+}
+
 func (a *App) handleAdminLANNetworks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -388,6 +404,78 @@ func (a *App) handleAdminLANRoute(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
 	}
+}
+
+func (a *App) handleAdminLANDeviceStates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		states, err := a.lanDeviceStates(r.Context(), networkID)
+		writeJSONOrError(w, states, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
+func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDeviceState, error) {
+	addresses, err := a.db.ListVirtualAddresses(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	peers, err := a.db.ListVirtualPeerStates(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	byDevice := map[string]*lanDeviceState{}
+	for _, address := range addresses {
+		state := byDevice[address.DeviceID]
+		if state == nil {
+			state = &lanDeviceState{DeviceID: address.DeviceID, NetworkID: address.NetworkID}
+			byDevice[address.DeviceID] = state
+		}
+		state.VirtualIP = address.VirtualIP
+		state.Hostname = address.Hostname
+		state.LastBootstrapAt = address.UpdatedAt
+	}
+	for _, peer := range peers {
+		state := byDevice[peer.DeviceID]
+		if state == nil {
+			state = &lanDeviceState{DeviceID: peer.DeviceID, NetworkID: peer.NetworkID}
+			byDevice[peer.DeviceID] = state
+		}
+		if peer.AdapterState != "" {
+			state.AdapterState = peer.AdapterState
+		}
+		if peer.SelectedCIDR != "" {
+			state.SelectedCIDR = peer.SelectedCIDR
+		}
+		if peer.RouteConflict != "" {
+			state.RouteConflict = peer.RouteConflict
+		}
+		if peer.LastError != "" {
+			state.LastError = peer.LastError
+		}
+		if peer.UpdatedAt > state.LastStatusAt {
+			state.LastStatusAt = peer.UpdatedAt
+		}
+		switch strings.ToLower(strings.TrimSpace(peer.Path)) {
+		case "p2p":
+			state.P2PPeers++
+		case "relay":
+			state.RelayPeers++
+		default:
+			state.DownPeers++
+		}
+	}
+	out := make([]lanDeviceState, 0, len(byDevice))
+	for _, state := range byDevice {
+		out = append(out, *state)
+	}
+	return out, nil
 }
 
 func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {

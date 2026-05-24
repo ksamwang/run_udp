@@ -223,3 +223,19 @@ export type VirtualPeerState = {
   last_transition_at: string
   updated_at: string
 }
+
+export type VirtualDeviceState = {
+  device_id: string
+  network_id: number
+  virtual_ip: string
+  hostname: string
+  adapter_state: string
+  selected_cidr: string
+  route_conflict: string
+  p2p_peers: number
+  relay_peers: number
+  down_peers: number
+  last_bootstrap_at: string
+  last_status_at: string
+  last_error: string
+}
