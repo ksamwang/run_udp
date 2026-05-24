@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"udp_tunnel_demo/internal/lan"
+	"udp_tunnel_demo/internal/lantransport"
 	"udp_tunnel_demo/internal/packet"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/secure"
@@ -489,6 +490,32 @@ func TestLANP2PSendFallsBackToKCPWhenDatagramUnavailable(t *testing.T) {
 	}
 	if string(got) != "kcp" {
 		t.Fatalf("bad fallback payload: %q", got)
+	}
+}
+
+func TestLANP2PSendUDPRelayFrame(t *testing.T) {
+	client, server, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	defer server.Close()
+	p := &lanP2P{conn: client, server: server.LocalAddr().(*net.UDPAddr), deviceID: "dev-a"}
+	if err := p.SendUDPRelayFrame(packet.RoutedFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: []byte("ciphertext")}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1024)
+	_ = server.SetReadDeadline(testDeadline())
+	n, _, err := server.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := lantransport.UnpackRelayFrame(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.SrcDevice != "dev-a" || frame.DstDevice != "dev-b" || string(frame.Payload) != "ciphertext" {
+		t.Fatalf("bad relay frame: %+v", frame)
 	}
 }
 

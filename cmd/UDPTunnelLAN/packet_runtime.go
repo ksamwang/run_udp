@@ -58,6 +58,7 @@ var lanHTTPClient = &http.Client{Timeout: 10 * time.Second}
 const (
 	lanPathP2PDatagram = "p2p_datagram"
 	lanPathP2PKCP      = "p2p_kcp"
+	lanPathRelayUDP    = "relay_udp"
 	lanPathRelayHTTP   = "relay_http"
 )
 
@@ -195,6 +196,20 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		if len(relayFrames) == 0 {
 			pending.Remove(delivered)
 			return
+		}
+		udpDelivered := map[int]bool{}
+		if p2p != nil {
+			for i, frame := range relayFrames {
+				if p2p.SendUDPRelayFrame(frame) == nil {
+					udpDelivered[i] = true
+					delivered[i] = true
+				}
+			}
+			if len(udpDelivered) == len(relayFrames) {
+				log.Printf("LAN UDP relay frames sent: path=%s frames=%d", lanPathRelayUDP, len(relayFrames))
+				pending.Remove(delivered)
+				return
+			}
 		}
 		if err := postRelayFrames(ctx, serverHTTP, relayFrames); err != nil {
 			log.Printf("LAN relay send failed: %v", err)
@@ -616,6 +631,26 @@ func (p *lanP2P) SendDatagram(frame packet.RoutedFrame) error {
 	return lantransport.Send(p.currentConn(), peer.addr.Load(), peer.tx, frame.Payload)
 }
 
+func (p *lanP2P) SendUDPRelayFrame(frame packet.RoutedFrame) error {
+	if p == nil || p.server == nil {
+		return packet.ErrLinkUnavailable
+	}
+	wire, err := lantransport.PackRelayFrame(lantransport.RelayFrame{
+		SrcDevice: frame.SrcDevice,
+		DstDevice: frame.DstDevice,
+		Payload:   frame.Payload,
+	})
+	if err != nil {
+		return err
+	}
+	conn := p.currentConn()
+	if conn == nil {
+		return packet.ErrLinkUnavailable
+	}
+	_, err = conn.WriteToUDP(wire, p.server)
+	return err
+}
+
 func (p *lanP2P) SealRelayFrames(frames []packet.RoutedFrame) ([]packet.RoutedFrame, error) {
 	out := make([]packet.RoutedFrame, 0, len(frames))
 	for _, frame := range frames {
@@ -1005,6 +1040,10 @@ func (p *lanP2P) readLoop(ctx context.Context, conn *net.UDPConn, gen uint64, ad
 			return
 		}
 		data := append([]byte(nil), buf[:n]...)
+		if lantransport.IsRelayFrame(data) {
+			p.handleUDPRelayFrame(adapter, router, link, data)
+			continue
+		}
 		if len(data) > 0 && data[0] == '{' {
 			p.handleControl(ctx, data, src, adapter, router, link)
 			continue
@@ -1284,6 +1323,31 @@ func (p *lanP2P) handleDatagramFrame(adapter *wintun.Adapter, router *packet.Rou
 	log.Printf("LAN P2P datagram frame received: peer=%s path=%s bytes=%d", peer.id, lanPathP2PDatagram, len(payload))
 	if err := adapter.WritePacket(payload); err != nil {
 		log.Printf("LAN P2P datagram write packet failed: peer=%s bytes=%d err=%v", peer.id, len(payload), err)
+	}
+}
+
+func (p *lanP2P) handleUDPRelayFrame(adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, data []byte) {
+	frame, err := lantransport.UnpackRelayFrame(data)
+	if err != nil {
+		log.Printf("LAN UDP relay frame parse failed: %v", err)
+		return
+	}
+	peer := p.peer(frame.SrcDevice)
+	if peer == nil || peer.rx == nil {
+		log.Printf("LAN UDP relay frame ignored: unknown peer=%s", frame.SrcDevice)
+		return
+	}
+	payload, err := peer.rx.Open(frame.Payload)
+	if err != nil {
+		log.Printf("LAN UDP relay frame decrypt failed: src=%s err=%v", frame.SrcDevice, err)
+		return
+	}
+	routed := packet.RoutedFrame{SrcDevice: frame.SrcDevice, DstDevice: p.deviceID, PacketType: packet.TypeIPv4, Payload: payload}
+	router.RecordInbound(routed)
+	_ = link.Receive(frame.SrcDevice, payload, packet.LinkPathRelay)
+	log.Printf("LAN UDP relay frame received: src=%s path=%s bytes=%d", frame.SrcDevice, lanPathRelayUDP, len(payload))
+	if err := adapter.WritePacket(payload); err != nil {
+		log.Printf("LAN UDP relay write packet failed: src=%s bytes=%d err=%v", frame.SrcDevice, len(payload), err)
 	}
 }
 

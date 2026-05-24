@@ -21,6 +21,7 @@ import (
 
 	"udp_tunnel_demo/internal/config"
 	"udp_tunnel_demo/internal/lan"
+	"udp_tunnel_demo/internal/lantransport"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/secure"
 	"udp_tunnel_demo/internal/store"
@@ -656,6 +657,49 @@ func TestLANPacketRelayUsesLANSpecificSwitch(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("lan relay should ignore allow_relay and use lan_allow_relay, status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLANUDPRelayForwardsCiphertextByDevice(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.LANAllowRelay = true
+	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 21001}
+	dstConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dstConn.Close()
+	serverConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+	a.lanPeers = map[string]map[string]*peer{
+		"dev-b": {
+			peerSlotKey("dev-a", store.ProfileLANPacket): {
+				id: "dev-b", addr: dstConn.LocalAddr().(*net.UDPAddr), want: "dev-a", profile: store.ProfileLANPacket,
+			},
+		},
+	}
+	wire, err := lantransport.PackRelayFrame(lantransport.RelayFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: []byte("ciphertext")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.handleLANUDPRelay(serverConn, src, wire) {
+		t.Fatal("LAN UDP relay frame should be handled")
+	}
+	buf := make([]byte, 1024)
+	_ = dstConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := dstConn.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := lantransport.UnpackRelayFrame(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SrcDevice != "dev-a" || got.DstDevice != "dev-b" || string(got.Payload) != "ciphertext" {
+		t.Fatalf("server must forward opaque ciphertext, got %+v", got)
 	}
 }
 

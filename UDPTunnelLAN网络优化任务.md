@@ -87,11 +87,11 @@
 
 - [x] 产品决策：LAN UDP relay 实现完全独立通道，不复用老 Agent UDP relay 服务端通道。
 - [x] 安全决策：LAN UDP relay 继续保持端到端加密，服务端只转发密文，不解密原始 IP 包。
-- [ ] 设计 LAN 专用 UDP relay 数据面，避免 HTTP JSON/base64 承载高频 IP 包。
-- [ ] 服务端支持 LAN relay 二进制帧转发。
-- [ ] 客户端 P2P 不可用时优先进入 LAN UDP relay，而不是 HTTP poll relay。
-- [ ] LAN UDP relay 只识别最小转发头和目标设备，不读取明文 IP payload。
-- [ ] 保留 HTTP relay 作为最保守兜底或诊断路径。
+- [x] 设计 LAN 专用 UDP relay 数据面，避免 HTTP JSON/base64 承载高频 IP 包。
+- [x] 服务端支持 LAN relay 二进制帧转发。
+- [x] 客户端 P2P 不可用时优先进入 LAN UDP relay，而不是 HTTP poll relay。
+- [x] LAN UDP relay 只识别最小转发头和目标设备，不读取明文 IP payload。
+- [x] 保留 HTTP relay 作为最保守兜底或诊断路径。
 - [ ] 增加 relay 路径压测，分别记录 HTTP relay 和 UDP relay 的 RTT、吞吐、丢包恢复。
 
 ### P1-3 增加 TCP fast path

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"udp_tunnel_demo/internal/lan"
+	"udp_tunnel_demo/internal/lantransport"
 	"udp_tunnel_demo/internal/protocol"
 	"udp_tunnel_demo/internal/secure"
 	"udp_tunnel_demo/internal/store"
@@ -63,6 +64,9 @@ func (a *App) runUDP() {
 			continue
 		}
 		data := append([]byte(nil), buf[:n]...)
+		if a.handleLANUDPRelay(conn, src, data) {
+			continue
+		}
 		if a.handleRelay(conn, src, data) {
 			continue
 		}
@@ -92,6 +96,45 @@ func (a *App) runUDP() {
 			a.handleLANRegister(conn, src, msg)
 		}
 	}
+}
+
+func (a *App) handleLANUDPRelay(conn *net.UDPConn, src *net.UDPAddr, data []byte) bool {
+	if !lantransport.IsRelayFrame(data) {
+		return false
+	}
+	if !a.currentLANAllowRelay() {
+		return true
+	}
+	frame, err := lantransport.UnpackRelayFrame(data)
+	if err != nil {
+		log.Printf("LAN UDP relay bad frame from=%s err=%v", src, err)
+		return true
+	}
+	var dst *net.UDPAddr
+	a.mu.Lock()
+	for _, byWant := range a.lanPeers {
+		for _, peer := range byWant {
+			if peer.id == frame.DstDevice {
+				dst = cloneUDP(peer.addr)
+				break
+			}
+		}
+		if dst != nil {
+			break
+		}
+	}
+	a.mu.Unlock()
+	if dst == nil {
+		log.Printf("LAN UDP relay no route: src=%s dst_device=%s bytes=%d", frame.SrcDevice, frame.DstDevice, len(frame.Payload))
+		return true
+	}
+	if _, err := conn.WriteToUDP(data, dst); err != nil {
+		log.Printf("LAN UDP relay send failed: dst_device=%s addr=%s err=%v", frame.DstDevice, dst, err)
+		return true
+	}
+	a.totalRelayed.Add(uint64(len(frame.Payload)))
+	log.Printf("LAN UDP relay forwarded: src_device=%s dst_device=%s bytes=%d", frame.SrcDevice, frame.DstDevice, len(frame.Payload))
+	return true
 }
 
 func (a *App) handleRelay(conn *net.UDPConn, src *net.UDPAddr, data []byte) bool {
