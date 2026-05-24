@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork, VirtualPeerState } from '../types/api'
+import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
@@ -45,6 +45,34 @@ export function updateVirtualACLRule(id: number, payload: VirtualACLRulePayload)
 
 export function deleteVirtualACLRule(id: number) {
   return apiRequest<{ ok: boolean }>(`/api/admin/lan/acl/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export function listVirtualRoutes(networkID?: number, deviceID?: string) {
+  const params = new URLSearchParams()
+  if (networkID) params.set('network_id', String(networkID))
+  if (deviceID) params.set('device_id', deviceID)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<VirtualRoute[]>(`/api/admin/lan/routes${query}`)
+}
+
+export function createVirtualRoute(payload: VirtualRoutePayload) {
+  return apiRequest<VirtualRoute>('/api/admin/lan/routes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateVirtualRoute(id: number, payload: VirtualRoutePayload) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/routes/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteVirtualRoute(id: number) {
+  return apiRequest<{ ok: boolean }>(`/api/admin/lan/routes/${id}`, {
     method: 'DELETE',
   })
 }

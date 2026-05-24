@@ -661,10 +661,26 @@ func (s *fakeStore) UpsertVirtualRoute(ctx context.Context, route store.VirtualR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := nowTestString()
+	if route.ID > 0 {
+		for key, existing := range s.virtualRoutes {
+			if existing.ID == route.ID {
+				route.CreatedAt = existing.CreatedAt
+				route.UpdatedAt = now
+				delete(s.virtualRoutes, key)
+				s.virtualRoutes[virtualRouteKey(route.NetworkID, route.DeviceID, route.CIDR)] = route
+				return nil
+			}
+		}
+		return sql.ErrNoRows
+	}
 	if route.CreatedAt == "" {
 		route.CreatedAt = now
 	}
 	route.UpdatedAt = now
+	if route.ID == 0 {
+		s.nextLANID++
+		route.ID = s.nextLANID
+	}
 	s.virtualRoutes[virtualRouteKey(route.NetworkID, route.DeviceID, route.CIDR)] = route
 	return nil
 }
@@ -679,6 +695,18 @@ func (s *fakeStore) ListVirtualRoutes(ctx context.Context, networkID int64, devi
 		}
 	}
 	return out, nil
+}
+
+func (s *fakeStore) DeleteVirtualRoute(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, route := range s.virtualRoutes {
+		if route.ID == id {
+			delete(s.virtualRoutes, key)
+			return nil
+		}
+	}
+	return sql.ErrNoRows
 }
 
 func (s *fakeStore) PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error {

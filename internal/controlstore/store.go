@@ -721,8 +721,21 @@ func (s *MySQLStore) UpsertVirtualRoute(ctx context.Context, route store.Virtual
 	}
 	route.UpdatedAt = now
 	row := VirtualRoute{
-		DeviceID: route.DeviceID, NetworkID: route.NetworkID, CIDR: route.CIDR,
+		ID: route.ID, DeviceID: route.DeviceID, NetworkID: route.NetworkID, CIDR: route.CIDR,
 		Advertise: route.Advertise, Accept: route.Accept, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
+	}
+	if route.ID > 0 {
+		tx := s.db.WithContext(ctx).Model(&VirtualRoute{}).Where("id = ?", route.ID).Updates(map[string]any{
+			"device_id": route.DeviceID, "network_id": route.NetworkID, "cidr": route.CIDR,
+			"advertise": route.Advertise, "accept": route.Accept, "updated_at": route.UpdatedAt,
+		})
+		if tx.Error != nil {
+			return tx.Error
+		}
+		if tx.RowsAffected == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
 	}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "device_id"}, {Name: "network_id"}, {Name: "cidr"}},
@@ -749,6 +762,17 @@ func (s *MySQLStore) ListVirtualRoutes(ctx context.Context, networkID int64, dev
 		out = append(out, row.toStore())
 	}
 	return out, nil
+}
+
+func (s *MySQLStore) DeleteVirtualRoute(ctx context.Context, id int64) error {
+	tx := s.db.WithContext(ctx).Delete(&VirtualRoute{}, id)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error {

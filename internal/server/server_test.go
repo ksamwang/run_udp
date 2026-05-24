@@ -163,6 +163,54 @@ func TestLANAdminAPIs(t *testing.T) {
 		t.Fatalf("delete acl status=%d body=%s", delACL.Code, delACL.Body.String())
 	}
 
+	routeRec := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/routes", map[string]any{
+		"network_id": network.ID, "device_id": "dev-a", "cidr": "10.10.0.0/16", "advertise": true, "accept": false,
+	})
+	if routeRec.Code != http.StatusOK {
+		t.Fatalf("create route status=%d body=%s", routeRec.Code, routeRec.Body.String())
+	}
+	var route store.VirtualRoute
+	if err := json.Unmarshal(routeRec.Body.Bytes(), &route); err != nil {
+		t.Fatal(err)
+	}
+	if route.ID == 0 || route.CIDR != "10.10.0.0/16" || !route.Advertise || route.Accept {
+		t.Fatalf("bad route: %+v", route)
+	}
+	listRoutes := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/routes?network_id="+strconv.FormatInt(network.ID, 10)+"&device_id=dev-a", nil)
+	if listRoutes.Code != http.StatusOK {
+		t.Fatalf("list routes status=%d body=%s", listRoutes.Code, listRoutes.Body.String())
+	}
+	var routes []store.VirtualRoute
+	if err := json.Unmarshal(listRoutes.Body.Bytes(), &routes); err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].ID != route.ID {
+		t.Fatalf("bad routes: %+v", routes)
+	}
+	patchRoute := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/routes/"+strconv.FormatInt(route.ID, 10), map[string]any{
+		"network_id": network.ID, "device_id": "dev-a", "cidr": "10.20.0.0/16", "advertise": false, "accept": true,
+	})
+	if patchRoute.Code != http.StatusOK {
+		t.Fatalf("patch route status=%d body=%s", patchRoute.Code, patchRoute.Body.String())
+	}
+	routes, err := a.db.ListVirtualRoutes(ctx, network.ID, "dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].CIDR != "10.20.0.0/16" || routes[0].Advertise || !routes[0].Accept {
+		t.Fatalf("bad patched routes: %+v", routes)
+	}
+	badRoute := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/routes", map[string]any{
+		"network_id": network.ID, "device_id": "dev-a", "cidr": "0.0.0.0/0", "advertise": true, "accept": true,
+	})
+	if badRoute.Code != http.StatusBadRequest {
+		t.Fatalf("bad route status=%d body=%s", badRoute.Code, badRoute.Body.String())
+	}
+	delRoute := doAdminJSON(t, a, http.MethodDelete, "/api/admin/lan/routes/"+strconv.FormatInt(route.ID, 10), nil)
+	if delRoute.Code != http.StatusOK {
+		t.Fatalf("delete route status=%d body=%s", delRoute.Code, delRoute.Body.String())
+	}
+
 	badNet := doAdminJSON(t, a, http.MethodPost, "/api/admin/lan/networks", map[string]any{
 		"name": "bad", "cidr": "not-cidr", "enabled": true,
 	})
@@ -199,6 +247,11 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.db.UpsertVirtualRoute(ctx, store.VirtualRoute{
+		DeviceID: "dev-a", NetworkID: network.ID, CIDR: "10.30.0.0/16", Advertise: true, Accept: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
 		"device_id": "dev-a", "device_name": "Office A", "public_key": "pub-a", "capabilities": []string{"ipv4"},
@@ -221,6 +274,9 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if resp.Peers[0].PublicKey != "pub-b" {
 		t.Fatalf("peer public key not returned: %+v", resp.Peers)
+	}
+	if len(resp.Routes) != 1 || resp.Routes[0].CIDR != "10.30.0.0/16" {
+		t.Fatalf("bootstrap routes not returned: %+v", resp.Routes)
 	}
 	key, err := a.db.GetVirtualDeviceKey(ctx, "dev-a")
 	if err != nil {

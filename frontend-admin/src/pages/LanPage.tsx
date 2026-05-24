@@ -6,29 +6,37 @@ import { useEffect, useMemo, useState } from 'react'
 import { listDevices } from '../api/devices'
 import {
   createVirtualACLRule,
+  createVirtualRoute,
   deleteVirtualACLRule,
+  deleteVirtualRoute,
   listVirtualACLRules,
   listVirtualAddresses,
   listVirtualNetworks,
   listVirtualPeerStates,
+  listVirtualRoutes,
   updateVirtualACLRule,
   updateVirtualAddress,
   updateVirtualNetwork,
+  updateVirtualRoute,
 } from '../api/lan'
-import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork } from '../types/api'
+import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
 type ACLForm = VirtualACLRulePayload
+type RouteForm = VirtualRoutePayload
 
 export function LanPage() {
   const queryClient = useQueryClient()
   const [networkForm] = Form.useForm<NetworkForm>()
   const [addressForm] = Form.useForm<AddressForm>()
   const [aclForm] = Form.useForm<ACLForm>()
+  const [routeForm] = Form.useForm<RouteForm>()
   const [editingAddress, setEditingAddress] = useState<VirtualAddress | null>(null)
   const [editingACL, setEditingACL] = useState<VirtualACLRule | null>(null)
   const [aclFormOpen, setACLFormOpen] = useState(false)
+  const [editingRoute, setEditingRoute] = useState<VirtualRoute | null>(null)
+  const [routeFormOpen, setRouteFormOpen] = useState(false)
 
   const networks = useQuery({ queryKey: ['lan', 'networks'], queryFn: listVirtualNetworks })
   const defaultNetwork = networks.data?.[0]
@@ -48,6 +56,11 @@ export function LanPage() {
     queryFn: () => listVirtualPeerStates(networkID),
     enabled: Boolean(networkID),
     refetchInterval: 10000,
+  })
+  const routes = useQuery({
+    queryKey: ['lan', 'routes', networkID],
+    queryFn: () => listVirtualRoutes(networkID),
+    enabled: Boolean(networkID),
   })
   const devices = useQuery({ queryKey: ['devices'], queryFn: listDevices })
 
@@ -78,6 +91,12 @@ export function LanPage() {
       setACLFormOpen(true)
     }
   }, [aclForm, editingACL])
+  useEffect(() => {
+    if (editingRoute) {
+      routeForm.setFieldsValue(normalizeRouteForm(editingRoute))
+      setRouteFormOpen(true)
+    }
+  }, [editingRoute, routeForm])
 
   const deviceOptions = useMemo(() => (devices.data || []).map((device) => ({
     label: device.name ? `${device.name} (${device.id})` : device.id,
@@ -132,6 +151,25 @@ export function LanPage() {
     onSuccess: () => {
       message.success('ACL 规则已删除')
       queryClient.invalidateQueries({ queryKey: ['lan', 'acl'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
+  })
+  const routeMutation = useMutation<unknown, Error, RouteForm>({
+    mutationFn: (payload: RouteForm) => editingRoute ? updateVirtualRoute(editingRoute.id, payload) : createVirtualRoute(payload),
+    onSuccess: () => {
+      message.success('虚拟路由已保存')
+      setEditingRoute(null)
+      setRouteFormOpen(false)
+      routeForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['lan', 'routes'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
+  })
+  const deleteRouteMutation = useMutation({
+    mutationFn: deleteVirtualRoute,
+    onSuccess: () => {
+      message.success('虚拟路由已删除')
+      queryClient.invalidateQueries({ queryKey: ['lan', 'routes'] })
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
   })
@@ -315,6 +353,91 @@ export function LanPage() {
       ),
     },
     {
+      key: 'routes',
+      label: '虚拟路由',
+      children: (
+        <Card>
+          <div className="lan-section-toolbar">
+            <Typography.Text type="secondary">第一阶段仅支持子网宣告，不支持默认路由、出口网关或 DNS 路由。</Typography.Text>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditingRoute(null)
+                routeForm.setFieldsValue(defaultRouteForm(networkID))
+                setRouteFormOpen(true)
+              }}
+              disabled={!networkID}
+            >
+              新增路由
+            </Button>
+          </div>
+          {routeFormOpen && (
+            <Form form={routeForm} layout="vertical" className="lan-form" onFinish={(values) => routeMutation.mutate(normalizeRouteForm(values))}>
+              <Form.Item name="network_id" hidden><InputNumber /></Form.Item>
+              <Form.Item name="device_id" label="宣告设备" rules={[{ required: true, message: '请选择宣告设备' }]}>
+                <Select showSearch options={deviceOptions} optionFilterProp="label" placeholder="选择设备" />
+              </Form.Item>
+              <Form.Item
+                name="cidr"
+                label="子网 CIDR"
+                rules={[
+                  { required: true, message: '请输入子网 CIDR' },
+                  { pattern: /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/, message: '请输入 CIDR，例如 192.168.1.0/24' },
+                  {
+                    validator: (_, value) => value === '0.0.0.0/0'
+                      ? Promise.reject(new Error('第一阶段不支持默认路由'))
+                      : Promise.resolve(),
+                  },
+                ]}
+              >
+                <Input placeholder="192.168.1.0/24" />
+              </Form.Item>
+              <Form.Item name="advertise" label="宣告给其他设备" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item name="accept" label="接受该子网路由" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={routeMutation.isPending}>保存路由</Button>
+                <Button onClick={() => { setEditingRoute(null); setRouteFormOpen(false); routeForm.resetFields() }}>取消</Button>
+              </Space>
+            </Form>
+          )}
+          <Table
+            rowKey="id"
+            loading={routes.isLoading}
+            dataSource={routes.data || []}
+            columns={[
+              { title: '宣告设备', dataIndex: 'device_id', render: (v) => deviceName(v) },
+              { title: '子网 CIDR', dataIndex: 'cidr', render: (v) => <Typography.Text copyable>{v}</Typography.Text> },
+              { title: '宣告', dataIndex: 'advertise', render: (v) => <Tag color={v ? 'green' : 'default'}>{v ? '开启' : '关闭'}</Tag> },
+              { title: '接受', dataIndex: 'accept', render: (v) => <Tag color={v ? 'blue' : 'default'}>{v ? '开启' : '关闭'}</Tag> },
+              { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
+              {
+                title: '操作',
+                width: 140,
+                render: (_, row) => (
+                  <Space>
+                    <Tooltip title="编辑路由">
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingRoute(row)} />
+                    </Tooltip>
+                    <Popconfirm title="删除路由" description="确认删除这条虚拟路由？" onConfirm={() => deleteRouteMutation.mutate(row.id)}>
+                      <Tooltip title="删除路由">
+                        <Button size="small" danger icon={<DeleteOutlined />} loading={deleteRouteMutation.isPending} />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
+            ]}
+            scroll={{ x: 1000 }}
+          />
+        </Card>
+      ),
+    },
+    {
       key: 'status',
       label: 'LAN 状态',
       children: (
@@ -377,6 +500,20 @@ function normalizeACLForm(rule: Partial<VirtualACLRulePayload>): ACLForm {
 
 function defaultACLForm(networkID?: number): ACLForm {
   return normalizeACLForm({ network_id: networkID || 0, protocol: 'tcp', action: 'allow', enabled: true })
+}
+
+function normalizeRouteForm(route: Partial<VirtualRoutePayload>): RouteForm {
+  return {
+    network_id: Number(route.network_id || 0),
+    device_id: route.device_id || '',
+    cidr: route.cidr || '',
+    advertise: route.advertise !== false,
+    accept: route.accept !== false,
+  }
+}
+
+function defaultRouteForm(networkID?: number): RouteForm {
+  return normalizeRouteForm({ network_id: networkID || 0, advertise: true, accept: true })
 }
 
 function formatProtocol(protocol?: string) {

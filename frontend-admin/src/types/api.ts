@@ -172,6 +172,19 @@ export type VirtualACLRule = {
 
 export type VirtualACLRulePayload = Omit<VirtualACLRule, 'id' | 'created_at' | 'updated_at'>
 
+export type VirtualRoute = {
+  id: number
+  device_id: string
+  network_id: number
+  cidr: string
+  advertise: boolean
+  accept: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type VirtualRoutePayload = Omit<VirtualRoute, 'id' | 'created_at' | 'updated_at'>
+
 export type VirtualPeerState = {
   device_id: string
   peer_id: string

@@ -155,6 +155,63 @@ func (a *App) handleAdminLANACLRule(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleAdminLANRoutes(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+		routes, err := a.db.ListVirtualRoutes(r.Context(), networkID, deviceID)
+		writeJSONOrError(w, routes, err)
+	case http.MethodPost:
+		route, err := a.decodeVirtualRoute(r)
+		if err == nil {
+			err = a.db.UpsertVirtualRoute(r.Context(), route)
+		}
+		if err == nil {
+			routes, listErr := a.db.ListVirtualRoutes(r.Context(), route.NetworkID, route.DeviceID)
+			if listErr != nil {
+				err = listErr
+			} else {
+				for _, item := range routes {
+					if item.CIDR == route.CIDR {
+						route = item
+						break
+					}
+				}
+			}
+		}
+		writeJSONOrError(w, route, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
+func (a *App) handleAdminLANRoute(w http.ResponseWriter, r *http.Request) {
+	id, err := parseLANPathID(r.URL.Path, "/api/admin/lan/routes/")
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		route, err := a.decodeVirtualRoute(r)
+		if err == nil {
+			route.ID = id
+			err = a.db.UpsertVirtualRoute(r.Context(), route)
+		}
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	case http.MethodDelete:
+		err := a.db.DeleteVirtualRoute(r.Context(), id)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
 func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -395,6 +452,39 @@ func decodeVirtualACLRule(r *http.Request) (store.VirtualACLRule, error) {
 		return rule, badRequest("bad_acl", "invalid port range")
 	}
 	return rule, nil
+}
+
+func (a *App) decodeVirtualRoute(r *http.Request) (store.VirtualRoute, error) {
+	var route store.VirtualRoute
+	if err := json.NewDecoder(r.Body).Decode(&route); err != nil {
+		return route, badRequest("bad_json", "bad json")
+	}
+	route.DeviceID = strings.TrimSpace(route.DeviceID)
+	route.CIDR = strings.TrimSpace(route.CIDR)
+	if route.NetworkID <= 0 || route.DeviceID == "" || route.CIDR == "" {
+		return route, badRequest("bad_route", "network_id, device_id and cidr are required")
+	}
+	if err := validateSubnetAdvertisement(route.CIDR); err != nil {
+		return route, err
+	}
+	if _, err := a.db.GetDevice(r.Context(), route.DeviceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return route, badRequest("device_not_found", "device not found")
+		}
+		return route, err
+	}
+	return route, nil
+}
+
+func validateSubnetAdvertisement(cidr string) error {
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil || ip.To4() == nil || ipNet == nil {
+		return badRequest("bad_route", "cidr must be an ipv4 subnet")
+	}
+	if cidr == "0.0.0.0/0" {
+		return badRequest("default_route_forbidden", "default route is not supported")
+	}
+	return nil
 }
 
 func parseLANPathID(path, prefix string) (int64, error) {

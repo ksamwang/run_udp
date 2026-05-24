@@ -63,6 +63,7 @@ type Store interface {
 	DeleteVirtualACLRule(ctx context.Context, id int64) error
 	UpsertVirtualRoute(ctx context.Context, route store.VirtualRoute) error
 	ListVirtualRoutes(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualRoute, error)
+	DeleteVirtualRoute(ctx context.Context, id int64) error
 	PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error
 	ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error)
 }
