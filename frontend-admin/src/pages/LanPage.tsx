@@ -788,6 +788,7 @@ export function LanPage() {
               { title: '路径原因', dataIndex: 'path_reason', render: (v) => v || '-' },
               { title: 'Fallback 原因', dataIndex: 'fallback_reason', render: (v) => v || '-' },
               { title: '流量类别', dataIndex: 'traffic_class', render: (v) => v ? <Tag>{v}</Tag> : '-' },
+              { title: 'TCP Fast Path', dataIndex: 'tcp_fast_path', render: (v) => v ? <Tag color={tcpFastPathTagColor(v)}>{v}</Tag> : '-' },
               { title: 'RTT', dataIndex: 'rtt_ms', render: (v) => v ? `${v} ms` : '-' },
               { title: '估算速率', dataIndex: 'estimated_bps', render: (v) => v ? `${formatBytes(v)}/s` : '-' },
               { title: 'MTU/MSS', render: (_, row) => row.mtu ? `${row.mtu} / ${row.mss || '-'}` : '-' },
@@ -915,6 +916,18 @@ function pathTagColor(value?: string) {
       return 'blue'
     case 'relay_http':
       return 'purple'
+    default:
+      return 'default'
+  }
+}
+
+function tcpFastPathTagColor(value?: string) {
+  switch (value) {
+    case 'auto_candidate':
+    case 'force_candidate':
+      return 'blue'
+    case 'off':
+      return 'default'
     default:
       return 'default'
   }

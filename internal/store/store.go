@@ -197,6 +197,7 @@ type VirtualPeerState struct {
 	NATType          string `json:"nat_type"`
 	FallbackReason   string `json:"fallback_reason"`
 	TrafficClass     string `json:"traffic_class"`
+	TCPFastPath      string `json:"tcp_fast_path"`
 	AdapterState     string `json:"adapter_state"`
 	RouteConflict    string `json:"route_conflict"`
 	SelectedCIDR     string `json:"selected_cidr"`

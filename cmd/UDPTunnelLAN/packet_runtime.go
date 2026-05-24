@@ -1920,9 +1920,11 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 			}
 			natType := lanNATTypeForPeer(p2p, session.PeerID, dataPath)
 			fallbackReason := lanFallbackReason(p2p, dataPath, reason)
+			trafficClass := lanCurrentTrafficClass(p2p, session.PeerID)
+			tcpFastPath := lanTCPFastPathState(resp.Network.TCPFastPath, trafficClass)
 			state := store.VirtualPeerState{
 				DeviceID: deviceID, PeerID: session.PeerID, NetworkID: networkID, State: session.State, Path: session.Path,
-				DataPath: dataPath, PathReason: reason, NATType: natType, FallbackReason: fallbackReason, TrafficClass: lanCurrentTrafficClass(p2p, session.PeerID),
+				DataPath: dataPath, PathReason: reason, NATType: natType, FallbackReason: fallbackReason, TrafficClass: trafficClass, TCPFastPath: tcpFastPath,
 				AdapterState: "up", MTU: mtu, MSS: mss, TxBytes: int64(tx), RxBytes: int64(rx), EstimatedBps: estimatedBps,
 				LastError: session.LastError, LastTransitionAt: session.LastSeenAt.Format(time.RFC3339),
 			}
@@ -2012,6 +2014,24 @@ func lanCurrentTrafficClass(p2p *lanP2P, peerID string) string {
 		return ""
 	}
 	return p2p.currentTrafficClass(peerID)
+}
+
+func lanTCPFastPathState(policy, trafficClass string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		policy = "auto"
+	}
+	switch policy {
+	case "off":
+		return "off"
+	case "force":
+		return "force_candidate"
+	default:
+		if trafficClass == lanTrafficThroughput {
+			return "auto_candidate"
+		}
+		return "auto_idle"
+	}
 }
 
 func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {

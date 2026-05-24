@@ -314,6 +314,25 @@ func TestLANTCPFastPathCandidate(t *testing.T) {
 	}
 }
 
+func TestLANTCPFastPathState(t *testing.T) {
+	tests := []struct {
+		policy       string
+		trafficClass string
+		want         string
+	}{
+		{policy: "off", trafficClass: lanTrafficThroughput, want: "off"},
+		{policy: "force", trafficClass: lanTrafficInteractive, want: "force_candidate"},
+		{policy: "auto", trafficClass: lanTrafficThroughput, want: "auto_candidate"},
+		{policy: "auto", trafficClass: lanTrafficInteractive, want: "auto_idle"},
+		{policy: "", trafficClass: "", want: "auto_idle"},
+	}
+	for _, tt := range tests {
+		if got := lanTCPFastPathState(tt.policy, tt.trafficClass); got != tt.want {
+			t.Fatalf("lanTCPFastPathState(%q,%q)=%q, want %q", tt.policy, tt.trafficClass, got, tt.want)
+		}
+	}
+}
+
 func TestLANWintunReadStatsClassifiesPackets(t *testing.T) {
 	stats := &lanWintunReadStats{lastLog: time.Now()}
 	icmp := make([]byte, 40)

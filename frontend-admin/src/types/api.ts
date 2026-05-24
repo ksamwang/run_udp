@@ -240,6 +240,7 @@ export type VirtualPeerState = {
   nat_type: string
   fallback_reason: string
   traffic_class: string
+  tcp_fast_path: string
   adapter_state: string
   route_conflict: string
   selected_cidr: string
