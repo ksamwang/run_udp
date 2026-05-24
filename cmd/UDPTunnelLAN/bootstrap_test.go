@@ -44,19 +44,52 @@ func TestRequestLANBootstrap(t *testing.T) {
 }
 
 func TestLANNetworkMTUMSS(t *testing.T) {
-	network := store.VirtualNetwork{MTU: 1400, MSS: 1180}
-	if got := lanNetworkMTU(network); got != 1400 {
-		t.Fatalf("mtu=%d", got)
+	tests := []struct {
+		name    string
+		network store.VirtualNetwork
+		wantMTU int
+		wantMSS int
+	}{
+		{
+			name:    "explicit mtu mss",
+			network: store.VirtualNetwork{MTU: 1400, MSS: 1180},
+			wantMTU: 1400,
+			wantMSS: 1180,
+		},
+		{
+			name:    "mtu only",
+			network: store.VirtualNetwork{MTU: 1280},
+			wantMTU: 1280,
+			wantMSS: 1200,
+		},
+		{
+			name:    "defaults",
+			network: store.VirtualNetwork{},
+			wantMTU: wintun.DefaultMTU,
+			wantMSS: vnet.MSSForMTU(wintun.DefaultMTU),
+		},
+		{
+			name:    "large mtu clamps mss",
+			network: store.VirtualNetwork{MTU: 1500, MSS: 0},
+			wantMTU: 1500,
+			wantMSS: 1200,
+		},
+		{
+			name:    "small mtu floors mss",
+			network: store.VirtualNetwork{MTU: 520},
+			wantMTU: 520,
+			wantMSS: vnet.MSSForMTU(520),
+		},
 	}
-	if got := lanNetworkMSS(network, 1400); got != 1180 {
-		t.Fatalf("mss=%d", got)
-	}
-	defaults := store.VirtualNetwork{}
-	if got := lanNetworkMTU(defaults); got != wintun.DefaultMTU {
-		t.Fatalf("default mtu=%d", got)
-	}
-	if got := lanNetworkMSS(defaults, wintun.DefaultMTU); got != vnet.MSSForMTU(wintun.DefaultMTU) {
-		t.Fatalf("default mss=%d", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lanNetworkMTU(tt.network); got != tt.wantMTU {
+				t.Fatalf("mtu=%d want=%d", got, tt.wantMTU)
+			}
+			if got := lanNetworkMSS(tt.network, tt.wantMTU); got != tt.wantMSS {
+				t.Fatalf("mss=%d want=%d", got, tt.wantMSS)
+			}
+		})
 	}
 }
 
@@ -116,6 +149,27 @@ func TestValidateLANRouteSelectionRejectsVirtualIPOutsideCIDR(t *testing.T) {
 func TestValidateLANRouteSelectionAcceptsServerCIDR(t *testing.T) {
 	if err := validateLANRouteSelection("172.16.10.2", "172.16.10.0/24", wintun.SystemState{SelectedCIDR: "172.16.10.0/24"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLANMSSForMTUBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		mtu  int
+		want int
+	}{
+		{name: "1500", mtu: 1500, want: 1200},
+		{name: "1400", mtu: 1400, want: 1200},
+		{name: "1280", mtu: 1280, want: 1200},
+		{name: "576", mtu: 576, want: 536},
+		{name: "default", mtu: 0, want: vnet.MSSForMTU(wintun.DefaultMTU)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := vnet.MSSForMTU(tt.mtu); got != tt.want {
+				t.Fatalf("mss=%d want=%d", got, tt.want)
+			}
+		})
 	}
 }
 
