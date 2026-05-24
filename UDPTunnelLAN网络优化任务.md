@@ -46,7 +46,12 @@
 - [x] 将 LAN KCP window 提升到接近 bulk 的级别，作为第一轮吞吐优化。
 - [x] 为 LAN KCP 路径设置较大的 UDP read/write buffer。
 - [x] 增加测试覆盖 `lan-packet` profile 使用独立参数。
-- [ ] 压测 P2P KCP 路径吞吐，记录优化前后差异。
+- [x] 压测 P2P KCP 路径吞吐，记录优化前后差异。
+
+本轮本机 P2P KCP 相关基准：
+
+- `BenchmarkLANKCPFrameRoundTrip1KB`: `787.8 ns/op`, `1299.77 MB/s`, `2296 B/op`, `6 allocs/op`
+- `TestProfileConfig` 确认 `lan-packet` 与 `bulk` 均使用 `KCPWindow=8192` 和 `UDPSocketBuffer=16MB`，`interactive` 保持 `KCPWindow=1024`。
 
 ### P0-2 优先使用 UDP datagram fast path 承载原始 IP 包
 
@@ -75,12 +80,18 @@
 
 任务：
 
-- [ ] 在 datagram 未就绪时，减少单条 KCP stream 对全部流量的影响。
-- [ ] 评估按 peer 多 KCP session、按流分类或分优先级队列的可行性。
+- [x] 在 datagram 未就绪时，减少单条 KCP stream 对全部流量的影响。
+- [x] 评估按 peer 多 KCP session、按流分类或分优先级队列的可行性。
 - [x] 对 ICMP、TCP SYN、交互小包给予更高发送优先级。
 - [x] 避免大包或持续吞吐流量阻塞交互流量。
 - [x] 吞吐类流量改为小批量延迟 flush，避免和交互流同等优先级立即发送。
 - [x] 增加测试覆盖“文件传输同时 ping/RDP”时交互包优先发送。
+
+评估结论：
+
+- 首选路径改为加密 UDP datagram 后，原始 IP 包默认不再进入单条可靠 KCP stream。
+- datagram 未就绪时，交互小包通过发送优先级和短队列降低被吞吐流阻塞的概率。
+- SMB、文件传输和持续大流量由 TCP fast path 使用独立 `bulk` KCP session 承接，避免和普通 LAN packet 共用同一条 `lan-packet` KCP stream。
 
 ## P1：重做 relay 性能路径
 

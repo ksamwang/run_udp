@@ -1634,6 +1634,25 @@ func TestLANKCPFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func BenchmarkLANKCPFrameRoundTrip1KB(b *testing.B) {
+	payload := bytes.Repeat([]byte{1}, 1024)
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		if err := writeLANFrame(&buf, payload); err != nil {
+			b.Fatal(err)
+		}
+		got, err := readLANFrame(&buf)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(got) != len(payload) {
+			b.Fatal("bad LAN KCP frame length")
+		}
+	}
+}
+
 func TestWaitLANKCPReadyAckRequiresAck(t *testing.T) {
 	left, right := net.Pipe()
 	defer left.Close()
