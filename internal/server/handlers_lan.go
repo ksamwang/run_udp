@@ -790,13 +790,6 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
-	if err := a.db.UpsertDeviceProductState(r.Context(), store.DeviceProductState{
-		DeviceID: req.DeviceID, Product: "lan", Online: false, LastSource: "lan_bootstrap",
-		Metadata: map[string]any{"network_id": network.ID, "virtual_ip": address.VirtualIP},
-	}); err != nil {
-		writeJSONOrError(w, nil, err)
-		return
-	}
 	if strings.TrimSpace(req.PublicKey) != "" {
 		if err := a.db.UpsertVirtualDeviceKey(r.Context(), store.VirtualDeviceKey{
 			DeviceID: req.DeviceID, Algorithm: "ed25519", PublicKey: strings.TrimSpace(req.PublicKey),
@@ -804,6 +797,13 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 			writeJSONOrError(w, nil, err)
 			return
 		}
+	}
+	if err := a.db.UpsertDeviceProductState(r.Context(), store.DeviceProductState{
+		DeviceID: req.DeviceID, Product: "lan", Online: false, LastSource: "lan_bootstrap",
+		Metadata: map[string]any{"network_id": network.ID, "virtual_ip": address.VirtualIP},
+	}); err != nil {
+		writeJSONOrError(w, nil, err)
+		return
 	}
 	if strings.TrimSpace(address.DeviceID) == "" {
 		address, err = a.allocateVirtualAddress(r.Context(), network, req.DeviceID, strings.TrimSpace(req.DeviceName))
@@ -992,15 +992,12 @@ func (a *App) handleLANStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.db.PutVirtualPeerState(r.Context(), req.VirtualPeerState)
 	if err == nil {
-		err = a.db.UpsertDeviceProductState(r.Context(), store.DeviceProductState{
-			DeviceID: req.DeviceID, Product: "lan", Online: true, LastSource: "lan_status", LastError: req.LastError,
-			Metadata: map[string]any{
-				"network_id": req.NetworkID, "adapter_state": req.AdapterState, "selected_cidr": req.SelectedCIDR,
-				"route_conflict": req.RouteConflict, "active_sessions": req.ActiveSessions, "hot_paths": req.HotPaths,
-				"socket_rotations": req.SocketRotations, "last_rotation_reason": req.LastRotationReason,
-				"relay_disabled": req.RelayDisabled,
-			},
-		})
+		deviceState, stateErr := a.lanProductMetadata(r.Context(), req.VirtualPeerState)
+		if stateErr != nil {
+			err = stateErr
+		} else {
+			err = a.db.UpsertDeviceProductState(r.Context(), deviceState)
+		}
 	}
 	if err == nil {
 		for _, path := range req.LearnedPaths {
@@ -1023,6 +1020,34 @@ func (a *App) handleLANStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
+}
+
+func (a *App) lanProductMetadata(ctx context.Context, req store.VirtualPeerState) (store.DeviceProductState, error) {
+	states, err := a.lanDeviceStates(ctx, req.NetworkID)
+	if err != nil {
+		return store.DeviceProductState{}, err
+	}
+	var summary lanDeviceState
+	for _, state := range states {
+		if state.DeviceID == req.DeviceID {
+			summary = state
+			break
+		}
+	}
+	if summary.DeviceID == "" {
+		summary = lanDeviceState{DeviceID: req.DeviceID, NetworkID: req.NetworkID}
+	}
+	return store.DeviceProductState{
+		DeviceID: req.DeviceID, Product: "lan", Online: true, LastSource: "lan_status", LastError: firstNonEmpty(req.LastError, summary.LastError),
+		Metadata: map[string]any{
+			"network_id": req.NetworkID, "virtual_ip": summary.VirtualIP, "adapter_state": firstNonEmpty(req.AdapterState, summary.AdapterState),
+			"selected_cidr": firstNonEmpty(req.SelectedCIDR, summary.SelectedCIDR), "route_conflict": firstNonEmpty(req.RouteConflict, summary.RouteConflict),
+			"p2p_peers": summary.P2PPeers, "relay_peers": summary.RelayPeers, "down_peers": summary.DownPeers,
+			"active_sessions": summary.ActiveSessions, "hot_paths": summary.HotPaths,
+			"socket_rotations": summary.SocketRotations, "last_rotation_reason": firstNonEmpty(req.LastRotationReason, summary.LastRotationReason),
+			"relay_disabled": req.RelayDisabled || summary.RelayDisabled,
+		},
+	}, nil
 }
 
 func decodeVirtualNetwork(r *http.Request) (store.VirtualNetwork, error) {

@@ -1362,6 +1362,64 @@ func TestAgentBootstrapDoesNotCreateAgentCapability(t *testing.T) {
 	}
 }
 
+func TestProductStateMetadataConventions(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	mustUpsertDevice(t, a, ctx, "dev-b", true)
+	if _, err := a.db.CreateRule(ctx, store.ForwardRule{
+		Name: "rdp", SourceID: "dev-a", TargetID: "dev-b", LocalPort: 13389,
+		TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	network, err := a.db.CreateVirtualNetwork(ctx, store.VirtualNetwork{Name: "codex-test-lan", CIDR: "172.16.71.0/24", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{DeviceID: "dev-a", NetworkID: network.ID, VirtualIP: "172.16.71.2"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/register", map[string]any{
+		"device_id": "dev-a", "name": "dev-a", "addr": "203.0.113.1:1000", "upnp_addr": "192.0.2.1:1000", "nat_type": "cone",
+		"tunnels": []map[string]any{{
+			"peer": "dev-b", "state": "p2p", "via": "p2p",
+		}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("agent register status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{
+		"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID, "path": "p2p",
+		"adapter_state": "up", "selected_cidr": "172.16.71.0/24", "active_sessions": 2, "hot_paths": 1, "socket_rotations": 3,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lan status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	states, err := a.db.ListDeviceProductStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byProduct := map[string]store.DeviceProductState{}
+	for _, state := range states {
+		if state.DeviceID == "dev-a" {
+			byProduct[state.Product] = state
+		}
+	}
+	agent := byProduct["agent"]
+	if agent.LastSource != "agent_register" || agent.Metadata["addr"] != "203.0.113.1:1000" ||
+		agent.Metadata["upnp_addr"] != "192.0.2.1:1000" || agent.Metadata["nat_type"] != "cone" ||
+		agent.Metadata["tunnel_state"] != "p2p" || agent.Metadata["health_summary"] != "至少一条隧道正常" {
+		t.Fatalf("bad agent metadata: %+v", agent)
+	}
+	lan := byProduct["lan"]
+	if lan.LastSource != "lan_status" || lan.Metadata["virtual_ip"] != "172.16.71.2" ||
+		lan.Metadata["adapter_state"] != "up" || lan.Metadata["selected_cidr"] != "172.16.71.0/24" ||
+		lan.Metadata["p2p_peers"] == nil || lan.Metadata["active_sessions"] == nil || lan.Metadata["socket_rotations"] == nil {
+		t.Fatalf("bad lan metadata: %+v", lan)
+	}
+}
+
 func TestHandleAgentEndpointsRejectDisabledDevice(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

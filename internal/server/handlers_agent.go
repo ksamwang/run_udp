@@ -242,9 +242,26 @@ func (a *App) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 }
 
 func (a *App) putAgentProductState(ctx context.Context, source, deviceID, addr, upnpAddr, want, natType string, online bool, tunnels []agentTunnelReport) error {
+	rules, err := a.db.RulesForDevice(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	healthSummary := "无规则"
+	if len(rules) > 0 {
+		healthSummary = "有规则但未建链"
+		for _, t := range tunnels {
+			if t.State == "p2p" || t.State == "relay" {
+				healthSummary = "至少一条隧道正常"
+				break
+			}
+			if t.State == "backoff" {
+				healthSummary = "回退重试中"
+			}
+		}
+	}
 	metadata := map[string]any{
 		"addr": addr, "upnp_addr": upnpAddr, "want": want, "nat_type": natType,
-		"tunnel_state": "", "tunnel_via": "", "health_summary": "", "rule_count": 0,
+		"tunnel_state": "", "tunnel_via": "", "health_summary": healthSummary, "rule_count": len(rules),
 	}
 	lastError := ""
 	for _, t := range tunnels {

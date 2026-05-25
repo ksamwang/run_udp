@@ -59,6 +59,28 @@ func exerciseStore(ctx context.Context, s Store) error {
 	if err := s.UpsertDevice(ctx, "codex-test-B", "codex-test-B", "", "", "", true); err != nil {
 		return err
 	}
+	if err := s.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: "codex-test-A", Product: "agent", Online: true, LastSource: "agent_heartbeat",
+		LastError: "last", Metadata: map[string]any{"addr": "1.1.1.1:1", "rule_count": 1},
+	}); err != nil {
+		return err
+	}
+	productStates, err := s.ListDeviceProductStates(ctx)
+	if err != nil {
+		return err
+	}
+	foundProduct := false
+	for _, state := range productStates {
+		if state.DeviceID == "codex-test-A" && state.Product == "agent" {
+			foundProduct = true
+			if !state.Online || state.LastSource != "agent_heartbeat" || state.LastError != "last" || state.Metadata["addr"] != "1.1.1.1:1" {
+				return failf("bad product state: %+v", state)
+			}
+		}
+	}
+	if !foundProduct {
+		return failf("product state not found: %+v", productStates)
+	}
 	rule, err := s.CreateRule(ctx, store.ForwardRule{
 		Name: "codex-test-rdp", SourceID: "codex-test-A", TargetID: "codex-test-B", LocalPort: 13389,
 		TargetHost: "127.0.0.1", TargetPort: 3389, Enabled: true,
@@ -367,6 +389,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		"DELETE FROM virtual_device_keys WHERE device_id LIKE ?",
 		"DELETE FROM virtual_addresses WHERE device_id LIKE ? OR virtual_ip LIKE ? OR hostname LIKE ?",
 		"DELETE FROM virtual_networks WHERE name LIKE ? OR cidr = ?",
+		"DELETE FROM device_product_states WHERE device_id LIKE ?",
 		"DELETE FROM admin_refresh_tokens WHERE user_id = ? OR token_hash = ?",
 		"DELETE FROM admin_users WHERE id = ? OR username = ?",
 		"DELETE FROM audit_events WHERE kind = ?",
@@ -384,6 +407,7 @@ func cleanupMySQL(t *testing.T, s *MySQLStore) {
 		{"codex-test-%"},
 		{"codex-test-%", "172.16.%", "office-%"},
 		{"codex-test-%", "172.16.21.0/24"},
+		{"codex-test-%"},
 		{"codex-test-admin", "codex-test-token-hash"},
 		{"codex-test-admin", "codex-admin"},
 		{"codex-test"},
