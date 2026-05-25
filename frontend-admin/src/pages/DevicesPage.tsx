@@ -63,7 +63,7 @@ export function DevicesPage() {
       <div className="page-toolbar">
         <div>
           <Typography.Title level={3}>设备</Typography.Title>
-          <Typography.Text type="secondary">查看 agent 在线状态、地址和健康摘要。</Typography.Text>
+          <Typography.Text type="secondary">统一设备资产总览；Agent 转发和 UDPTunnelLAN 虚拟局域网状态将按产品分开展示。</Typography.Text>
         </div>
         <Button icon={<ReloadOutlined />} onClick={() => devices.refetch()} loading={devices.isFetching}>
           刷新

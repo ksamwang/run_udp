@@ -1,4 +1,4 @@
-import { Button, Drawer, Form, Input, InputNumber, Select, Segmented, Switch } from 'antd'
+import { Button, Drawer, Form, Input, InputNumber, Select, Segmented, Switch, Typography } from 'antd'
 import { useEffect } from 'react'
 import type { Device, ForwardRule, ForwardRulePayload } from '../types/api'
 
@@ -37,7 +37,7 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
 
   return (
     <Drawer
-      title={rule ? '编辑转发规则' : '新增转发规则'}
+      title={rule ? '编辑 Agent 转发规则' : '新增 Agent 转发规则'}
       open={open}
       onClose={onClose}
       width={520}
@@ -52,6 +52,7 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
         <Form.Item name="name" label="规则名" rules={[{ required: true, message: '请输入规则名' }]}>
           <Input placeholder="例如 office-rdp" />
         </Form.Item>
+        <Typography.Text type="secondary">该规则只适用于老 Agent 客户端，入口和出口设备都需要运行 Agent。</Typography.Text>
         <Form.Item name="enabled" label="启用" valuePropName="checked">
           <Switch />
         </Form.Item>

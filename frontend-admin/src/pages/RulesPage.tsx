@@ -77,12 +77,12 @@ export function RulesPage() {
     <div className="page-stack">
       <div className="page-toolbar">
         <div>
-          <Typography.Title level={3}>转发规则</Typography.Title>
-          <Typography.Text type="secondary">查看入口设备、本地端口、出口目标和当前运行状态。</Typography.Text>
+          <Typography.Title level={3}>Agent 转发规则</Typography.Title>
+          <Typography.Text type="secondary">仅适用于老 Agent 客户端；UDPTunnelLAN 设备请在虚拟局域网页管理。</Typography.Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => rules.refetch()} loading={rules.isFetching}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingRule(null); setDrawerOpen(true) }}>新增规则</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingRule(null); setDrawerOpen(true) }}>新增 Agent 规则</Button>
         </Space>
       </div>
       <Card>
@@ -111,7 +111,7 @@ export function RulesPage() {
                   <Tooltip title="编辑规则">
                     <Button size="small" icon={<EditOutlined />} onClick={() => { setEditingRule(r); setDrawerOpen(true) }} />
                   </Tooltip>
-                  <Popconfirm title="删除规则" description="确认删除这条转发规则？" onConfirm={() => deleteMutation.mutate(r.id)}>
+                  <Popconfirm title="删除 Agent 规则" description="确认删除这条 Agent 转发规则？" onConfirm={() => deleteMutation.mutate(r.id)}>
                     <Tooltip title="删除规则">
                       <Button size="small" danger icon={<DeleteOutlined />} loading={deleteMutation.isPending} />
                     </Tooltip>

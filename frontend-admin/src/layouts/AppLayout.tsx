@@ -30,7 +30,7 @@ export function AppLayout({ children, activePage, pageTitle, user, lockedToSetti
           items={[
             { key: 'dashboard', icon: <DashboardOutlined />, label: '总览', disabled: Boolean(lockedToSettings) },
             { key: 'devices', icon: <TeamOutlined />, label: '设备', disabled: Boolean(lockedToSettings) },
-            { key: 'rules', icon: <SwapOutlined />, label: '转发规则', disabled: Boolean(lockedToSettings) },
+            { key: 'rules', icon: <SwapOutlined />, label: 'Agent 转发规则', disabled: Boolean(lockedToSettings) },
             { key: 'sessions', icon: <HistoryOutlined />, label: '会话', disabled: Boolean(lockedToSettings) },
             { key: 'lan', icon: <ApartmentOutlined />, label: '虚拟局域网', disabled: Boolean(lockedToSettings) },
             { key: 'audit', icon: <AuditOutlined />, label: '审计日志', disabled: Boolean(lockedToSettings) },

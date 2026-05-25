@@ -34,7 +34,7 @@ export function LoginPage({ sessionMessage, onLoggedIn }: LoginPageProps) {
         <div className="login-copy">
           <Typography.Title>UDP Tunnel</Typography.Title>
           <Typography.Paragraph>
-            管理设备、转发规则和隧道运行状态。
+            管理设备资产、Agent 转发规则和 UDPTunnelLAN 虚拟局域网状态。
           </Typography.Paragraph>
         </div>
         <Card className="login-card" title="管理员登录">

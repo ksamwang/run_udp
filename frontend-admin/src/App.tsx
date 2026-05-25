@@ -11,7 +11,7 @@ import { LoginPage } from './pages/LoginPage'
 const pageTitles: Record<string, string> = {
   dashboard: '总览',
   devices: '设备',
-  rules: '转发规则',
+  rules: 'Agent 转发规则',
   sessions: '会话',
   lan: '虚拟局域网',
   audit: '审计日志',
