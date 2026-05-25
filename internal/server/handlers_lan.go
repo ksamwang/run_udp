@@ -46,6 +46,7 @@ type lanDeviceState struct {
 	NetworkID          int64  `json:"network_id"`
 	VirtualIP          string `json:"virtual_ip"`
 	Hostname           string `json:"hostname"`
+	LANStatus          string `json:"lan_status"`
 	AdapterState       string `json:"adapter_state"`
 	SelectedCIDR       string `json:"selected_cidr"`
 	RouteConflict      string `json:"route_conflict"`
@@ -515,9 +516,30 @@ func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDevice
 	}
 	out := make([]lanDeviceState, 0, len(byDevice))
 	for _, state := range byDevice {
+		state.LANStatus = lanStatusForDevice(*state)
 		out = append(out, *state)
 	}
 	return out, nil
+}
+
+func lanStatusForDevice(state lanDeviceState) string {
+	if state.LastError != "" || strings.EqualFold(state.AdapterState, "error") {
+		return "error"
+	}
+	if state.LastStatusAt == "" {
+		if state.LastBootstrapAt != "" {
+			return "unreported"
+		}
+		return "unknown"
+	}
+	t, err := time.Parse(time.RFC3339, state.LastStatusAt)
+	if err != nil {
+		return "unknown"
+	}
+	if time.Since(t) <= lanOnlineTTL {
+		return "online"
+	}
+	return "offline"
 }
 
 func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {

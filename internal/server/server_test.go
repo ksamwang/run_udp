@@ -565,7 +565,7 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		}
 	}
 	if devAState.DeviceID != "dev-a" || devAState.VirtualIP != "172.16.10.10" ||
-		devAState.AdapterState != "up" || devAState.RelayPeers != 1 {
+		devAState.LANStatus != "online" || devAState.AdapterState != "up" || devAState.RelayPeers != 1 {
 		t.Fatalf("bad lan device states: %+v", deviceStates)
 	}
 	for _, state := range deviceStates {

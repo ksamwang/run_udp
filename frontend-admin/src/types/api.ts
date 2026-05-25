@@ -318,6 +318,7 @@ export type VirtualDeviceState = {
   network_id: number
   virtual_ip: string
   hostname: string
+  lan_status: string
   adapter_state: string
   selected_cidr: string
   route_conflict: string

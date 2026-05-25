@@ -203,6 +203,13 @@ export function LanPage() {
   const currentTCPFastPath = tcpFastPathLabel(currentNetwork?.tcp_fast_path)
   const currentMTU = currentNetwork?.mtu || 1280
   const currentMSS = currentNetwork?.mss || Math.max(currentMTU - 40, 536)
+  const stateByAddress = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof deviceStates.data>[number]>()
+    for (const state of deviceStates.data || []) {
+      m.set(`${state.network_id}:${state.device_id}`, state)
+    }
+    return m
+  }, [deviceStates.data])
 
   const refreshLAN = () => {
     queryClient.invalidateQueries({ queryKey: ['lan'] })
@@ -469,12 +476,45 @@ export function LanPage() {
           )}
           <Table
             rowKey={(row) => `${row.network_id}:${row.device_id}`}
-            loading={addresses.isLoading}
+            loading={addresses.isLoading || deviceStates.isLoading}
             dataSource={addresses.data || []}
             columns={[
               { title: '设备', dataIndex: 'device_id', render: (v) => <Typography.Text copyable>{deviceName(v)}</Typography.Text> },
               { title: '虚拟 IP', dataIndex: 'virtual_ip', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
               { title: '主机名', dataIndex: 'hostname', render: (v) => v || '-' },
+              {
+                title: 'LAN 在线',
+                render: (_, row) => {
+                  const state = stateByAddress.get(`${row.network_id}:${row.device_id}`)
+                  return <Tag color={lanStatusColor(state?.lan_status)}>{lanStatusLabel(state?.lan_status)}</Tag>
+                },
+              },
+              {
+                title: '虚拟网卡',
+                render: (_, row) => {
+                  const state = stateByAddress.get(`${row.network_id}:${row.device_id}`)
+                  return <Tag color={state?.adapter_state === 'up' ? 'green' : state?.adapter_state === 'error' ? 'red' : 'default'}>{state?.adapter_state || '-'}</Tag>
+                },
+              },
+              {
+                title: '路径概况',
+                render: (_, row) => {
+                  const state = stateByAddress.get(`${row.network_id}:${row.device_id}`)
+                  return state ? `${state.p2p_peers || 0} / ${state.relay_peers || 0} / ${state.down_peers || 0}` : '-'
+                },
+              },
+              {
+                title: '最近状态',
+                render: (_, row) => formatTime(stateByAddress.get(`${row.network_id}:${row.device_id}`)?.last_status_at),
+              },
+              {
+                title: '最近错误',
+                render: (_, row) => stateByAddress.get(`${row.network_id}:${row.device_id}`)?.last_error || '-',
+              },
+              {
+                title: '路由冲突',
+                render: (_, row) => stateByAddress.get(`${row.network_id}:${row.device_id}`)?.route_conflict || '-',
+              },
               { title: 'Magic DNS', dataIndex: 'dns_enabled', render: (v) => <Tag color={v ? 'green' : 'default'}>{v ? '已预留' : '未启用'}</Tag> },
               {
                 title: '设备密钥',
@@ -488,7 +528,7 @@ export function LanPage() {
                   ) : <Tag color="orange">缺失</Tag>
                 },
               },
-              { title: '更新时间', dataIndex: 'updated_at', render: formatTime },
+              { title: '地址更新时间', dataIndex: 'updated_at', render: formatTime },
               {
                 title: '操作',
                 width: 220,
@@ -510,7 +550,7 @@ export function LanPage() {
                 ),
               },
             ]}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1500 }}
           />
         </Card>
       ),
@@ -778,6 +818,7 @@ export function LanPage() {
               { title: '设备', dataIndex: 'device_id', render: (v) => deviceName(v) },
               { title: '虚拟 IP', dataIndex: 'virtual_ip', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
               { title: '主机名', dataIndex: 'hostname', render: (v) => v || '-' },
+              { title: 'LAN 在线', dataIndex: 'lan_status', render: (v) => <Tag color={lanStatusColor(v)}>{lanStatusLabel(v)}</Tag> },
               { title: '虚拟网卡', dataIndex: 'adapter_state', render: (v) => <Tag color={v === 'up' ? 'green' : v === 'error' ? 'red' : 'default'}>{v || '-'}</Tag> },
               { title: '选择网段', dataIndex: 'selected_cidr', render: (v) => v || '-' },
               { title: '路由冲突', dataIndex: 'route_conflict', render: (v) => v || '-' },
@@ -1001,6 +1042,36 @@ function learnedQualityColor(value?: string) {
     case 'degraded':
       return 'orange'
     case 'bad':
+      return 'red'
+    default:
+      return 'default'
+  }
+}
+
+function lanStatusLabel(value?: string) {
+  switch (value) {
+    case 'online':
+      return '在线'
+    case 'offline':
+      return '离线'
+    case 'unreported':
+      return '未上报'
+    case 'error':
+      return '异常'
+    default:
+      return '未知'
+  }
+}
+
+function lanStatusColor(value?: string) {
+  switch (value) {
+    case 'online':
+      return 'green'
+    case 'offline':
+      return 'red'
+    case 'unreported':
+      return 'orange'
+    case 'error':
       return 'red'
     default:
       return 'default'
