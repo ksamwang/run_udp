@@ -30,9 +30,10 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
     })
   }, [form, open, rule])
 
-  const deviceOptions = devices.map((d) => ({
+  const agentDevices = devices.filter((d) => d.product_capabilities?.includes('Agent') || d.agent_last_source)
+  const deviceOptions = agentDevices.map((d) => ({
     value: d.id,
-    label: `${d.name || d.id} (${d.online ? '在线' : '离线'})`,
+    label: `${d.name || d.id} (${d.agent_online ? 'Agent 在线' : 'Agent 离线'})`,
   }))
 
   return (
@@ -52,7 +53,7 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
         <Form.Item name="name" label="规则名" rules={[{ required: true, message: '请输入规则名' }]}>
           <Input placeholder="例如 office-rdp" />
         </Form.Item>
-        <Typography.Text type="secondary">该规则只适用于老 Agent 客户端，入口和出口设备都需要运行 Agent。</Typography.Text>
+        <Typography.Text type="secondary">该规则只适用于老 Agent 客户端，入口和出口设备列表只显示已发现 Agent 能力的设备。</Typography.Text>
         <Form.Item name="enabled" label="启用" valuePropName="checked">
           <Switch />
         </Form.Item>
@@ -64,7 +65,7 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
           label="入口设备"
           rules={[{ required: true, message: '请选择入口设备' }]}
         >
-          <Select showSearch options={deviceOptions} optionFilterProp="label" />
+          <Select showSearch options={deviceOptions} optionFilterProp="label" placeholder="仅显示 Agent 设备" />
         </Form.Item>
         <Form.Item
           noStyle
@@ -84,7 +85,7 @@ export function RuleFormDrawer({ open, devices, rule, submitting, onClose, onSub
                 },
               ]}
             >
-              <Select showSearch options={deviceOptions} optionFilterProp="label" />
+              <Select showSearch options={deviceOptions} optionFilterProp="label" placeholder="仅显示 Agent 设备" />
             </Form.Item>
           )}
         </Form.Item>

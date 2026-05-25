@@ -434,6 +434,16 @@ func (a *App) validateRule(ctx context.Context, rule store.ForwardRule, excludeI
 	if !source.Enabled || !target.Enabled {
 		return badRequest("device_disabled", "source or target device is disabled")
 	}
+	agentCapable, err := a.agentCapableDevices(ctx)
+	if err != nil {
+		return err
+	}
+	if !agentCapable[source.ID] {
+		return badRequest("source_not_agent", "source device has no Agent capability")
+	}
+	if !agentCapable[target.ID] {
+		return badRequest("target_not_agent", "target device has no Agent capability")
+	}
 	if !rule.Enabled {
 		return nil
 	}
@@ -445,4 +455,18 @@ func (a *App) validateRule(ctx context.Context, rule store.ForwardRule, excludeI
 		return badRequest("local_port_conflict", "same source_id cannot reuse local_port across enabled rules")
 	}
 	return nil
+}
+
+func (a *App) agentCapableDevices(ctx context.Context) (map[string]bool, error) {
+	states, err := a.db.ListDeviceProductStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, state := range states {
+		if state.Product == "agent" && (state.LastSource == "agent_register" || state.LastSource == "agent_heartbeat") {
+			out[state.DeviceID] = true
+		}
+	}
+	return out, nil
 }

@@ -895,6 +895,35 @@ func TestHandleForwardsProfileValidationAndBulkRule(t *testing.T) {
 	}
 }
 
+func TestHandleForwardsRejectsNonAgentDevice(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	if err := a.db.UpsertDevice(ctx, "lan-only", "lan-only", "", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: "lan-only", Product: "lan", Online: true, LastSource: "lan_status",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAdminJSON(t, a, http.MethodPost, "/api/admin/rules", map[string]any{
+		"name": "bad", "source_id": "dev-a", "target_id": "lan-only", "profile": "interactive", "local_port": 1446,
+		"target_host": "127.0.0.1", "target_port": 3389, "enabled": true,
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["code"] != "target_not_agent" {
+		t.Fatalf("expected target_not_agent got %v body=%s", resp["code"], rec.Body.String())
+	}
+}
+
 func TestEnrichedRulesMatchesProfileTunnelState(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
@@ -2105,6 +2134,11 @@ func newTestApp(t *testing.T) *App {
 func mustUpsertDevice(t *testing.T, a *App, ctx context.Context, id string, enabled bool) {
 	t.Helper()
 	if err := a.db.UpsertDevice(ctx, id, id, "", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: id, Product: "agent", Online: true, LastSource: "agent_heartbeat",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.db.SetDeviceEnabled(ctx, id, enabled); err != nil {
