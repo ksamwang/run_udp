@@ -54,6 +54,10 @@ const (
 	lanPendingTTL           = 5 * time.Second
 	lanPendingMaxFrames     = 128
 	lanPendingMaxBytes      = 1024 * 1024
+	lanPendingMaxPerPeer    = 32
+	lanPendingMaxPerSession = 8
+	lanSessionIntentTTL     = 30 * time.Second
+	lanSessionIntentMax     = 256
 	lanDatagramReadyFrame   = "UDPTunnelLAN-DATAGRAM-READY"
 )
 
@@ -356,6 +360,9 @@ func sendPackets(ctx context.Context, serverHTTP string, link *packet.LinkManage
 		case <-ctx.Done():
 			return
 		case frame := <-outbound:
+			if p2p != nil {
+				p2p.RecordSessionIntent(ctx, frame)
+			}
 			batch = append(batch, frame)
 			priority := lanFramePriority(frame)
 			if priority <= 1 || len(batch) >= lanThroughputBatchMax {
@@ -387,13 +394,15 @@ type lanPendingFrame struct {
 }
 
 type lanPendingQueue struct {
-	maxFrames int
-	maxBytes  int
-	ttl       time.Duration
-	bytes     int
-	frames    []lanPendingFrame
-	nextID    uint64
-	stats     lanPendingStats
+	maxFrames     int
+	maxBytes      int
+	maxPerPeer    int
+	maxPerSession int
+	ttl           time.Duration
+	bytes         int
+	frames        []lanPendingFrame
+	nextID        uint64
+	stats         lanPendingStats
 }
 
 type lanPendingStats struct {
@@ -410,7 +419,10 @@ type lanPendingStats struct {
 }
 
 func newLANPendingQueue(maxFrames, maxBytes int, ttl time.Duration) *lanPendingQueue {
-	return &lanPendingQueue{maxFrames: maxFrames, maxBytes: maxBytes, ttl: ttl}
+	return &lanPendingQueue{
+		maxFrames: maxFrames, maxBytes: maxBytes, maxPerPeer: lanPendingMaxPerPeer,
+		maxPerSession: lanPendingMaxPerSession, ttl: ttl,
+	}
 }
 
 func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
@@ -437,6 +449,8 @@ func (q *lanPendingQueue) Add(frames []packet.RoutedFrame) {
 			q.stats.Throughput++
 		}
 		q.trim()
+		q.trimPeer(frame.DstDevice)
+		q.trimSession(lanFrameSessionKey(frame))
 	}
 }
 
@@ -564,6 +578,56 @@ func isLANFastPathPort(port int) bool {
 	}
 }
 
+type lanSessionIntent struct {
+	Key          string
+	PeerID       string
+	Protocol     string
+	SrcIP        string
+	DstIP        string
+	SrcPort      int
+	DstPort      int
+	TrafficClass string
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	Packets      int
+}
+
+func newLANSessionIntent(frame packet.RoutedFrame, now time.Time) (lanSessionIntent, bool) {
+	header := frame.Header
+	if header.Protocol != packet.IPv4ProtocolTCP || !header.TCPSYN || strings.TrimSpace(frame.DstDevice) == "" {
+		return lanSessionIntent{}, false
+	}
+	key := lanFrameSessionKey(frame)
+	if key == "" {
+		return lanSessionIntent{}, false
+	}
+	return lanSessionIntent{
+		Key: key, PeerID: frame.DstDevice, Protocol: "tcp",
+		SrcIP: header.SourceIP.String(), DstIP: header.DestIP.String(),
+		SrcPort: header.SourcePort, DstPort: header.DestPort,
+		TrafficClass: classifyLANFrame(frame), FirstSeen: now, LastSeen: now, Packets: 1,
+	}, true
+}
+
+func lanFrameSessionKey(frame packet.RoutedFrame) string {
+	header := frame.Header
+	if strings.TrimSpace(frame.DstDevice) == "" || header.Protocol == 0 {
+		return ""
+	}
+	switch header.Protocol {
+	case packet.IPv4ProtocolTCP, packet.IPv4ProtocolUDP:
+		if header.SourcePort <= 0 || header.DestPort <= 0 || header.SourceIP == nil || header.DestIP == nil {
+			return ""
+		}
+		return strings.Join([]string{
+			strconv.FormatInt(frame.NetworkID, 10), frame.DstDevice, strconv.Itoa(int(header.Protocol)),
+			header.SourceIP.String(), header.DestIP.String(), strconv.Itoa(header.SourcePort), strconv.Itoa(header.DestPort),
+		}, "\x00")
+	default:
+		return ""
+	}
+}
+
 func (q *lanPendingQueue) Remove(delivered map[int]bool) {
 	if len(delivered) == 0 {
 		q.prune(time.Now())
@@ -627,11 +691,56 @@ func (q *lanPendingQueue) prune(now time.Time) {
 func (q *lanPendingQueue) trim() {
 	for len(q.frames) > q.maxFrames || (q.maxBytes > 0 && q.bytes > q.maxBytes) {
 		dropIndex := q.dropCandidateIndex()
-		q.bytes -= q.frames[dropIndex].size
-		q.stats.Dropped++
-		copy(q.frames[dropIndex:], q.frames[dropIndex+1:])
-		q.frames = q.frames[:len(q.frames)-1]
+		q.dropAt(dropIndex)
 	}
+}
+
+func (q *lanPendingQueue) trimPeer(peerID string) {
+	if q.maxPerPeer <= 0 || strings.TrimSpace(peerID) == "" {
+		return
+	}
+	for q.countPeer(peerID) > q.maxPerPeer {
+		q.dropAt(q.dropPeerCandidateIndex(peerID))
+	}
+}
+
+func (q *lanPendingQueue) trimSession(sessionKey string) {
+	if q.maxPerSession <= 0 || strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	for q.countSession(sessionKey) > q.maxPerSession {
+		q.dropAt(q.dropSessionCandidateIndex(sessionKey))
+	}
+}
+
+func (q *lanPendingQueue) countPeer(peerID string) int {
+	n := 0
+	for _, item := range q.frames {
+		if item.frame.DstDevice == peerID {
+			n++
+		}
+	}
+	return n
+}
+
+func (q *lanPendingQueue) countSession(sessionKey string) int {
+	n := 0
+	for _, item := range q.frames {
+		if lanFrameSessionKey(item.frame) == sessionKey {
+			n++
+		}
+	}
+	return n
+}
+
+func (q *lanPendingQueue) dropAt(index int) {
+	if index < 0 || index >= len(q.frames) {
+		return
+	}
+	q.bytes -= q.frames[index].size
+	q.stats.Dropped++
+	copy(q.frames[index:], q.frames[index+1:])
+	q.frames = q.frames[:len(q.frames)-1]
 }
 
 func (q *lanPendingQueue) dropCandidateIndex() int {
@@ -646,6 +755,37 @@ func (q *lanPendingQueue) dropCandidateIndex() int {
 			dropIndex = i
 			dropPriority = priority
 		}
+	}
+	return dropIndex
+}
+
+func (q *lanPendingQueue) dropPeerCandidateIndex(peerID string) int {
+	return q.dropMatchingCandidateIndex(func(frame packet.RoutedFrame) bool {
+		return frame.DstDevice == peerID
+	})
+}
+
+func (q *lanPendingQueue) dropSessionCandidateIndex(sessionKey string) int {
+	return q.dropMatchingCandidateIndex(func(frame packet.RoutedFrame) bool {
+		return lanFrameSessionKey(frame) == sessionKey
+	})
+}
+
+func (q *lanPendingQueue) dropMatchingCandidateIndex(match func(packet.RoutedFrame) bool) int {
+	dropIndex := -1
+	dropPriority := -1
+	for i, item := range q.frames {
+		if !match(item.frame) {
+			continue
+		}
+		priority := lanFramePriority(item.frame)
+		if dropIndex < 0 || priority > dropPriority {
+			dropIndex = i
+			dropPriority = priority
+		}
+	}
+	if dropIndex < 0 {
+		return 0
 	}
 	return dropIndex
 }
@@ -672,6 +812,8 @@ type lanP2P struct {
 	registering     map[string]bool
 	relayTimers     map[string]bool
 	openRetries     map[string]bool
+	sessionIntents  map[string]*lanSessionIntent
+	sessionMu       sync.Mutex
 	readLoopGen     atomic.Uint64
 	rotating        atomic.Bool
 	lastRotation    atomic.Int64
@@ -727,7 +869,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
 		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, tcpFastPath: strings.TrimSpace(resp.Network.TCPFastPath), deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
-		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
+		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{}, sessionIntents: map[string]*lanSessionIntent{},
 	}
 	p.pathPolicy.RelayEnabled = resp.RelayEnabled
 	p.pathPolicy.RelayConfigured = true
@@ -887,6 +1029,85 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 		payload = sealed
 	}
 	return writeLANFrame(peer.kcp, payload)
+}
+
+func (p *lanP2P) RecordSessionIntent(ctx context.Context, frame packet.RoutedFrame) {
+	if p == nil {
+		return
+	}
+	now := time.Now()
+	intent, ok := newLANSessionIntent(frame, now)
+	if !ok {
+		return
+	}
+	peer := p.peer(intent.PeerID)
+	if peer == nil {
+		return
+	}
+	p.sessionMu.Lock()
+	if p.sessionIntents == nil {
+		p.sessionIntents = map[string]*lanSessionIntent{}
+	}
+	p.pruneSessionIntentsLocked(now)
+	existing := p.sessionIntents[intent.Key]
+	if existing == nil {
+		p.sessionIntents[intent.Key] = &intent
+	} else {
+		existing.LastSeen = now
+		existing.Packets++
+		existing.TrafficClass = intent.TrafficClass
+	}
+	activeCount := len(p.sessionIntents)
+	p.sessionMu.Unlock()
+
+	peer.lastTrafficClass.Store(intent.TrafficClass)
+	peer.lastTrafficAt.Store(now.UnixNano())
+	if !peer.datagramReady.Load() && !peer.connected.Load() && !p.pathPolicy.RelayOnly {
+		if !p.pathPolicy.relayAvailable() {
+			peer.longPunching.Store(true)
+		}
+		peer.punched.Store(false)
+		p.startPunchLoop(ctx, peer)
+	}
+	log.Printf("LAN session intent: peer=%s proto=%s src=%s:%d dst=%s:%d class=%s intents=%d",
+		intent.PeerID, intent.Protocol, intent.SrcIP, intent.SrcPort, intent.DstIP, intent.DstPort, intent.TrafficClass, activeCount)
+}
+
+func (p *lanP2P) sessionIntent(peerID string, srcPort, dstPort int) (lanSessionIntent, bool) {
+	if p == nil {
+		return lanSessionIntent{}, false
+	}
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
+	p.pruneSessionIntentsLocked(time.Now())
+	for _, intent := range p.sessionIntents {
+		if intent.PeerID == peerID && intent.SrcPort == srcPort && intent.DstPort == dstPort {
+			return *intent, true
+		}
+	}
+	return lanSessionIntent{}, false
+}
+
+func (p *lanP2P) pruneSessionIntentsLocked(now time.Time) {
+	if len(p.sessionIntents) == 0 {
+		return
+	}
+	for key, intent := range p.sessionIntents {
+		if now.Sub(intent.LastSeen) > lanSessionIntentTTL {
+			delete(p.sessionIntents, key)
+		}
+	}
+	for len(p.sessionIntents) > lanSessionIntentMax {
+		var oldestKey string
+		var oldest time.Time
+		for key, intent := range p.sessionIntents {
+			if oldestKey == "" || intent.LastSeen.Before(oldest) {
+				oldestKey = key
+				oldest = intent.LastSeen
+			}
+		}
+		delete(p.sessionIntents, oldestKey)
+	}
 }
 
 func (p *lanP2P) sendViaFastPath(frame packet.RoutedFrame, peer *lanP2PPeer) bool {

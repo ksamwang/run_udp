@@ -226,6 +226,32 @@ func TestLANPendingQueueKeepsCriticalFramesWhenFull(t *testing.T) {
 	}
 }
 
+func TestLANPendingQueueLimitsEarlyPacketsPerSession(t *testing.T) {
+	q := newLANPendingQueue(128, 0, time.Minute)
+	q.maxPerSession = 3
+	srcIP := net.IPv4(172, 16, 10, 2)
+	dstIP := net.IPv4(172, 16, 10, 3)
+	for i := 0; i < 5; i++ {
+		q.Add([]packet.RoutedFrame{{
+			NetworkID: 7, DstDevice: "dev-b", Payload: []byte{byte(i)},
+			Header: packet.IPv4Header{
+				Protocol: packet.IPv4ProtocolTCP, SourceIP: srcIP, DestIP: dstIP,
+				SourcePort: 50000, DestPort: 3389, TCPSYN: i == 0,
+			},
+		}})
+	}
+	frames := q.Frames()
+	if len(frames) != 3 {
+		t.Fatalf("expected per-session limit, got %d frames", len(frames))
+	}
+	if !frames[0].Header.TCPSYN {
+		t.Fatalf("tcp syn should be retained and prioritized: %+v", frames)
+	}
+	if stats := q.Stats(); stats.Dropped != 2 || stats.Frames != 3 {
+		t.Fatalf("bad pending stats: %+v", stats)
+	}
+}
+
 func TestClassifyLANFrame(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -247,6 +273,11 @@ func TestClassifyLANFrame(t *testing.T) {
 			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445}, Payload: bytes.Repeat([]byte{1}, 1400)},
 			want:  lanTrafficThroughput,
 		},
+		{
+			name:  "smb syn critical before throughput",
+			frame: packet.RoutedFrame{Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445, TCPSYN: true}, Payload: []byte("syn")},
+			want:  lanTrafficCritical,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,6 +285,44 @@ func TestClassifyLANFrame(t *testing.T) {
 				t.Fatalf("classifyLANFrame=%q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLANP2PRecordSessionIntentStartsPunching(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.addr.Store(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers:    map[string]*lanP2PPeer{"dev-b": peer},
+		pathPolicy: lanPathPolicyConfig{
+			Name: "prefer_p2p", RelayEnabled: false, RelayConfigured: true,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frame := packet.RoutedFrame{
+		NetworkID: 7, DstDevice: "dev-b", Payload: []byte("syn"),
+		Header: packet.IPv4Header{
+			Protocol: packet.IPv4ProtocolTCP,
+			SourceIP: net.IPv4(172, 16, 10, 2), DestIP: net.IPv4(172, 16, 10, 3),
+			SourcePort: 51000, DestPort: 3389, TCPSYN: true,
+		},
+	}
+
+	p.RecordSessionIntent(ctx, frame)
+
+	intent, ok := p.sessionIntent("dev-b", 51000, 3389)
+	if !ok {
+		t.Fatal("missing LAN session intent")
+	}
+	if intent.TrafficClass != lanTrafficCritical || intent.Protocol != "tcp" || intent.DstIP != "172.16.10.3" {
+		t.Fatalf("bad session intent: %+v", intent)
+	}
+	if got := p.currentTrafficClass("dev-b"); got != lanTrafficCritical {
+		t.Fatalf("traffic class=%q, want critical", got)
+	}
+	if !peer.longPunching.Load() || !peer.punching.Load() {
+		t.Fatalf("session intent should boost long punching: long=%v punching=%v", peer.longPunching.Load(), peer.punching.Load())
 	}
 }
 
