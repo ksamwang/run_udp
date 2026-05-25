@@ -931,7 +931,8 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 		AdapterState: state.AdapterState, RouteConflict: state.RouteConflict,
 		SelectedCIDR: state.SelectedCIDR, MTU: state.MTU, MSS: state.MSS, RTTMs: state.RTTMs, EstimatedBps: state.EstimatedBps,
 		TxBytes: state.TxBytes, RxBytes: state.RxBytes, DropReason: state.DropReason, LastError: state.LastError, LastHandshakeAt: state.LastHandshakeAt,
-		LastTransitionAt: state.LastTransitionAt, UpdatedAt: now,
+		ActiveSessions: state.ActiveSessions, HotPaths: state.HotPaths, RelayDisabled: state.RelayDisabled, SocketRotations: state.SocketRotations,
+		LastRotationAt: state.LastRotationAt, LastRotationReason: state.LastRotationReason, LastTransitionAt: state.LastTransitionAt, UpdatedAt: now,
 	}
 	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "device_id"}, {Name: "peer_id"}, {Name: "network_id"}},
@@ -941,6 +942,8 @@ func (s *MySQLStore) PutVirtualPeerState(ctx context.Context, state store.Virtua
 			"adapter_state": row.AdapterState, "route_conflict": row.RouteConflict,
 			"selected_cidr": row.SelectedCIDR, "mtu": row.MTU, "mss": row.MSS, "rtt_ms": row.RTTMs, "tx_bytes": row.TxBytes,
 			"rx_bytes": row.RxBytes, "estimated_bps": row.EstimatedBps, "drop_reason": row.DropReason, "last_error": row.LastError,
+			"active_sessions": row.ActiveSessions, "hot_paths": row.HotPaths, "relay_disabled": row.RelayDisabled, "socket_rotations": row.SocketRotations,
+			"last_rotation_at": row.LastRotationAt, "last_rotation_reason": row.LastRotationReason,
 			"last_handshake_at": row.LastHandshakeAt, "last_transition_at": row.LastTransitionAt, "updated_at": row.UpdatedAt,
 		}),
 	}).Create(&row).Error; err != nil {
@@ -1239,7 +1242,8 @@ func (p VirtualPeerState) toStore() store.VirtualPeerState {
 		DataPath: p.DataPath, PathReason: p.PathReason, NATType: p.NATType, FallbackReason: p.FallbackReason, TrafficClass: p.TrafficClass, TCPFastPath: p.TCPFastPath,
 		AdapterState: p.AdapterState, RouteConflict: p.RouteConflict, SelectedCIDR: p.SelectedCIDR,
 		MTU: p.MTU, MSS: p.MSS, RTTMs: p.RTTMs, EstimatedBps: p.EstimatedBps, TxBytes: p.TxBytes, RxBytes: p.RxBytes, DropReason: p.DropReason,
-		LastError: p.LastError, LastHandshakeAt: p.LastHandshakeAt, LastTransitionAt: p.LastTransitionAt,
+		LastError: p.LastError, ActiveSessions: p.ActiveSessions, HotPaths: p.HotPaths, RelayDisabled: p.RelayDisabled, SocketRotations: p.SocketRotations,
+		LastRotationAt: p.LastRotationAt, LastRotationReason: p.LastRotationReason, LastHandshakeAt: p.LastHandshakeAt, LastTransitionAt: p.LastTransitionAt,
 		UpdatedAt: p.UpdatedAt,
 	}
 }

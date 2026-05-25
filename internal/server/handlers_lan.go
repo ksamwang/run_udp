@@ -42,19 +42,24 @@ type lanBootstrapPeer struct {
 }
 
 type lanDeviceState struct {
-	DeviceID        string `json:"device_id"`
-	NetworkID       int64  `json:"network_id"`
-	VirtualIP       string `json:"virtual_ip"`
-	Hostname        string `json:"hostname"`
-	AdapterState    string `json:"adapter_state"`
-	SelectedCIDR    string `json:"selected_cidr"`
-	RouteConflict   string `json:"route_conflict"`
-	P2PPeers        int    `json:"p2p_peers"`
-	RelayPeers      int    `json:"relay_peers"`
-	DownPeers       int    `json:"down_peers"`
-	LastBootstrapAt string `json:"last_bootstrap_at"`
-	LastStatusAt    string `json:"last_status_at"`
-	LastError       string `json:"last_error"`
+	DeviceID           string `json:"device_id"`
+	NetworkID          int64  `json:"network_id"`
+	VirtualIP          string `json:"virtual_ip"`
+	Hostname           string `json:"hostname"`
+	AdapterState       string `json:"adapter_state"`
+	SelectedCIDR       string `json:"selected_cidr"`
+	RouteConflict      string `json:"route_conflict"`
+	P2PPeers           int    `json:"p2p_peers"`
+	RelayPeers         int    `json:"relay_peers"`
+	DownPeers          int    `json:"down_peers"`
+	LastBootstrapAt    string `json:"last_bootstrap_at"`
+	LastStatusAt       string `json:"last_status_at"`
+	LastError          string `json:"last_error"`
+	RelayDisabled      bool   `json:"relay_disabled"`
+	HotPaths           int    `json:"hot_paths"`
+	ActiveSessions     int    `json:"active_sessions"`
+	SocketRotations    uint64 `json:"socket_rotations"`
+	LastRotationReason string `json:"last_rotation_reason"`
 }
 
 type lanDiagnosticsSnapshot struct {
@@ -482,6 +487,19 @@ func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDevice
 		}
 		if peer.LastError != "" {
 			state.LastError = peer.LastError
+		}
+		if peer.RelayDisabled {
+			state.RelayDisabled = true
+		}
+		if peer.HotPaths > state.HotPaths {
+			state.HotPaths = peer.HotPaths
+		}
+		if peer.ActiveSessions > state.ActiveSessions {
+			state.ActiveSessions = peer.ActiveSessions
+		}
+		if peer.SocketRotations > state.SocketRotations {
+			state.SocketRotations = peer.SocketRotations
+			state.LastRotationReason = peer.LastRotationReason
 		}
 		if peer.UpdatedAt > state.LastStatusAt {
 			state.LastStatusAt = peer.UpdatedAt

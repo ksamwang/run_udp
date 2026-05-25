@@ -201,31 +201,37 @@ type VirtualRoute struct {
 func (VirtualRoute) TableName() string { return "virtual_routes" }
 
 type VirtualPeerState struct {
-	DeviceID         string `gorm:"primaryKey;size:191;column:device_id"`
-	PeerID           string `gorm:"primaryKey;size:191;column:peer_id"`
-	NetworkID        int64  `gorm:"primaryKey;column:network_id"`
-	State            string `gorm:"size:32;not null;default:'';column:state"`
-	Path             string `gorm:"size:32;not null;default:'';column:path"`
-	DataPath         string `gorm:"size:32;not null;default:'';column:data_path"`
-	PathReason       string `gorm:"size:128;not null;default:'';column:path_reason"`
-	NATType          string `gorm:"size:64;not null;default:'';column:nat_type"`
-	FallbackReason   string `gorm:"size:128;not null;default:'';column:fallback_reason"`
-	TrafficClass     string `gorm:"size:32;not null;default:'';column:traffic_class"`
-	TCPFastPath      string `gorm:"size:32;not null;default:'';column:tcp_fast_path"`
-	AdapterState     string `gorm:"size:32;not null;default:'';column:adapter_state"`
-	RouteConflict    string `gorm:"type:text;not null;column:route_conflict"`
-	SelectedCIDR     string `gorm:"size:64;not null;default:'';column:selected_cidr"`
-	MTU              int    `gorm:"not null;default:0;column:mtu"`
-	MSS              int    `gorm:"not null;default:0;column:mss"`
-	RTTMs            int    `gorm:"not null;default:0;column:rtt_ms"`
-	EstimatedBps     int64  `gorm:"not null;default:0;column:estimated_bps"`
-	TxBytes          int64  `gorm:"not null;default:0;column:tx_bytes"`
-	RxBytes          int64  `gorm:"not null;default:0;column:rx_bytes"`
-	DropReason       string `gorm:"size:64;not null;default:'';column:drop_reason"`
-	LastError        string `gorm:"type:text;not null;column:last_error"`
-	LastHandshakeAt  string `gorm:"size:64;not null;default:'';column:last_handshake_at"`
-	LastTransitionAt string `gorm:"size:64;not null;default:'';column:last_transition_at"`
-	UpdatedAt        string `gorm:"index;size:64;not null;column:updated_at"`
+	DeviceID           string `gorm:"primaryKey;size:191;column:device_id"`
+	PeerID             string `gorm:"primaryKey;size:191;column:peer_id"`
+	NetworkID          int64  `gorm:"primaryKey;column:network_id"`
+	State              string `gorm:"size:32;not null;default:'';column:state"`
+	Path               string `gorm:"size:32;not null;default:'';column:path"`
+	DataPath           string `gorm:"size:32;not null;default:'';column:data_path"`
+	PathReason         string `gorm:"size:128;not null;default:'';column:path_reason"`
+	NATType            string `gorm:"size:64;not null;default:'';column:nat_type"`
+	FallbackReason     string `gorm:"size:128;not null;default:'';column:fallback_reason"`
+	TrafficClass       string `gorm:"size:32;not null;default:'';column:traffic_class"`
+	TCPFastPath        string `gorm:"size:32;not null;default:'';column:tcp_fast_path"`
+	AdapterState       string `gorm:"size:32;not null;default:'';column:adapter_state"`
+	RouteConflict      string `gorm:"type:text;not null;column:route_conflict"`
+	SelectedCIDR       string `gorm:"size:64;not null;default:'';column:selected_cidr"`
+	MTU                int    `gorm:"not null;default:0;column:mtu"`
+	MSS                int    `gorm:"not null;default:0;column:mss"`
+	RTTMs              int    `gorm:"not null;default:0;column:rtt_ms"`
+	EstimatedBps       int64  `gorm:"not null;default:0;column:estimated_bps"`
+	TxBytes            int64  `gorm:"not null;default:0;column:tx_bytes"`
+	RxBytes            int64  `gorm:"not null;default:0;column:rx_bytes"`
+	DropReason         string `gorm:"size:64;not null;default:'';column:drop_reason"`
+	LastError          string `gorm:"type:text;not null;column:last_error"`
+	ActiveSessions     int    `gorm:"not null;default:0;column:active_sessions"`
+	HotPaths           int    `gorm:"not null;default:0;column:hot_paths"`
+	RelayDisabled      bool   `gorm:"not null;default:false;column:relay_disabled"`
+	SocketRotations    uint64 `gorm:"not null;default:0;column:socket_rotations"`
+	LastRotationAt     string `gorm:"size:64;not null;default:'';column:last_rotation_at"`
+	LastRotationReason string `gorm:"type:text;not null;column:last_rotation_reason"`
+	LastHandshakeAt    string `gorm:"size:64;not null;default:'';column:last_handshake_at"`
+	LastTransitionAt   string `gorm:"size:64;not null;default:'';column:last_transition_at"`
+	UpdatedAt          string `gorm:"index;size:64;not null;column:updated_at"`
 }
 
 func (VirtualPeerState) TableName() string { return "virtual_peer_states" }

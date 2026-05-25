@@ -1714,6 +1714,21 @@ func TestLANP2PRelayDisabledUsesLongPunchingAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestLANP2PRelayDisabledIdlePeerReportsUnreachable(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers:    map[string]*lanP2PPeer{"dev-b": peer},
+		pathPolicy: lanPathPolicyConfig{
+			Name: "prefer_p2p", RelayEnabled: false, RelayConfigured: true,
+		},
+	}
+	dataPath, reason := p.peerDataPath("dev-b")
+	if dataPath != "" || reason != "unreachable" {
+		t.Fatalf("idle relay-disabled peer should be unreachable, path=%q reason=%q", dataPath, reason)
+	}
+}
+
 func TestLANP2PLongPunchingStopsWhenIdle(t *testing.T) {
 	peer := &lanP2PPeer{id: "dev-b"}
 	peer.longPunching.Store(true)

@@ -252,6 +252,12 @@ export type VirtualPeerState = {
   rx_bytes: number
   drop_reason: string
   last_error: string
+  active_sessions: number
+  hot_paths: number
+  relay_disabled: boolean
+  socket_rotations: number
+  last_rotation_at: string
+  last_rotation_reason: string
   last_handshake_at: string
   last_transition_at: string
   updated_at: string
@@ -303,4 +309,9 @@ export type VirtualDeviceState = {
   last_bootstrap_at: string
   last_status_at: string
   last_error: string
+  relay_disabled: boolean
+  hot_paths: number
+  active_sessions: number
+  socket_rotations: number
+  last_rotation_reason: string
 }

@@ -708,6 +708,7 @@ func (q *lanPendingQueue) prune(now time.Time) {
 	for _, item := range q.frames {
 		if now.Sub(item.at) > q.ttl {
 			q.stats.Expired++
+			log.Printf("LAN pending frame discarded: reason=expired dst=%s protocol=%d bytes=%d age=%s", item.frame.DstDevice, item.frame.Header.Protocol, item.size, now.Sub(item.at).Round(time.Millisecond))
 			continue
 		}
 		next = append(next, item)
@@ -765,8 +766,10 @@ func (q *lanPendingQueue) dropAt(index int) {
 	if index < 0 || index >= len(q.frames) {
 		return
 	}
-	q.bytes -= q.frames[index].size
+	item := q.frames[index]
+	q.bytes -= item.size
 	q.stats.Dropped++
+	log.Printf("LAN pending frame discarded: reason=capacity dst=%s protocol=%d bytes=%d", item.frame.DstDevice, item.frame.Header.Protocol, item.size)
 	copy(q.frames[index:], q.frames[index+1:])
 	q.frames = q.frames[:len(q.frames)-1]
 }
@@ -819,35 +822,39 @@ func (q *lanPendingQueue) dropMatchingCandidateIndex(match func(packet.RoutedFra
 }
 
 type lanP2P struct {
-	conn            *net.UDPConn
-	connMu          sync.RWMutex
-	upnpMapping     *upnp.Mapping
-	peers           map[string]*lanP2PPeer
-	peerMu          sync.RWMutex
-	peerConv        map[uint32]string
-	peerConvProfile map[uint32]string
-	server          *net.UDPAddr
-	pathPolicy      lanPathPolicyConfig
-	tcpFastPath     string
-	deviceID        string
-	identity        lan.Identity
-	adapter         *wintun.Adapter
-	router          *packet.Router
-	link            *packet.LinkManager
-	x25519Priv      [32]byte
-	x25519Pub       string
-	upnpAddr        string
-	registering     map[string]bool
-	relayTimers     map[string]bool
-	openRetries     map[string]bool
-	sessionIntents  map[string]*lanSessionIntent
-	sessionMu       sync.Mutex
-	hotPaths        map[string]*lanHotPath
-	hotPathMu       sync.Mutex
-	readLoopGen     atomic.Uint64
-	rotating        atomic.Bool
-	lastRotation    atomic.Int64
-	natType         atomic.Value
+	conn               *net.UDPConn
+	connMu             sync.RWMutex
+	upnpMapping        *upnp.Mapping
+	peers              map[string]*lanP2PPeer
+	peerMu             sync.RWMutex
+	peerConv           map[uint32]string
+	peerConvProfile    map[uint32]string
+	server             *net.UDPAddr
+	pathPolicy         lanPathPolicyConfig
+	tcpFastPath        string
+	deviceID           string
+	identity           lan.Identity
+	adapter            *wintun.Adapter
+	router             *packet.Router
+	link               *packet.LinkManager
+	x25519Priv         [32]byte
+	x25519Pub          string
+	upnpAddr           string
+	registering        map[string]bool
+	relayTimers        map[string]bool
+	openRetries        map[string]bool
+	sessionIntents     map[string]*lanSessionIntent
+	sessionMu          sync.Mutex
+	hotPaths           map[string]*lanHotPath
+	hotPathMu          sync.Mutex
+	pathStateLog       map[string]string
+	pathStateMu        sync.Mutex
+	readLoopGen        atomic.Uint64
+	rotating           atomic.Bool
+	lastRotation       atomic.Int64
+	rotationCount      atomic.Uint64
+	lastRotationReason atomic.Value
+	natType            atomic.Value
 }
 
 type lanP2PPeer struct {
@@ -1430,7 +1437,7 @@ func (p *lanP2P) markDatagramReadyIfConfirmed(peer *lanP2PPeer) bool {
 		return false
 	}
 	if peer.datagramReady.CompareAndSwap(false, true) {
-		log.Printf("LAN P2P datagram two-way confirmed: peer=%s signals=%d", peer.id, signals)
+		log.Printf("LAN P2P datagram two-way confirmed: peer=%s signals=%d incoming=%v ack=%v", peer.id, signals, signals&lanPunchSignalIncoming != 0, signals&lanPunchSignalAck != 0)
 	}
 	if peer.datagramReady.Load() {
 		p.rememberHotPath(peer, lanPathP2PDatagram)
@@ -1542,6 +1549,9 @@ func (p *lanP2P) peerDataPath(peerID string) (string, string) {
 		}
 		return "", "punched_waiting_tunnel"
 	}
+	if !p.pathPolicy.relayAvailable() && !peer.hasActiveTraffic(lanActiveTrafficTTL) {
+		return "", "unreachable"
+	}
 	return "", "p2p_connecting"
 }
 
@@ -1554,6 +1564,72 @@ func (p *lanP2P) currentTrafficClass(peerID string) string {
 		return value
 	}
 	return ""
+}
+
+func (p *lanP2P) logPathState(peerID, dataPath, reason string) {
+	if p == nil || strings.TrimSpace(peerID) == "" {
+		return
+	}
+	key := strings.TrimSpace(dataPath) + "|" + strings.TrimSpace(reason)
+	p.pathStateMu.Lock()
+	if p.pathStateLog == nil {
+		p.pathStateLog = map[string]string{}
+	}
+	if p.pathStateLog[peerID] == key {
+		p.pathStateMu.Unlock()
+		return
+	}
+	p.pathStateLog[peerID] = key
+	p.pathStateMu.Unlock()
+	log.Printf("LAN path state transition: peer=%s data_path=%s reason=%s", peerID, valueOrDash(dataPath), valueOrDash(reason))
+}
+
+func (p *lanP2P) diagnosticsSnapshot() lanRuntimeDiagnostics {
+	if p == nil {
+		return lanRuntimeDiagnostics{}
+	}
+	diag := lanRuntimeDiagnostics{
+		RelayDisabled:   !p.pathPolicy.relayAvailable(),
+		SocketRotations: p.rotationCount.Load(),
+		HotPaths:        p.hotPathCount(),
+		ActiveSessions:  p.sessionIntentCount(),
+	}
+	if raw := p.lastRotation.Load(); raw > 0 {
+		diag.LastRotationAt = time.Unix(0, raw).Format(time.RFC3339)
+	}
+	if value, ok := p.lastRotationReason.Load().(string); ok {
+		diag.LastRotationReason = value
+	}
+	return diag
+}
+
+type lanRuntimeDiagnostics struct {
+	RelayDisabled      bool
+	SocketRotations    uint64
+	LastRotationAt     string
+	LastRotationReason string
+	HotPaths           int
+	ActiveSessions     int
+}
+
+func (p *lanP2P) hotPathCount() int {
+	if p == nil {
+		return 0
+	}
+	p.hotPathMu.Lock()
+	defer p.hotPathMu.Unlock()
+	p.pruneHotPathsLocked(time.Now())
+	return len(p.hotPaths)
+}
+
+func (p *lanP2P) sessionIntentCount() int {
+	if p == nil {
+		return 0
+	}
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
+	p.pruneSessionIntentsLocked(time.Now())
+	return len(p.sessionIntents)
 }
 
 func (p *lanP2P) peer(id string) *lanP2PPeer {
@@ -1991,6 +2067,8 @@ func (p *lanP2P) rotateSocketAndRestartPunch(ctx context.Context, reason string)
 	p.upnpMapping = newMapping
 	p.upnpAddr = newUPnP
 	p.lastRotation.Store(now.UnixNano())
+	p.rotationCount.Add(1)
+	p.lastRotationReason.Store(reason)
 	p.connMu.Unlock()
 
 	if oldMapping != nil {
@@ -2833,6 +2911,7 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 			dataPath, reason := "", ""
 			if p2p != nil {
 				dataPath, reason = p2p.peerDataPath(session.PeerID)
+				p2p.logPathState(session.PeerID, dataPath, reason)
 			}
 			if dataPath == "" {
 				dataPath = lanDataPathFromSession(session)
@@ -2844,11 +2923,17 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 			fallbackReason := lanFallbackReason(p2p, dataPath, reason)
 			trafficClass := lanCurrentTrafficClass(p2p, session.PeerID)
 			tcpFastPath := lanTCPFastPathState(resp.Network.TCPFastPath, trafficClass)
+			diag := lanRuntimeDiagnostics{}
+			if p2p != nil {
+				diag = p2p.diagnosticsSnapshot()
+			}
 			state := store.VirtualPeerState{
 				DeviceID: deviceID, PeerID: session.PeerID, NetworkID: networkID, State: session.State, Path: session.Path,
 				DataPath: dataPath, PathReason: reason, NATType: natType, FallbackReason: fallbackReason, TrafficClass: trafficClass, TCPFastPath: tcpFastPath,
 				AdapterState: "up", MTU: mtu, MSS: mss, TxBytes: int64(tx), RxBytes: int64(rx), EstimatedBps: estimatedBps,
-				LastError: session.LastError, LastTransitionAt: session.LastSeenAt.Format(time.RFC3339),
+				LastError: session.LastError, ActiveSessions: diag.ActiveSessions, HotPaths: diag.HotPaths, RelayDisabled: diag.RelayDisabled,
+				SocketRotations: diag.SocketRotations, LastRotationAt: diag.LastRotationAt, LastRotationReason: diag.LastRotationReason,
+				LastTransitionAt: session.LastSeenAt.Format(time.RFC3339),
 			}
 			if session.LastRecvAt.After(session.LastSentAt) {
 				state.LastHandshakeAt = session.LastRecvAt.Format(time.RFC3339)
