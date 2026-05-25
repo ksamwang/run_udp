@@ -574,6 +574,29 @@ func TestLANBootstrapUsesAssignedNetwork(t *testing.T) {
 	}
 }
 
+func TestFilterLANPeerStatesDeduplicatesDirtyRows(t *testing.T) {
+	addresses := []store.VirtualAddress{
+		{DeviceID: "dev-a", NetworkID: 1, VirtualIP: "172.16.10.2"},
+		{DeviceID: "dev-b", NetworkID: 1, VirtualIP: "172.16.10.3"},
+	}
+	states := []store.VirtualPeerState{
+		{DeviceID: "dev-a", PeerID: "dev-b", NetworkID: 1, Path: "relay", DataPath: "relay_udp", UpdatedAt: "2026-05-25T09:00:00Z"},
+		{DeviceID: "dev-a", PeerID: "dev-b", NetworkID: 1, Path: "p2p", DataPath: "p2p_datagram", UpdatedAt: "2026-05-25T10:00:00Z"},
+		{DeviceID: "dev-a", PeerID: "dev-stale", NetworkID: 1, Path: "p2p", UpdatedAt: "2026-05-25T11:00:00Z"},
+	}
+
+	filtered, err := filterLANPeerStates(addresses, states)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("duplicate or stale LAN peer states leaked: %+v", filtered)
+	}
+	if filtered[0].Path != "p2p" || filtered[0].DataPath != "p2p_datagram" {
+		t.Fatalf("expected latest LAN peer state, got %+v", filtered[0])
+	}
+}
+
 func TestLANBootstrapAutoAssignsVirtualIP(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

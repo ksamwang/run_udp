@@ -448,6 +448,7 @@ func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDevice
 	if err != nil {
 		return nil, err
 	}
+	peers = latestLANPeerStates(peers)
 	known := knownLANDevicesByNetwork(addresses)
 	byDevice := map[string]*lanDeviceState{}
 	for _, address := range addresses {
@@ -612,13 +613,46 @@ func (a *App) filterLANPeerStates(ctx context.Context, networkID int64, states [
 
 func filterLANPeerStates(addresses []store.VirtualAddress, states []store.VirtualPeerState) ([]store.VirtualPeerState, error) {
 	known := knownLANDevicesByNetwork(addresses)
-	out := make([]store.VirtualPeerState, 0, len(states))
-	for _, state := range states {
+	latest := latestLANPeerStates(states)
+	out := make([]store.VirtualPeerState, 0, len(latest))
+	for _, state := range latest {
 		if knownLANPeerState(known, state) {
 			out = append(out, state)
 		}
 	}
 	return out, nil
+}
+
+func latestLANPeerStates(states []store.VirtualPeerState) []store.VirtualPeerState {
+	byKey := make(map[string]store.VirtualPeerState, len(states))
+	order := make([]string, 0, len(states))
+	for _, state := range states {
+		key := lanPeerStateKey(state)
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		previous, ok := byKey[key]
+		if !ok {
+			byKey[key] = state
+			order = append(order, key)
+			continue
+		}
+		if state.UpdatedAt >= previous.UpdatedAt {
+			byKey[key] = state
+		}
+	}
+	out := make([]store.VirtualPeerState, 0, len(order))
+	for _, key := range order {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func lanPeerStateKey(state store.VirtualPeerState) string {
+	if state.NetworkID <= 0 || strings.TrimSpace(state.DeviceID) == "" || strings.TrimSpace(state.PeerID) == "" {
+		return ""
+	}
+	return strconv.FormatInt(state.NetworkID, 10) + "\x00" + state.DeviceID + "\x00" + state.PeerID
 }
 
 func knownLANDevicesByNetwork(addresses []store.VirtualAddress) map[int64]map[string]bool {
