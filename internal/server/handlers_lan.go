@@ -447,6 +447,7 @@ func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDevice
 	if err != nil {
 		return nil, err
 	}
+	known := knownLANDevicesByNetwork(addresses)
 	byDevice := map[string]*lanDeviceState{}
 	for _, address := range addresses {
 		state := byDevice[address.DeviceID]
@@ -459,10 +460,12 @@ func (a *App) lanDeviceStates(ctx context.Context, networkID int64) ([]lanDevice
 		state.LastBootstrapAt = address.UpdatedAt
 	}
 	for _, peer := range peers {
+		if !knownLANPeerState(known, peer) {
+			continue
+		}
 		state := byDevice[peer.DeviceID]
 		if state == nil {
-			state = &lanDeviceState{DeviceID: peer.DeviceID, NetworkID: peer.NetworkID}
-			byDevice[peer.DeviceID] = state
+			continue
 		}
 		if peer.AdapterState != "" {
 			state.AdapterState = peer.AdapterState
@@ -504,6 +507,9 @@ func (a *App) handleAdminLANPeerStates(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		states, err := a.db.ListVirtualPeerStates(r.Context(), networkID)
+		if err == nil {
+			states, err = a.filterLANPeerStates(r.Context(), networkID, states)
+		}
 		writeJSONOrError(w, states, err)
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
@@ -524,6 +530,9 @@ func (a *App) handleAdminLANPathEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		events, err := a.db.ListVirtualPeerPathEvents(r.Context(), networkID, r.URL.Query().Get("device_id"), r.URL.Query().Get("peer_id"), limit)
+		if err == nil {
+			events, err = a.filterLANPathEvents(r.Context(), networkID, events)
+		}
 		writeJSONOrError(w, events, err)
 	default:
 		writeJSONOrError(w, nil, methodNotAllowed())
@@ -577,13 +586,79 @@ func (a *App) lanDiagnosticsSnapshot(ctx context.Context, networkID int64) (lanD
 	if snapshot.PeerStates, err = a.db.ListVirtualPeerStates(ctx, networkID); err != nil {
 		return snapshot, err
 	}
+	if snapshot.PeerStates, err = filterLANPeerStates(snapshot.Addresses, snapshot.PeerStates); err != nil {
+		return snapshot, err
+	}
 	if snapshot.DeviceStates, err = a.lanDeviceStates(ctx, networkID); err != nil {
 		return snapshot, err
 	}
 	if snapshot.PathEvents, err = a.db.ListVirtualPeerPathEvents(ctx, networkID, "", "", 500); err != nil {
 		return snapshot, err
 	}
+	if snapshot.PathEvents, err = filterLANPathEvents(snapshot.Addresses, snapshot.PathEvents); err != nil {
+		return snapshot, err
+	}
 	return snapshot, nil
+}
+
+func (a *App) filterLANPeerStates(ctx context.Context, networkID int64, states []store.VirtualPeerState) ([]store.VirtualPeerState, error) {
+	addresses, err := a.db.ListVirtualAddresses(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	return filterLANPeerStates(addresses, states)
+}
+
+func filterLANPeerStates(addresses []store.VirtualAddress, states []store.VirtualPeerState) ([]store.VirtualPeerState, error) {
+	known := knownLANDevicesByNetwork(addresses)
+	out := make([]store.VirtualPeerState, 0, len(states))
+	for _, state := range states {
+		if knownLANPeerState(known, state) {
+			out = append(out, state)
+		}
+	}
+	return out, nil
+}
+
+func knownLANDevicesByNetwork(addresses []store.VirtualAddress) map[int64]map[string]bool {
+	known := make(map[int64]map[string]bool)
+	for _, address := range addresses {
+		if strings.TrimSpace(address.DeviceID) == "" || address.NetworkID <= 0 {
+			continue
+		}
+		devices := known[address.NetworkID]
+		if devices == nil {
+			devices = map[string]bool{}
+			known[address.NetworkID] = devices
+		}
+		devices[address.DeviceID] = true
+	}
+	return known
+}
+
+func knownLANPeerState(known map[int64]map[string]bool, state store.VirtualPeerState) bool {
+	devices := known[state.NetworkID]
+	return devices != nil && devices[state.DeviceID] && devices[state.PeerID]
+}
+
+func (a *App) filterLANPathEvents(ctx context.Context, networkID int64, events []store.VirtualPeerPathEvent) ([]store.VirtualPeerPathEvent, error) {
+	addresses, err := a.db.ListVirtualAddresses(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	return filterLANPathEvents(addresses, events)
+}
+
+func filterLANPathEvents(addresses []store.VirtualAddress, events []store.VirtualPeerPathEvent) ([]store.VirtualPeerPathEvent, error) {
+	known := knownLANDevicesByNetwork(addresses)
+	out := make([]store.VirtualPeerPathEvent, 0, len(events))
+	for _, event := range events {
+		devices := known[event.NetworkID]
+		if devices != nil && devices[event.DeviceID] && devices[event.PeerID] {
+			out = append(out, event)
+		}
+	}
+	return out, nil
 }
 
 func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {

@@ -452,6 +452,13 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("second status status=%d body=%s", statusRec.Code, statusRec.Body.String())
 	}
+	statusRec = doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/status", map[string]any{
+		"device_id": "dev-stale", "peer_id": "dev-a", "network_id": network.ID,
+		"state": "connected", "path": "p2p", "data_path": "p2p_datagram", "path_reason": "stale",
+	}, nil)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("stale status status=%d body=%s", statusRec.Code, statusRec.Body.String())
+	}
 	statesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/peer-states?network_id="+strconv.FormatInt(network.ID, 10), nil)
 	if statesRec.Code != http.StatusOK {
 		t.Fatalf("admin lan states status=%d body=%s", statesRec.Code, statesRec.Body.String())
@@ -467,11 +474,21 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(states) != 1 || states[0].Path != "relay" ||
-		states[0].AdapterState != "up" || states[0].MSS != 1200 || states[0].DataPath != "relay_udp" ||
-		states[0].PathReason != "p2p_timeout" || states[0].NATType != "relay_required" ||
-		states[0].FallbackReason != "p2p_timeout" || states[0].TrafficClass != "throughput" ||
-		states[0].TCPFastPath != "auto_candidate" || states[0].TxBytes != 300 {
+	if len(states) != 2 {
+		t.Fatalf("raw peer states should include stale state: %+v", states)
+	}
+	var devAStateRaw store.VirtualPeerState
+	for _, state := range states {
+		if state.DeviceID == "dev-a" && state.PeerID == "dev-b" {
+			devAStateRaw = state
+			break
+		}
+	}
+	if devAStateRaw.DeviceID == "" || devAStateRaw.Path != "relay" ||
+		devAStateRaw.AdapterState != "up" || devAStateRaw.MSS != 1200 || devAStateRaw.DataPath != "relay_udp" ||
+		devAStateRaw.PathReason != "p2p_timeout" || devAStateRaw.NATType != "relay_required" ||
+		devAStateRaw.FallbackReason != "p2p_timeout" || devAStateRaw.TrafficClass != "throughput" ||
+		devAStateRaw.TCPFastPath != "auto_candidate" || devAStateRaw.TxBytes != 300 {
 		t.Fatalf("bad peer states: %+v", states)
 	}
 	eventsRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/path-events?network_id="+strconv.FormatInt(network.ID, 10), nil)
@@ -515,6 +532,11 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if devAState.DeviceID != "dev-a" || devAState.VirtualIP != "172.16.10.10" ||
 		devAState.AdapterState != "up" || devAState.RelayPeers != 1 {
 		t.Fatalf("bad lan device states: %+v", deviceStates)
+	}
+	for _, state := range deviceStates {
+		if state.DeviceID == "dev-stale" {
+			t.Fatalf("stale device state should be hidden: %+v", deviceStates)
+		}
 	}
 }
 
