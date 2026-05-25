@@ -1338,6 +1338,30 @@ func TestAdminDevicesExposeProductStates(t *testing.T) {
 	}
 }
 
+func TestAgentBootstrapDoesNotCreateAgentCapability(t *testing.T) {
+	a := newTestApp(t)
+	rec := doAgentJSON(t, a.httpMux(), http.MethodPost, "/api/agent/bootstrap", map[string]any{
+		"device_id": "dev-bootstrap", "device_name": "bootstrap-only",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doAdminJSON(t, a, http.MethodGet, "/api/admin/devices", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("devices status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var devices []store.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("unexpected devices: %+v", devices)
+	}
+	if devices[0].AgentLastSource != "" || len(devices[0].ProductCapabilities) != 0 {
+		t.Fatalf("bootstrap should not create agent capability: %+v", devices[0])
+	}
+}
+
 func TestHandleAgentEndpointsRejectDisabledDevice(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

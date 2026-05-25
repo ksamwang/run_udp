@@ -159,9 +159,6 @@ func (a *App) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.DeviceName)
 	resp := a.bootstrapConfig(r, req.DeviceID, name)
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, requestAddr(r), "", "", false)
-	if err == nil {
-		err = a.putAgentProductState(r.Context(), "agent_register", req.DeviceID, requestAddr(r), "", "", "", false, nil)
-	}
 	writeJSONOrError(w, resp, err)
 }
 

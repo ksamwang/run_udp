@@ -79,7 +79,7 @@ func (a *App) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 			devices[i].HealthSummary = "有规则但未建链"
 		}
 		devices[i].LastError = deviceErrs[devices[i].ID]
-		applyProductStateToDevice(&devices[i], productByDevice[devices[i].ID], addressByDevice[devices[i].ID], lanByDevice[devices[i].ID])
+		applyProductStateToDevice(&devices[i], productByDevice[devices[i].ID], addressByDevice[devices[i].ID], lanByDevice[devices[i].ID], a.currentPeerTTL())
 	}
 	return devices, nil
 }
@@ -131,11 +131,11 @@ func summarizeLANPeerStates(states []store.VirtualPeerState) map[string]lanPeerS
 	return out
 }
 
-func applyProductStateToDevice(d *store.Device, states map[string]store.DeviceProductState, address store.VirtualAddress, lan lanPeerSummary) {
+func applyProductStateToDevice(d *store.Device, states map[string]store.DeviceProductState, address store.VirtualAddress, lan lanPeerSummary, agentTTL time.Duration) {
 	capabilities := []string{}
 	if agent, ok := states["agent"]; ok {
 		capabilities = append(capabilities, "Agent")
-		d.AgentOnline = agent.Online
+		d.AgentOnline = agent.Online && recentWithin(agent.LastSeenAt, agentTTL)
 		d.LastAgentSeen = agent.LastSeenAt
 		d.AgentLastSource = agent.LastSource
 	}
