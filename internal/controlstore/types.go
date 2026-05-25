@@ -75,4 +75,7 @@ type Store interface {
 	PutVirtualPeerState(ctx context.Context, state store.VirtualPeerState) error
 	ListVirtualPeerStates(ctx context.Context, networkID int64) ([]store.VirtualPeerState, error)
 	ListVirtualPeerPathEvents(ctx context.Context, networkID int64, deviceID, peerID string, limit int) ([]store.VirtualPeerPathEvent, error)
+	UpsertVirtualLearnedPath(ctx context.Context, path store.VirtualLearnedPath) error
+	ListVirtualLearnedPaths(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualLearnedPath, error)
+	SetVirtualLearnedPathPreheat(ctx context.Context, networkID int64, deviceID, peerID string, dstPort int, enabled bool) error
 }

@@ -914,8 +914,10 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 		p.natType.Store(detectLANNATFunc(ctx, conn, server, resp.STUNAltPort))
 	}
 	p.UpsertPeers(ctx, identity, resp.Peers)
+	p.LoadLearnedPaths(resp.LearnedPaths)
 	p.enableRelayForBadNAT(ctx)
 	p.startReadLoop(ctx)
+	go p.preheatLearnedPaths(ctx)
 	go p.hotPathMaintenanceLoop(ctx)
 	log.Printf("LAN P2P started: socket=%s server=%s upnp=%q peers=%d", conn.LocalAddr(), server, upnpAddr, len(resp.Peers))
 	return p
@@ -1186,6 +1188,81 @@ func (p *lanP2P) hotPath(peerID string, dstPort int, now time.Time) (lanHotPath,
 	return *hot, true
 }
 
+func (p *lanP2P) LoadLearnedPaths(paths []store.VirtualLearnedPath) {
+	if p == nil || len(paths) == 0 {
+		return
+	}
+	now := time.Now()
+	p.hotPathMu.Lock()
+	if p.hotPaths == nil {
+		p.hotPaths = map[string]*lanHotPath{}
+	}
+	for _, path := range paths {
+		if path.DstPort <= 0 || strings.TrimSpace(path.PeerID) == "" || strings.TrimSpace(path.PublicAddr) == "" || !path.PreheatEnabled {
+			continue
+		}
+		key := hotPathKey(path.PeerID, path.DstPort)
+		p.hotPaths[key] = &lanHotPath{
+			Key: key, PeerID: path.PeerID, DstPort: path.DstPort, PublicAddr: path.PublicAddr,
+			Path: path.Path, TrafficClass: path.Quality, Successes: path.SuccessCount, Failures: path.FailureCount,
+			LastSuccess: parseLANTimeOr(path.LastSuccessAt, now), LastUsed: now, LastFailure: path.LastFailure,
+			NextKeepAliveAt: now.Add(lanHotPathKeepAliveMin),
+		}
+	}
+	count := len(p.hotPaths)
+	p.hotPathMu.Unlock()
+	log.Printf("LAN learned paths loaded: count=%d", count)
+}
+
+func parseLANTimeOr(value string, fallback time.Time) time.Time {
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+		return t
+	}
+	return fallback
+}
+
+func (p *lanP2P) preheatLearnedPaths(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	p.hotPathMu.Lock()
+	paths := make([]lanHotPath, 0, len(p.hotPaths))
+	for _, hot := range p.hotPaths {
+		if hot.PublicAddr != "" {
+			paths = append(paths, *hot)
+		}
+	}
+	p.hotPathMu.Unlock()
+	for _, hot := range paths {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		peer := p.peer(hot.PeerID)
+		if peer == nil || peer.datagramReady.Load() || p.pathPolicy.RelayOnly {
+			continue
+		}
+		addr, err := net.ResolveUDPAddr("udp", hot.PublicAddr)
+		if err != nil || addr == nil {
+			p.markHotPathFailure(hot.PeerID, hot.DstPort, "preheat_bad_addr")
+			continue
+		}
+		peer.addr.Store(addr)
+		peer.punched.Store(false)
+		p.startPunchLoop(ctx, peer)
+		log.Printf("LAN learned path preheat: peer=%s port=%d addr=%s quality=%s", hot.PeerID, hot.DstPort, hot.PublicAddr, hot.TrafficClass)
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
 func (p *lanP2P) rememberHotPath(peer *lanP2PPeer, path string) {
 	if p == nil || peer == nil || peer.isRelay.Load() {
 		return
@@ -1217,7 +1294,9 @@ func (p *lanP2P) rememberHotPath(peer *lanP2PPeer, path string) {
 		hot.PublicAddr = addr.String()
 		hot.Path = path
 		hot.TrafficClass = intent.TrafficClass
-		hot.Successes++
+		if now.Sub(hot.LastSuccess) > time.Minute || hot.Successes == 0 {
+			hot.Successes++
+		}
 		hot.LastSuccess = now
 		hot.LastUsed = now
 		hot.LastFailure = ""
@@ -2445,6 +2524,51 @@ func (p *lanP2P) markHotPathsForPeerFailed(peerID string, reason string) {
 	}
 }
 
+func (p *lanP2P) LearnedPathsSnapshot(networkID int64) []store.VirtualLearnedPath {
+	if p == nil {
+		return nil
+	}
+	now := time.Now()
+	p.hotPathMu.Lock()
+	defer p.hotPathMu.Unlock()
+	p.pruneHotPathsLocked(now)
+	out := make([]store.VirtualLearnedPath, 0, len(p.hotPaths))
+	for _, hot := range p.hotPaths {
+		if hot.Successes < 2 && hot.Failures == 0 {
+			continue
+		}
+		out = append(out, store.VirtualLearnedPath{
+			DeviceID: p.deviceID, PeerID: hot.PeerID, NetworkID: networkID, DstPort: hot.DstPort,
+			Protocol: "tcp", Path: hot.Path, PublicAddr: hot.PublicAddr,
+			SuccessCount: hot.Successes, FailureCount: hot.Failures,
+			LastSuccessAt: formatLANTime(hot.LastSuccess), LastFailure: hot.LastFailure,
+			Quality: learnedPathQuality(hot.Successes, hot.Failures, hot.LastFailure), PreheatEnabled: true,
+			UpdatedAt: formatLANTime(now),
+		})
+	}
+	return out
+}
+
+func formatLANTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+func learnedPathQuality(successes, failures int, lastFailure string) string {
+	if successes >= 3 && failures == 0 {
+		return "good"
+	}
+	if successes > failures {
+		return "ok"
+	}
+	if lastFailure != "" {
+		return "degraded"
+	}
+	return "unknown"
+}
+
 func (p *lanP2P) handleUDPRelayFrame(adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, data []byte) {
 	frame, err := lantransport.UnpackRelayFrameView(data)
 	if err != nil {
@@ -2734,7 +2858,11 @@ func reportLANPeerRuntime(ctx context.Context, serverHTTP string, router *packet
 			if routerStats.Drops.PeerUnavailable > 0 {
 				state.DropReason = "peer_unavailable"
 			}
-			if err := reportLANStatus(ctx, serverHTTP, state); err != nil {
+			report := lanStatusReport{VirtualPeerState: state}
+			if p2p != nil {
+				report.LearnedPaths = p2p.LearnedPathsSnapshot(networkID)
+			}
+			if err := reportLANStatusPayload(ctx, serverHTTP, report); err != nil {
 				log.Printf("LAN peer status report failed: peer=%s err=%v", session.PeerID, err)
 				continue
 			}

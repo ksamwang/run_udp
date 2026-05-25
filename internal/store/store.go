@@ -228,6 +228,24 @@ type VirtualPeerPathEvent struct {
 	CreatedAt    string `json:"created_at"`
 }
 
+type VirtualLearnedPath struct {
+	DeviceID       string `json:"device_id"`
+	PeerID         string `json:"peer_id"`
+	NetworkID      int64  `json:"network_id"`
+	DstPort        int    `json:"dst_port"`
+	Protocol       string `json:"protocol"`
+	Path           string `json:"path"`
+	PublicAddr     string `json:"public_addr"`
+	SuccessCount   int    `json:"success_count"`
+	FailureCount   int    `json:"failure_count"`
+	LastSuccessAt  string `json:"last_success_at"`
+	LastFailureAt  string `json:"last_failure_at"`
+	LastFailure    string `json:"last_failure"`
+	Quality        string `json:"quality"`
+	PreheatEnabled bool   `json:"preheat_enabled"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
 const (
 	ProfileInteractive = "interactive"
 	ProfileBulk        = "bulk"

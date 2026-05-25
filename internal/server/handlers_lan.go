@@ -18,19 +18,20 @@ import (
 const lanBootstrapVersion = 1
 
 type lanBootstrapResponse struct {
-	Version       int                    `json:"version"`
-	Capabilities  []string               `json:"capabilities"`
-	ConfigVersion string                 `json:"config_version"`
-	Server        string                 `json:"server"`
-	STUNAltPort   int                    `json:"stun_alt_port"`
-	RelayEnabled  bool                   `json:"relay_enabled"`
-	DeviceID      string                 `json:"device_id"`
-	DeviceName    string                 `json:"device_name"`
-	Network       store.VirtualNetwork   `json:"network"`
-	Address       store.VirtualAddress   `json:"address"`
-	Routes        []store.VirtualRoute   `json:"routes"`
-	ACL           []store.VirtualACLRule `json:"acl"`
-	Peers         []lanBootstrapPeer     `json:"peers"`
+	Version       int                        `json:"version"`
+	Capabilities  []string                   `json:"capabilities"`
+	ConfigVersion string                     `json:"config_version"`
+	Server        string                     `json:"server"`
+	STUNAltPort   int                        `json:"stun_alt_port"`
+	RelayEnabled  bool                       `json:"relay_enabled"`
+	DeviceID      string                     `json:"device_id"`
+	DeviceName    string                     `json:"device_name"`
+	Network       store.VirtualNetwork       `json:"network"`
+	Address       store.VirtualAddress       `json:"address"`
+	Routes        []store.VirtualRoute       `json:"routes"`
+	ACL           []store.VirtualACLRule     `json:"acl"`
+	Peers         []lanBootstrapPeer         `json:"peers"`
+	LearnedPaths  []store.VirtualLearnedPath `json:"learned_paths"`
 }
 
 type lanBootstrapPeer struct {
@@ -68,6 +69,7 @@ type lanDiagnosticsSnapshot struct {
 	PeerStates   []store.VirtualPeerState     `json:"peer_states"`
 	DeviceStates []lanDeviceState             `json:"device_states"`
 	PathEvents   []store.VirtualPeerPathEvent `json:"path_events"`
+	LearnedPaths []store.VirtualLearnedPath   `json:"learned_paths"`
 }
 
 func (a *App) handleAdminLANNetworks(w http.ResponseWriter, r *http.Request) {
@@ -541,6 +543,35 @@ func (a *App) handleAdminLANPathEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleAdminLANLearnedPaths(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		networkID, err := optionalInt64Query(r, "network_id")
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		paths, err := a.db.ListVirtualLearnedPaths(r.Context(), networkID, r.URL.Query().Get("device_id"))
+		writeJSONOrError(w, paths, err)
+	case http.MethodPatch:
+		var req struct {
+			NetworkID      int64  `json:"network_id"`
+			DeviceID       string `json:"device_id"`
+			PeerID         string `json:"peer_id"`
+			DstPort        int    `json:"dst_port"`
+			PreheatEnabled bool   `json:"preheat_enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NetworkID <= 0 || strings.TrimSpace(req.DeviceID) == "" || strings.TrimSpace(req.PeerID) == "" || req.DstPort <= 0 {
+			writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
+			return
+		}
+		err := a.db.SetVirtualLearnedPathPreheat(r.Context(), req.NetworkID, req.DeviceID, req.PeerID, req.DstPort, req.PreheatEnabled)
+		writeJSONOrError(w, map[string]any{"ok": true}, err)
+	default:
+		writeJSONOrError(w, nil, methodNotAllowed())
+	}
+}
+
 func (a *App) handleAdminLANDiagnostics(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -598,6 +629,9 @@ func (a *App) lanDiagnosticsSnapshot(ctx context.Context, networkID int64) (lanD
 		return snapshot, err
 	}
 	if snapshot.PathEvents, err = filterLANPathEvents(snapshot.Addresses, snapshot.PathEvents); err != nil {
+		return snapshot, err
+	}
+	if snapshot.LearnedPaths, err = a.db.ListVirtualLearnedPaths(ctx, networkID, ""); err != nil {
 		return snapshot, err
 	}
 	return snapshot, nil
@@ -757,6 +791,11 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, nil, err)
 		return
 	}
+	learnedPaths, err := a.db.ListVirtualLearnedPaths(r.Context(), network.ID, req.DeviceID)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
 	acl, err = a.expandVirtualACLRules(r.Context(), acl, addresses)
 	if err != nil {
 		writeJSONOrError(w, nil, err)
@@ -780,7 +819,7 @@ func (a *App) handleLANBootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, lanBootstrapResponse{
 		Version: lanBootstrapVersion, Capabilities: []string{"ipv4", "tcp", "rdp"},
 		ConfigVersion: lanConfigVersion(network, addresses, acl, routes), Server: externalUDPAddr(r, a.cfg.UDPListen), STUNAltPort: portFromAddr(a.cfg.StunAltListen, 7002), RelayEnabled: a.currentLANAllowRelay(), DeviceID: req.DeviceID,
-		DeviceName: strings.TrimSpace(req.DeviceName), Network: network, Address: address, Routes: routes, ACL: acl, Peers: peers,
+		DeviceName: strings.TrimSpace(req.DeviceName), Network: network, Address: address, Routes: routes, ACL: acl, Peers: peers, LearnedPaths: learnedPaths,
 	})
 }
 
@@ -896,12 +935,35 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (a *App) handleLANStatus(w http.ResponseWriter, r *http.Request) {
-	var req store.VirtualPeerState
+	var req struct {
+		store.VirtualPeerState
+		LearnedPaths []store.VirtualLearnedPath `json:"learned_paths"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.DeviceID) == "" || req.NetworkID <= 0 {
 		writeJSONOrError(w, nil, badRequest("bad_json", "bad json"))
 		return
 	}
-	err := a.db.PutVirtualPeerState(r.Context(), req)
+	err := a.db.PutVirtualPeerState(r.Context(), req.VirtualPeerState)
+	if err == nil {
+		for _, path := range req.LearnedPaths {
+			if strings.TrimSpace(path.DeviceID) == "" {
+				path.DeviceID = req.DeviceID
+			}
+			if path.NetworkID <= 0 {
+				path.NetworkID = req.NetworkID
+			}
+			if path.DeviceID != req.DeviceID || path.NetworkID != req.NetworkID || strings.TrimSpace(path.PeerID) == "" || path.DstPort <= 0 {
+				continue
+			}
+			if path.Protocol == "" {
+				path.Protocol = "tcp"
+			}
+			err = a.db.UpsertVirtualLearnedPath(r.Context(), path)
+			if err != nil {
+				break
+			}
+		}
+	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
 }
 

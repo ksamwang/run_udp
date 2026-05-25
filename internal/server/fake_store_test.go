@@ -32,6 +32,7 @@ type fakeStore struct {
 	virtualRoutes  map[string]store.VirtualRoute
 	virtualPeers   map[string]store.VirtualPeerState
 	virtualEvents  []store.VirtualPeerPathEvent
+	learnedPaths   map[string]store.VirtualLearnedPath
 	nextLANID      int64
 	nextLANEventID int64
 	auditEvents    []store.AuditEvent
@@ -56,6 +57,7 @@ func newFakeStore() *fakeStore {
 		virtualRoutes:  map[string]store.VirtualRoute{},
 		virtualPeers:   map[string]store.VirtualPeerState{},
 		virtualEvents:  []store.VirtualPeerPathEvent{},
+		learnedPaths:   map[string]store.VirtualLearnedPath{},
 	}
 }
 
@@ -904,6 +906,65 @@ func (s *fakeStore) ListVirtualPeerPathEvents(ctx context.Context, networkID int
 		out = append(out, event)
 	}
 	return out, nil
+}
+
+func (s *fakeStore) UpsertVirtualLearnedPath(ctx context.Context, path store.VirtualLearnedPath) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := learnedPathKey(path.NetworkID, path.DeviceID, path.PeerID, path.DstPort)
+	if path.Protocol == "" {
+		path.Protocol = "tcp"
+	}
+	if path.Quality == "" {
+		path.Quality = "ok"
+	}
+	if path.UpdatedAt == "" {
+		path.UpdatedAt = nowTestString()
+	}
+	if path.LastSuccessAt == "" && path.SuccessCount > 0 {
+		path.LastSuccessAt = path.UpdatedAt
+	}
+	if path.LastFailureAt == "" && path.FailureCount > 0 {
+		path.LastFailureAt = path.UpdatedAt
+	}
+	s.learnedPaths[key] = path
+	return nil
+}
+
+func (s *fakeStore) ListVirtualLearnedPaths(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualLearnedPath, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deviceID = strings.TrimSpace(deviceID)
+	out := make([]store.VirtualLearnedPath, 0)
+	for _, path := range s.learnedPaths {
+		if networkID > 0 && path.NetworkID != networkID {
+			continue
+		}
+		if deviceID != "" && path.DeviceID != deviceID {
+			continue
+		}
+		out = append(out, path)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	return out, nil
+}
+
+func (s *fakeStore) SetVirtualLearnedPathPreheat(ctx context.Context, networkID int64, deviceID, peerID string, dstPort int, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := learnedPathKey(networkID, deviceID, peerID, dstPort)
+	path, ok := s.learnedPaths[key]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	path.PreheatEnabled = enabled
+	path.UpdatedAt = nowTestString()
+	s.learnedPaths[key] = path
+	return nil
+}
+
+func learnedPathKey(networkID int64, deviceID, peerID string, dstPort int) string {
+	return fmt.Sprintf("%d\x00%s\x00%s\x00%d", networkID, deviceID, peerID, dstPort)
 }
 
 func tunnelStateKey(deviceID, peerID, profile string) string {

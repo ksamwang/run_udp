@@ -19,6 +19,7 @@ import {
   listVirtualDeviceKeys,
   listVirtualDeviceGroups,
   listVirtualDeviceStates,
+  listVirtualLearnedPaths,
   listVirtualNetworks,
   listVirtualPeerPathEvents,
   listVirtualPeerStates,
@@ -26,13 +27,14 @@ import {
   reassignVirtualAddress,
   releaseVirtualAddress,
   triggerVirtualAddressBootstrap,
+  setVirtualLearnedPathPreheat,
   updateVirtualACLRule,
   updateVirtualAddress,
   updateVirtualDeviceGroup,
   updateVirtualNetwork,
   updateVirtualRoute,
 } from '../api/lan'
-import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { Device, VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualLearnedPath, VirtualNetwork, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 type NetworkForm = Pick<VirtualNetwork, 'name' | 'cidr' | 'mtu' | 'mss' | 'path_policy' | 'tcp_fast_path' | 'enabled'>
 type AddressForm = Pick<VirtualAddress, 'network_id' | 'virtual_ip' | 'hostname' | 'dns_enabled'>
@@ -82,6 +84,12 @@ export function LanPage() {
   const pathEvents = useQuery({
     queryKey: ['lan', 'path-events', networkID],
     queryFn: () => listVirtualPeerPathEvents(networkID),
+    enabled: Boolean(networkID),
+    refetchInterval: 10000,
+  })
+  const learnedPaths = useQuery({
+    queryKey: ['lan', 'learned-paths', networkID],
+    queryFn: () => listVirtualLearnedPaths(networkID),
     enabled: Boolean(networkID),
     refetchInterval: 10000,
   })
@@ -317,6 +325,20 @@ export function LanPage() {
       queryClient.invalidateQueries({ queryKey: ['lan', 'groups'] })
     },
     onError: (err) => message.error(err instanceof Error ? err.message : '删除失败'),
+  })
+  const learnedPathMutation = useMutation({
+    mutationFn: ({ row, enabled }: { row: VirtualLearnedPath; enabled: boolean }) => setVirtualLearnedPathPreheat({
+      network_id: row.network_id,
+      device_id: row.device_id,
+      peer_id: row.peer_id,
+      dst_port: row.dst_port,
+      preheat_enabled: enabled,
+    }),
+    onSuccess: () => {
+      message.success('预热配置已保存')
+      queryClient.invalidateQueries({ queryKey: ['lan', 'learned-paths'] })
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : '保存失败'),
   })
 
   const tabs = [
@@ -828,6 +850,37 @@ export function LanPage() {
         </Card>
       ),
     },
+    {
+      key: 'learned-paths',
+      label: '常用连接',
+      children: (
+        <Card>
+          <Table
+            rowKey={(row) => `${row.network_id}:${row.device_id}:${row.peer_id}:${row.dst_port}`}
+            loading={learnedPaths.isLoading}
+            dataSource={learnedPaths.data || []}
+            columns={[
+              { title: '设备', dataIndex: 'device_id', render: (v) => deviceName(v) },
+              { title: '对端', dataIndex: 'peer_id', render: (v) => deviceName(v) },
+              { title: '端口', dataIndex: 'dst_port', render: (v) => servicePortLabel(v) },
+              { title: '最近路径', dataIndex: 'path', render: (v) => <Tag color={pathTagColor(v)}>{v || '-'}</Tag> },
+              { title: '公网地址', dataIndex: 'public_addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
+              { title: '质量', dataIndex: 'quality', render: (v) => <Tag color={learnedQualityColor(v)}>{v || '-'}</Tag> },
+              { title: '成功/失败', render: (_, row) => `${row.success_count || 0} / ${row.failure_count || 0}` },
+              { title: '最近成功', dataIndex: 'last_success_at', render: formatTime },
+              { title: '最近失败', dataIndex: 'last_failure', render: (v, row) => v || row.last_failure_at ? `${v || '-'} ${formatTime(row.last_failure_at)}` : '-' },
+              {
+                title: '启动预热',
+                dataIndex: 'preheat_enabled',
+                width: 110,
+                render: (v, row) => <Switch checked={v} loading={learnedPathMutation.isPending} onChange={(checked) => learnedPathMutation.mutate({ row, enabled: checked })} />,
+              },
+            ]}
+            scroll={{ x: 1400 }}
+          />
+        </Card>
+      ),
+    },
   ]
 
   return (
@@ -930,6 +983,36 @@ function tcpFastPathTagColor(value?: string) {
       return 'default'
     default:
       return 'default'
+  }
+}
+
+function learnedQualityColor(value?: string) {
+  switch (value) {
+    case 'good':
+      return 'green'
+    case 'ok':
+      return 'blue'
+    case 'degraded':
+      return 'orange'
+    case 'bad':
+      return 'red'
+    default:
+      return 'default'
+  }
+}
+
+function servicePortLabel(port?: number) {
+  switch (port) {
+    case 22:
+      return 'SSH 22'
+    case 3389:
+      return 'RDP 3389'
+    case 139:
+      return 'SMB 139'
+    case 445:
+      return 'SMB 445'
+    default:
+      return port || '-'
   }
 }
 

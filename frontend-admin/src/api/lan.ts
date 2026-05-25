@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualDeviceKey, VirtualDeviceState, VirtualNetwork, VirtualPeerPathEvent, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
+import type { VirtualACLRule, VirtualACLRulePayload, VirtualAddress, VirtualDeviceGroup, VirtualDeviceGroupPayload, VirtualDeviceKey, VirtualDeviceState, VirtualLearnedPath, VirtualNetwork, VirtualPeerPathEvent, VirtualPeerState, VirtualRoute, VirtualRoutePayload } from '../types/api'
 
 export function listVirtualNetworks() {
   return apiRequest<VirtualNetwork[]>('/api/admin/lan/networks')
@@ -147,6 +147,21 @@ export function listVirtualPeerPathEvents(networkID?: number, limit = 200) {
   if (limit) params.set('limit', String(limit))
   const query = params.toString() ? `?${params.toString()}` : ''
   return apiRequest<VirtualPeerPathEvent[]>(`/api/admin/lan/path-events${query}`)
+}
+
+export function listVirtualLearnedPaths(networkID?: number, deviceID?: string) {
+  const params = new URLSearchParams()
+  if (networkID) params.set('network_id', String(networkID))
+  if (deviceID) params.set('device_id', deviceID)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<VirtualLearnedPath[]>(`/api/admin/lan/learned-paths${query}`)
+}
+
+export function setVirtualLearnedPathPreheat(path: Pick<VirtualLearnedPath, 'network_id' | 'device_id' | 'peer_id' | 'dst_port'> & { preheat_enabled: boolean }) {
+  return apiRequest<{ ok: boolean }>('/api/admin/lan/learned-paths', {
+    method: 'PATCH',
+    body: JSON.stringify(path),
+  })
 }
 
 export async function downloadLANDiagnostics(networkID?: number) {

@@ -271,6 +271,24 @@ export type VirtualPeerPathEvent = {
   created_at: string
 }
 
+export type VirtualLearnedPath = {
+  device_id: string
+  peer_id: string
+  network_id: number
+  dst_port: number
+  protocol: string
+  path: string
+  public_addr: string
+  success_count: number
+  failure_count: number
+  last_success_at: string
+  last_failure_at: string
+  last_failure: string
+  quality: string
+  preheat_enabled: boolean
+  updated_at: string
+}
+
 export type VirtualDeviceState = {
   device_id: string
   network_id: number

@@ -386,6 +386,13 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.db.UpsertVirtualLearnedPath(ctx, store.VirtualLearnedPath{
+		DeviceID: "dev-a", PeerID: "dev-b", NetworkID: network.ID, DstPort: 3389,
+		Protocol: "tcp", Path: "p2p_datagram", PublicAddr: "203.0.113.10:40000",
+		SuccessCount: 3, Quality: "good", PreheatEnabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := doJSON(t, a.httpMux(), http.MethodPost, "/api/lan/bootstrap", map[string]any{
 		"device_id": "dev-a", "device_name": "Office A", "public_key": "pub-a", "capabilities": []string{"ipv4"},
@@ -417,6 +424,9 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	}
 	if len(resp.Routes) != 1 || resp.Routes[0].CIDR != "10.30.0.0/16" {
 		t.Fatalf("bootstrap routes not returned: %+v", resp.Routes)
+	}
+	if len(resp.LearnedPaths) != 1 || resp.LearnedPaths[0].DstPort != 3389 || !resp.LearnedPaths[0].PreheatEnabled {
+		t.Fatalf("bootstrap learned paths not returned: %+v", resp.LearnedPaths)
 	}
 	hasExpandedGroupACL := false
 	for _, rule := range resp.ACL {
@@ -451,6 +461,11 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		"nat_type": "relay_required", "fallback_reason": "p2p_timeout", "tcp_fast_path": "auto_candidate",
 		"adapter_state": "up", "selected_cidr": "172.16.10.0/24", "mtu": 1280, "mss": 1200,
 		"tx_bytes": 300, "rx_bytes": 400,
+		"learned_paths": []map[string]any{{
+			"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID, "dst_port": 445,
+			"protocol": "tcp", "path": "p2p_datagram", "public_addr": "203.0.113.10:40000",
+			"success_count": 2, "failure_count": 0, "quality": "ok", "preheat_enabled": true,
+		}},
 	}, nil)
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("second status status=%d body=%s", statusRec.Code, statusRec.Body.String())
@@ -494,6 +509,23 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		devAStateRaw.TCPFastPath != "auto_candidate" || devAStateRaw.TxBytes != 300 {
 		t.Fatalf("bad peer states: %+v", states)
 	}
+	learnedRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/learned-paths?network_id="+strconv.FormatInt(network.ID, 10), nil)
+	if learnedRec.Code != http.StatusOK {
+		t.Fatalf("learned paths status=%d body=%s", learnedRec.Code, learnedRec.Body.String())
+	}
+	var learned []store.VirtualLearnedPath
+	if err := json.Unmarshal(learnedRec.Body.Bytes(), &learned); err != nil {
+		t.Fatal(err)
+	}
+	if len(learned) != 2 {
+		t.Fatalf("bad learned paths: %+v", learned)
+	}
+	patchRec := doAdminJSON(t, a, http.MethodPatch, "/api/admin/lan/learned-paths", map[string]any{
+		"device_id": "dev-a", "peer_id": "dev-b", "network_id": network.ID, "dst_port": 445, "preheat_enabled": false,
+	})
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch learned path status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
 	eventsRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/path-events?network_id="+strconv.FormatInt(network.ID, 10), nil)
 	if eventsRec.Code != http.StatusOK {
 		t.Fatalf("admin lan path events status=%d body=%s", eventsRec.Code, eventsRec.Body.String())
@@ -514,7 +546,7 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if diag.NetworkID != network.ID || len(diag.Networks) == 0 || len(diag.Addresses) == 0 ||
-		len(diag.PeerStates) != 1 || len(diag.PathEvents) != 2 {
+		len(diag.PeerStates) != 1 || len(diag.PathEvents) != 2 || len(diag.LearnedPaths) != 2 {
 		t.Fatalf("bad diagnostics snapshot: %+v", diag)
 	}
 	deviceStatesRec := doAdminJSON(t, a, http.MethodGet, "/api/admin/lan/device-states?network_id="+strconv.FormatInt(network.ID, 10), nil)

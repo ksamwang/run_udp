@@ -245,3 +245,23 @@ type VirtualPeerPathEvent struct {
 }
 
 func (VirtualPeerPathEvent) TableName() string { return "virtual_peer_path_events" }
+
+type VirtualLearnedPath struct {
+	DeviceID       string `gorm:"primaryKey;size:191;column:device_id"`
+	PeerID         string `gorm:"primaryKey;size:191;column:peer_id"`
+	NetworkID      int64  `gorm:"primaryKey;index;column:network_id"`
+	DstPort        int    `gorm:"primaryKey;column:dst_port"`
+	Protocol       string `gorm:"size:16;not null;default:'tcp';column:protocol"`
+	Path           string `gorm:"size:32;not null;default:'';column:path"`
+	PublicAddr     string `gorm:"size:255;not null;default:'';column:public_addr"`
+	SuccessCount   int    `gorm:"not null;default:0;column:success_count"`
+	FailureCount   int    `gorm:"not null;default:0;column:failure_count"`
+	LastSuccessAt  string `gorm:"size:64;not null;default:'';column:last_success_at"`
+	LastFailureAt  string `gorm:"size:64;not null;default:'';column:last_failure_at"`
+	LastFailure    string `gorm:"type:text;not null;column:last_failure"`
+	Quality        string `gorm:"size:32;not null;default:'';column:quality"`
+	PreheatEnabled bool   `gorm:"index;not null;default:true;column:preheat_enabled"`
+	UpdatedAt      string `gorm:"index;size:64;not null;column:updated_at"`
+}
+
+func (VirtualLearnedPath) TableName() string { return "virtual_learned_paths" }

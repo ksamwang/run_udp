@@ -421,6 +421,27 @@ func TestLANP2PHotPathKeepAliveAndFailure(t *testing.T) {
 	}
 }
 
+func TestLANP2PLoadsLearnedPathsAndReportsSnapshot(t *testing.T) {
+	p := &lanP2P{deviceID: "dev-a"}
+	p.LoadLearnedPaths([]store.VirtualLearnedPath{{
+		DeviceID: "dev-a", PeerID: "dev-b", NetworkID: 7, DstPort: 3389,
+		Path: "p2p_datagram", PublicAddr: "203.0.113.10:40000",
+		SuccessCount: 3, Quality: "good", PreheatEnabled: true,
+	}})
+
+	hot, ok := p.hotPath("dev-b", 3389, time.Now())
+	if !ok || hot.PublicAddr != "203.0.113.10:40000" || hot.Successes != 3 {
+		t.Fatalf("learned path not loaded: ok=%v hot=%+v", ok, hot)
+	}
+	paths := p.LearnedPathsSnapshot(7)
+	if len(paths) != 1 {
+		t.Fatalf("expected learned path snapshot, got %+v", paths)
+	}
+	if paths[0].DeviceID != "dev-a" || paths[0].PeerID != "dev-b" || paths[0].DstPort != 3389 || paths[0].Quality != "good" {
+		t.Fatalf("bad learned path snapshot: %+v", paths[0])
+	}
+}
+
 func TestLANTCPFastPathCandidate(t *testing.T) {
 	tests := []struct {
 		name  string

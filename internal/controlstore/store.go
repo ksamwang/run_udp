@@ -69,6 +69,7 @@ func (s *MySQLStore) AutoMigrate() error {
 		&VirtualRoute{},
 		&VirtualPeerState{},
 		&VirtualPeerPathEvent{},
+		&VirtualLearnedPath{},
 	)
 }
 
@@ -999,6 +1000,93 @@ func (s *MySQLStore) ListVirtualPeerPathEvents(ctx context.Context, networkID in
 	return out, nil
 }
 
+func (s *MySQLStore) UpsertVirtualLearnedPath(ctx context.Context, path store.VirtualLearnedPath) error {
+	now := nowString()
+	protocol := strings.TrimSpace(strings.ToLower(path.Protocol))
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	row := VirtualLearnedPath{
+		DeviceID: path.DeviceID, PeerID: path.PeerID, NetworkID: path.NetworkID, DstPort: path.DstPort,
+		Protocol: protocol, Path: path.Path, PublicAddr: path.PublicAddr,
+		SuccessCount: path.SuccessCount, FailureCount: path.FailureCount,
+		LastSuccessAt: path.LastSuccessAt, LastFailureAt: path.LastFailureAt, LastFailure: path.LastFailure,
+		Quality: path.Quality, PreheatEnabled: path.PreheatEnabled, UpdatedAt: now,
+	}
+	if row.SuccessCount <= 0 {
+		row.SuccessCount = 0
+	}
+	if row.FailureCount <= 0 {
+		row.FailureCount = 0
+	}
+	if row.LastSuccessAt == "" && row.SuccessCount > 0 {
+		row.LastSuccessAt = now
+	}
+	if row.LastFailureAt == "" && row.FailureCount > 0 {
+		row.LastFailureAt = now
+	}
+	if row.Quality == "" {
+		row.Quality = learnedPathQuality(row.SuccessCount, row.FailureCount, row.LastFailure)
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}, {Name: "peer_id"}, {Name: "network_id"}, {Name: "dst_port"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"protocol": row.Protocol, "path": row.Path, "public_addr": row.PublicAddr,
+			"success_count": row.SuccessCount, "failure_count": row.FailureCount,
+			"last_success_at": row.LastSuccessAt, "last_failure_at": row.LastFailureAt, "last_failure": row.LastFailure,
+			"quality": row.Quality, "preheat_enabled": row.PreheatEnabled, "updated_at": row.UpdatedAt,
+		}),
+	}).Create(&row).Error
+}
+
+func (s *MySQLStore) ListVirtualLearnedPaths(ctx context.Context, networkID int64, deviceID string) ([]store.VirtualLearnedPath, error) {
+	var rows []VirtualLearnedPath
+	q := s.db.WithContext(ctx).Order("updated_at DESC")
+	if networkID > 0 {
+		q = q.Where("network_id = ?", networkID)
+	}
+	if strings.TrimSpace(deviceID) != "" {
+		q = q.Where("device_id = ?", strings.TrimSpace(deviceID))
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.VirtualLearnedPath, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
+}
+
+func (s *MySQLStore) SetVirtualLearnedPathPreheat(ctx context.Context, networkID int64, deviceID, peerID string, dstPort int, enabled bool) error {
+	tx := s.db.WithContext(ctx).Model(&VirtualLearnedPath{}).
+		Where("network_id = ? AND device_id = ? AND peer_id = ? AND dst_port = ?", networkID, deviceID, peerID, dstPort).
+		Updates(map[string]any{"preheat_enabled": enabled, "updated_at": nowString()})
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func learnedPathQuality(successes, failures int, lastFailure string) string {
+	if successes <= 0 && failures > 0 {
+		return "bad"
+	}
+	if lastFailure != "" && failures >= successes {
+		return "degraded"
+	}
+	if successes >= 3 && failures == 0 {
+		return "good"
+	}
+	if successes > failures {
+		return "ok"
+	}
+	return "unknown"
+}
+
 func (s *MySQLStore) count(ctx context.Context, model any, where map[string]any, dest *int) error {
 	var n int64
 	q := s.db.WithContext(ctx).Model(model)
@@ -1161,6 +1249,16 @@ func (e VirtualPeerPathEvent) toStore() store.VirtualPeerPathEvent {
 		ID: e.ID, DeviceID: e.DeviceID, PeerID: e.PeerID, NetworkID: e.NetworkID,
 		Path: e.Path, DataPath: e.DataPath, PathReason: e.PathReason, TrafficClass: e.TrafficClass,
 		TxBytes: e.TxBytes, RxBytes: e.RxBytes, CreatedAt: e.CreatedAt,
+	}
+}
+
+func (p VirtualLearnedPath) toStore() store.VirtualLearnedPath {
+	return store.VirtualLearnedPath{
+		DeviceID: p.DeviceID, PeerID: p.PeerID, NetworkID: p.NetworkID, DstPort: p.DstPort,
+		Protocol: p.Protocol, Path: p.Path, PublicAddr: p.PublicAddr,
+		SuccessCount: p.SuccessCount, FailureCount: p.FailureCount,
+		LastSuccessAt: p.LastSuccessAt, LastFailureAt: p.LastFailureAt, LastFailure: p.LastFailure,
+		Quality: p.Quality, PreheatEnabled: p.PreheatEnabled, UpdatedAt: p.UpdatedAt,
 	}
 }
 
