@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -752,7 +753,7 @@ func TestSendPacketsDefersThroughputBatchBeforeFlush(t *testing.T) {
 
 	outbound <- packet.RoutedFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
-		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
+		Header:  packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
 		Payload: bytes.Repeat([]byte("x"), 1500),
 	}
 
@@ -780,12 +781,12 @@ func TestSendPacketsPrioritizesInteractiveOverThroughput(t *testing.T) {
 
 	outbound <- packet.RoutedFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
-		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
+		Header:  packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, DestPort: 445},
 		Payload: bytes.Repeat([]byte("x"), 1500),
 	}
 	outbound <- packet.RoutedFrame{
 		NetworkID: 7, SrcDevice: "dev-a", DstDevice: "dev-b", PacketType: packet.TypeIPv4,
-		Header: packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, TCPSYN: true, DestPort: 3389},
+		Header:  packet.IPv4Header{Protocol: packet.IPv4ProtocolTCP, TCPSYN: true, DestPort: 3389},
 		Payload: []byte("syn"),
 	}
 
@@ -861,7 +862,7 @@ func TestLANP2PSendPrefersDatagramBeforeKCP(t *testing.T) {
 		t.Fatalf("traffic class=%q, want %q", got, lanTrafficInteractive)
 	}
 	dataPath, reason := p.peerDataPath("dev-b")
-	if dataPath != lanPathP2PDatagram || reason != "datagram_ready" {
+	if dataPath != lanPathP2PDatagram || reason != "p2p_ready" {
 		t.Fatalf("bad peer data path: path=%q reason=%q", dataPath, reason)
 	}
 }
@@ -943,18 +944,26 @@ func TestLANP2PPunchAckUsesDatagramWithoutOpeningKCP(t *testing.T) {
 	defer cancel()
 	p.handleControl(ctx, b, peerAddr, nil, nil, link)
 
-	if !peer.punched.Load() || !peer.datagramReady.Load() {
-		t.Fatalf("expected datagram-ready punch state, punched=%v datagram=%v", peer.punched.Load(), peer.datagramReady.Load())
+	if !peer.punched.Load() || peer.datagramReady.Load() {
+		t.Fatalf("single punch ack should be one-way only, punched=%v datagram=%v", peer.punched.Load(), peer.datagramReady.Load())
 	}
 	if peer.connected.Load() || peer.kcp != nil || peer.pc != nil {
-		t.Fatalf("datagram-ready direct path must not open KCP: connected=%v kcp=%v pc=%v", peer.connected.Load(), peer.kcp, peer.pc)
+		t.Fatalf("one-way punch must not open KCP: connected=%v kcp=%v pc=%v", peer.connected.Load(), peer.kcp, peer.pc)
+	}
+	dataPath, reason := p.peerDataPath("dev-b")
+	if dataPath != "" || reason != "one_way_p2p" {
+		t.Fatalf("bad one-way path: path=%q reason=%q", dataPath, reason)
+	}
+
+	punch := &protocol.Message{Type: protocol.MsgPunch, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	punchWire, _ := protocol.Encode(punch)
+	p.handleControl(ctx, punchWire, peerAddr, nil, nil, link)
+	if !peer.datagramReady.Load() {
+		t.Fatal("incoming punch plus ack should confirm datagram path")
 	}
 	frame, err := link.Send("dev-b", []byte("probe"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if frame.Path != packet.LinkPathP2P {
-		t.Fatalf("expected p2p link path, got %q", frame.Path)
+	if err != nil || frame.Path != packet.LinkPathP2P {
+		t.Fatalf("expected p2p link path after two-way confirmation, frame=%+v err=%v", frame, err)
 	}
 }
 
@@ -986,6 +995,7 @@ func TestLANP2PPreferRelaySwitchesBackToDatagramWhenReady(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	peer.punchSignals.Store(lanPunchSignalIncoming)
 	p.handleControl(ctx, b, peerAddr, nil, nil, link)
 
 	if peer.isRelay.Load() {
@@ -995,7 +1005,7 @@ func TestLANP2PPreferRelaySwitchesBackToDatagramWhenReady(t *testing.T) {
 		t.Fatalf("bad direct peer addr: %v", got)
 	}
 	dataPath, reason := p.peerDataPath("dev-b")
-	if dataPath != lanPathP2PDatagram || reason != "datagram_ready" {
+	if dataPath != lanPathP2PDatagram || reason != "p2p_ready" {
 		t.Fatalf("bad data path after switch: path=%q reason=%q", dataPath, reason)
 	}
 	if frame, err := link.Send("dev-b", []byte("probe")); err != nil || frame.Path != packet.LinkPathP2P {
@@ -1032,6 +1042,7 @@ func TestLANP2PRelayOnlyDoesNotSwitchBackToDatagram(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	peer.punchSignals.Store(lanPunchSignalIncoming)
 	p.handleControl(ctx, b, directAddr, nil, nil, link)
 
 	if !peer.isRelay.Load() {
@@ -1479,7 +1490,7 @@ func TestLANP2PRelayFailureDoesNotRotateWhenAnotherPeerReady(t *testing.T) {
 func TestLANP2PBadNATEnablesRelayWithoutWaitingPunchTimeout(t *testing.T) {
 	p := &lanP2P{
 		server:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000},
-		pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p"},
+		pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p", RelayEnabled: true, RelayConfigured: true},
 		peers:      map[string]*lanP2PPeer{"dev-b": {id: "dev-b"}},
 	}
 	p.natType.Store("symmetric_nat")
@@ -1492,6 +1503,85 @@ func TestLANP2PBadNATEnablesRelayWithoutWaitingPunchTimeout(t *testing.T) {
 	}
 	if got := peer.addr.Load(); got == nil || got.String() != p.server.String() {
 		t.Fatalf("bad relay addr: %v", got)
+	}
+}
+
+func TestLANP2PRelayDisabledUsesLongPunchingAfterTimeout(t *testing.T) {
+	p := &lanP2P{
+		server:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7000},
+		pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p", RelayEnabled: false, RelayConfigured: true},
+		peers:      map[string]*lanP2PPeer{"dev-b": {id: "dev-b"}},
+	}
+	p.peers["dev-b"].lastTrafficAt.Store(time.Now().UnixNano())
+
+	p.enableRelayMode(context.Background(), "dev-b", "test")
+
+	peer := p.peer("dev-b")
+	if peer == nil || peer.isRelay.Load() || peer.punched.Load() || !peer.longPunching.Load() {
+		t.Fatalf("relay disabled should enter long punching, peer=%+v relay=%v punched=%v long=%v", peer, peer != nil && peer.isRelay.Load(), peer != nil && peer.punched.Load(), peer != nil && peer.longPunching.Load())
+	}
+	dataPath, reason := p.peerDataPath("dev-b")
+	if dataPath != "" || reason != "long_punching" {
+		t.Fatalf("bad relay disabled path: path=%q reason=%q", dataPath, reason)
+	}
+	if err := p.SendUDPRelayFrame(packet.RoutedFrame{SrcDevice: "dev-a", DstDevice: "dev-b", Payload: []byte("x")}); !errors.Is(err, packet.ErrLinkUnavailable) {
+		t.Fatalf("relay disabled should reject udp relay send, got %v", err)
+	}
+}
+
+func TestLANP2PLongPunchingStopsWhenIdle(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.longPunching.Store(true)
+	peer.lastTrafficAt.Store(time.Now().Add(-2 * lanActiveTrafficTTL).UnixNano())
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	peer.addr.Store(conn.LocalAddr().(*net.UDPAddr))
+	p := &lanP2P{deviceID: "dev-a", peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.startPunchLoop(ctx, peer)
+
+	deadline := time.After(2 * time.Second)
+	for peer.longPunching.Load() || peer.punching.Load() {
+		select {
+		case <-deadline:
+			t.Fatalf("long punching should stop when idle: long=%v punching=%v", peer.longPunching.Load(), peer.punching.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestLANP2PRelayDisabledSkipsRelaySocketRotation(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.isRelay.Store(true)
+	peer.relaySince.Store(time.Now().Add(-2 * lanRelayMaxAge).UnixNano())
+	p := &lanP2P{pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p", RelayEnabled: false, RelayConfigured: true}, peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	if p.maybeRotateSocketAfterRelayFailure(context.Background(), peer, "test") {
+		t.Fatal("relay disabled must not rotate socket after relay failure")
+	}
+	if got := peer.openFailures.Load(); got != 0 {
+		t.Fatalf("relay disabled should not count relay open failures, got %d", got)
+	}
+}
+
+func TestLANP2PActiveTrafficSkipsRelaySocketRotation(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.isRelay.Store(true)
+	peer.lastTrafficAt.Store(time.Now().UnixNano())
+	peer.relaySince.Store(time.Now().Add(-2 * lanRelayMaxAge).UnixNano())
+	p := &lanP2P{pathPolicy: lanPathPolicyConfig{Name: "prefer_p2p", RelayEnabled: true, RelayConfigured: true}, peers: map[string]*lanP2PPeer{"dev-b": peer}}
+
+	if p.maybeRotateSocketAfterRelayFailure(context.Background(), peer, "test") {
+		t.Fatal("active traffic must keep socket stable")
+	}
+	if got := peer.openFailures.Load(); got != 0 {
+		t.Fatalf("active traffic should not count relay open failures, got %d", got)
 	}
 }
 
@@ -1523,6 +1613,7 @@ func TestLANP2PBadNATStillSwitchesBackToDatagram(t *testing.T) {
 	msg := &protocol.Message{Type: protocol.MsgPunchAck, From: "dev-b", Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
 	wire, _ := protocol.Encode(msg)
 
+	peer.punchSignals.Store(lanPunchSignalIncoming)
 	p.handleControl(context.Background(), wire, peerAddr, nil, nil, link)
 
 	if !peer.datagramReady.Load() || peer.isRelay.Load() {

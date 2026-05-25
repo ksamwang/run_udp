@@ -27,6 +27,7 @@ type lanBootstrapResponse struct {
 	ConfigVersion string                 `json:"config_version"`
 	Server        string                 `json:"server"`
 	STUNAltPort   int                    `json:"stun_alt_port"`
+	RelayEnabled  bool                   `json:"relay_enabled"`
 	DeviceID      string                 `json:"device_id"`
 	DeviceName    string                 `json:"device_name"`
 	Network       store.VirtualNetwork   `json:"network"`

@@ -403,6 +403,9 @@ func TestLANBootstrapAndStatusAPIs(t *testing.T) {
 	if resp.Server == "" {
 		t.Fatalf("bootstrap should return UDP rendezvous server: %+v", resp)
 	}
+	if resp.RelayEnabled {
+		t.Fatalf("LAN relay is disabled by default and should be advertised: %+v", resp)
+	}
 	if resp.STUNAltPort == 0 {
 		t.Fatalf("bootstrap should return STUN alt port: %+v", resp)
 	}

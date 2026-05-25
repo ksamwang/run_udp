@@ -34,25 +34,27 @@ import (
 )
 
 const (
-	lanPacketBatchSize    = 64
-	lanPacketPollInterval = 10 * time.Millisecond
-	lanThroughputBatchMax = 16
+	lanPacketBatchSize      = 64
+	lanPacketPollInterval   = 10 * time.Millisecond
+	lanThroughputBatchMax   = 16
 	lanThroughputBatchDelay = 15 * time.Millisecond
-	lanOutboundQueueSize  = 1024
-	lanConfigRefreshEvery = 10 * time.Second
-	lanUPnPTimeout        = 4 * time.Second
-	lanPunchTimeout       = 30 * time.Second
-	lanTunnelRetryDelay   = 3 * time.Second
-	lanRelayRotateAfter   = 3
-	lanRelayMaxAge        = 60 * time.Second
-	lanRotationCooldown   = 60 * time.Second
-	lanKCPFrameMax        = 64 * 1024
-	lanKCPReadyTimeout    = 35 * time.Second
-	lanRelayBackoff       = 500 * time.Millisecond
-	lanPendingTTL         = 5 * time.Second
-	lanPendingMaxFrames   = 128
-	lanPendingMaxBytes    = 1024 * 1024
-	lanDatagramReadyFrame = "UDPTunnelLAN-DATAGRAM-READY"
+	lanOutboundQueueSize    = 1024
+	lanConfigRefreshEvery   = 10 * time.Second
+	lanUPnPTimeout          = 4 * time.Second
+	lanPunchTimeout         = 30 * time.Second
+	lanTunnelRetryDelay     = 3 * time.Second
+	lanRelayRotateAfter     = 3
+	lanRelayMaxAge          = 60 * time.Second
+	lanRotationCooldown     = 60 * time.Second
+	lanLongPunchInterval    = 2 * time.Second
+	lanActiveTrafficTTL     = 30 * time.Second
+	lanKCPFrameMax          = 64 * 1024
+	lanKCPReadyTimeout      = 35 * time.Second
+	lanRelayBackoff         = 500 * time.Millisecond
+	lanPendingTTL           = 5 * time.Second
+	lanPendingMaxFrames     = 128
+	lanPendingMaxBytes      = 1024 * 1024
+	lanDatagramReadyFrame   = "UDPTunnelLAN-DATAGRAM-READY"
 )
 
 var lanKCPReadyFrame = []byte("\x00LAN-KCP-READY\n")
@@ -64,6 +66,12 @@ const (
 	lanPathP2PKCP      = "p2p_kcp"
 	lanPathRelayUDP    = "relay_udp"
 	lanPathRelayHTTP   = "relay_http"
+)
+
+const (
+	lanPunchSignalNone = iota
+	lanPunchSignalIncoming
+	lanPunchSignalAck
 )
 
 var tryLANUPnPFunc = tryLANUPnP
@@ -81,7 +89,9 @@ func runPacketForwarding(ctx context.Context, serverHTTP string, adapter *wintun
 	defer adapter.Close()
 	serverHTTP = strings.TrimRight(strings.TrimSpace(serverHTTP), "/")
 	pathPolicy := newLANPathPolicy(resp.Network)
-	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s", networkID, deviceID, serverHTTP, pathPolicy.Name)
+	pathPolicy.RelayEnabled = resp.RelayEnabled
+	pathPolicy.RelayConfigured = true
+	log.Printf("LAN packet runtime started: network_id=%d device=%s relay_endpoint=%s path_policy=%s relay_enabled=%v", networkID, deviceID, serverHTTP, pathPolicy.Name, pathPolicy.RelayEnabled)
 	outbound := make(chan packet.RoutedFrame, lanOutboundQueueSize)
 	p2p := startLANP2P(ctx, resp.Server, adapter, router, link, resp, identity, deviceID, pathPolicy)
 	go readWintunPackets(ctx, adapter, router, outbound)
@@ -103,18 +113,26 @@ func lanPathPolicy(network store.VirtualNetwork) string {
 }
 
 type lanPathPolicyConfig struct {
-	Name        string
-	PreferRelay bool
-	RelayOnly   bool
+	Name            string
+	PreferRelay     bool
+	RelayOnly       bool
+	RelayEnabled    bool
+	RelayConfigured bool
 }
 
 func newLANPathPolicy(network store.VirtualNetwork) lanPathPolicyConfig {
 	name := lanPathPolicy(network)
 	return lanPathPolicyConfig{
-		Name:        name,
-		PreferRelay: name == "prefer_relay" || name == "relay_only",
-		RelayOnly:   name == "relay_only",
+		Name:            name,
+		PreferRelay:     name == "prefer_relay" || name == "relay_only",
+		RelayOnly:       name == "relay_only",
+		RelayEnabled:    true,
+		RelayConfigured: true,
 	}
+}
+
+func (p lanPathPolicyConfig) relayAvailable() bool {
+	return !p.RelayConfigured || p.RelayEnabled
 }
 
 func readWintunPackets(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, outbound chan<- packet.RoutedFrame) {
@@ -633,31 +651,31 @@ func (q *lanPendingQueue) dropCandidateIndex() int {
 }
 
 type lanP2P struct {
-	conn         *net.UDPConn
-	connMu       sync.RWMutex
-	upnpMapping  *upnp.Mapping
-	peers        map[string]*lanP2PPeer
-	peerMu       sync.RWMutex
-	peerConv     map[uint32]string
+	conn            *net.UDPConn
+	connMu          sync.RWMutex
+	upnpMapping     *upnp.Mapping
+	peers           map[string]*lanP2PPeer
+	peerMu          sync.RWMutex
+	peerConv        map[uint32]string
 	peerConvProfile map[uint32]string
-	server       *net.UDPAddr
-	pathPolicy   lanPathPolicyConfig
-	tcpFastPath  string
-	deviceID     string
-	identity     lan.Identity
-	adapter      *wintun.Adapter
-	router       *packet.Router
-	link         *packet.LinkManager
-	x25519Priv   [32]byte
-	x25519Pub    string
-	upnpAddr     string
-	registering  map[string]bool
-	relayTimers  map[string]bool
-	openRetries  map[string]bool
-	readLoopGen  atomic.Uint64
-	rotating     atomic.Bool
-	lastRotation atomic.Int64
-	natType      atomic.Value
+	server          *net.UDPAddr
+	pathPolicy      lanPathPolicyConfig
+	tcpFastPath     string
+	deviceID        string
+	identity        lan.Identity
+	adapter         *wintun.Adapter
+	router          *packet.Router
+	link            *packet.LinkManager
+	x25519Priv      [32]byte
+	x25519Pub       string
+	upnpAddr        string
+	registering     map[string]bool
+	relayTimers     map[string]bool
+	openRetries     map[string]bool
+	readLoopGen     atomic.Uint64
+	rotating        atomic.Bool
+	lastRotation    atomic.Int64
+	natType         atomic.Value
 }
 
 type lanP2PPeer struct {
@@ -671,9 +689,12 @@ type lanP2PPeer struct {
 	datagramReady    atomic.Bool
 	connected        atomic.Bool
 	isRelay          atomic.Bool
+	longPunching     atomic.Bool
 	registers        atomic.Uint64
 	openFailures     atomic.Uint64
+	punchSignals     atomic.Uint32
 	relaySince       atomic.Int64
+	lastTrafficAt    atomic.Int64
 	lastTrafficClass atomic.Value
 	tx               *packet.Codec
 	rx               *packet.Codec
@@ -708,6 +729,8 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, tcpFastPath: strings.TrimSpace(resp.Network.TCPFastPath), deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
 		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{},
 	}
+	p.pathPolicy.RelayEnabled = resp.RelayEnabled
+	p.pathPolicy.RelayConfigured = true
 	go func() {
 		<-ctx.Done()
 		p.closeCurrentSocket()
@@ -809,7 +832,7 @@ func (p *lanP2P) UpsertPeers(ctx context.Context, identity lan.Identity, peers [
 		if shouldRegister {
 			p.registering[peerID] = true
 		}
-		if p.pathPolicy.PreferRelay {
+		if p.pathPolicy.PreferRelay && p.pathPolicy.relayAvailable() {
 			go p.enableRelayMode(ctx, peerID, "path_policy_"+p.pathPolicy.Name)
 		} else if !p.relayTimers[peerID] {
 			p.relayTimers[peerID] = true
@@ -832,6 +855,7 @@ func (p *lanP2P) Send(frame packet.RoutedFrame) error {
 		return packet.ErrLinkUnavailable
 	}
 	peer.lastTrafficClass.Store(classifyLANFrame(frame))
+	peer.lastTrafficAt.Store(time.Now().UnixNano())
 	if p.pathPolicy.PreferRelay && !peer.datagramReady.Load() {
 		return packet.ErrLinkUnavailable
 	}
@@ -909,6 +933,37 @@ func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager)
 	return true
 }
 
+func (p *lanP2P) markPunchSignal(peer *lanP2PPeer, signal uint32) bool {
+	if peer == nil || signal == lanPunchSignalNone {
+		return false
+	}
+	for {
+		old := peer.punchSignals.Load()
+		next := old | signal
+		if old == next {
+			break
+		}
+		if peer.punchSignals.CompareAndSwap(old, next) {
+			break
+		}
+	}
+	return p.markDatagramReadyIfConfirmed(peer)
+}
+
+func (p *lanP2P) markDatagramReadyIfConfirmed(peer *lanP2PPeer) bool {
+	if peer == nil || peer.tx == nil || peer.rx == nil {
+		return false
+	}
+	signals := peer.punchSignals.Load()
+	if signals&(lanPunchSignalIncoming|lanPunchSignalAck) != (lanPunchSignalIncoming | lanPunchSignalAck) {
+		return false
+	}
+	if peer.datagramReady.CompareAndSwap(false, true) {
+		log.Printf("LAN P2P datagram two-way confirmed: peer=%s signals=%d", peer.id, signals)
+	}
+	return peer.datagramReady.Load()
+}
+
 func (p *lanP2P) openTunnelUnlessDatagramReady(ctx context.Context, adapter *wintun.Adapter, router *packet.Router, link *packet.LinkManager, peer *lanP2PPeer) {
 	if p.pathPolicy.RelayOnly {
 		log.Printf("LAN P2P KCP open skipped: peer=%s policy=%s", peer.id, p.pathPolicy.Name)
@@ -934,7 +989,7 @@ func (p *lanP2P) SendDatagram(frame packet.RoutedFrame) error {
 }
 
 func (p *lanP2P) SendUDPRelayFrame(frame packet.RoutedFrame) error {
-	if p == nil || p.server == nil {
+	if p == nil || p.server == nil || !p.pathPolicy.relayAvailable() {
 		return packet.ErrLinkUnavailable
 	}
 	wire, err := lantransport.PackRelayFrame(lantransport.RelayFrame{
@@ -990,7 +1045,7 @@ func (p *lanP2P) peerDataPath(peerID string) (string, string) {
 		return "", "peer_unavailable"
 	}
 	if peer.datagramReady.Load() && !peer.isRelay.Load() {
-		return lanPathP2PDatagram, "datagram_ready"
+		return lanPathP2PDatagram, "p2p_ready"
 	}
 	if peer.connected.Load() {
 		if peer.isRelay.Load() {
@@ -999,9 +1054,18 @@ func (p *lanP2P) peerDataPath(peerID string) (string, string) {
 		return lanPathP2PKCP, "kcp_connected"
 	}
 	if peer.isRelay.Load() {
+		if !p.pathPolicy.relayAvailable() {
+			return "", "relay_disabled"
+		}
 		return lanPathRelayUDP, "p2p_timeout"
 	}
+	if peer.longPunching.Load() {
+		return "", "long_punching"
+	}
 	if peer.punched.Load() {
+		if peer.punchSignals.Load() != 0 {
+			return "", "one_way_p2p"
+		}
 		return "", "punched_waiting_tunnel"
 	}
 	return "", "p2p_connecting"
@@ -1068,7 +1132,8 @@ func (p *lanP2P) startPunchLoop(ctx context.Context, peer *lanP2PPeer) {
 		return
 	}
 	go func() {
-		t := time.NewTicker(500 * time.Millisecond)
+		interval := 500 * time.Millisecond
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		attempts := 0
 		for {
@@ -1093,6 +1158,17 @@ func (p *lanP2P) startPunchLoop(ctx context.Context, peer *lanP2PPeer) {
 			attempts++
 			if attempts%6 == 0 {
 				log.Printf("LAN P2P punching: peer=%s sent=%d target=%s upnp=%v", peer.id, attempts, addr, upnpAddr)
+			}
+			if peer.longPunching.Load() && interval != lanLongPunchInterval {
+				interval = lanLongPunchInterval
+				t.Reset(interval)
+				log.Printf("LAN P2P long punching active: peer=%s interval=%s", peer.id, interval)
+			}
+			if peer.longPunching.Load() && !peer.hasActiveTraffic(lanActiveTrafficTTL) {
+				peer.longPunching.Store(false)
+				peer.punching.Store(false)
+				log.Printf("LAN P2P long punching stopped: peer=%s reason=idle ttl=%s", peer.id, lanActiveTrafficTTL)
+				return
 			}
 		}
 	}()
@@ -1194,17 +1270,43 @@ func (p *lanP2P) relayFallbackTimer(ctx context.Context, peerID string) {
 		p.relayTimers[peerID] = false
 	}
 	p.peerMu.Unlock()
+	if !p.pathPolicy.relayAvailable() {
+		p.enableLongPunching(ctx, peerID, fmt.Sprintf("relay disabled after punch timeout %s", lanPunchTimeout))
+		return
+	}
 	p.enableRelayMode(ctx, peerID, fmt.Sprintf("punch timeout %s", lanPunchTimeout))
+}
+
+func (p *lanP2P) enableLongPunching(ctx context.Context, peerID, reason string) {
+	if p == nil {
+		return
+	}
+	peer := p.peer(peerID)
+	if peer == nil || peer.datagramReady.Load() || peer.connected.Load() {
+		return
+	}
+	peer.longPunching.Store(true)
+	peer.isRelay.Store(false)
+	peer.relaySince.Store(0)
+	peer.punched.Store(false)
+	peer.punching.Store(false)
+	log.Printf("LAN P2P long punching: peer=%s reason=%s policy=%s relay_enabled=%v", peer.id, reason, p.pathPolicy.Name, p.pathPolicy.RelayEnabled)
+	p.startPunchLoop(ctx, peer)
 }
 
 func (p *lanP2P) enableRelayMode(ctx context.Context, peerID, reason string) {
 	if p == nil {
 		return
 	}
+	if !p.pathPolicy.relayAvailable() {
+		p.enableLongPunching(ctx, peerID, "relay_disabled_"+reason)
+		return
+	}
 	peer := p.peer(peerID)
 	if peer == nil || peer.punched.Load() {
 		return
 	}
+	peer.longPunching.Store(false)
 	peer.addr.Store(cloneUDPAddr(p.server))
 	peer.isRelay.Store(true)
 	peer.relaySince.Store(time.Now().UnixNano())
@@ -1275,6 +1377,14 @@ func (p *lanP2P) maybeRotateSocketAfterRelayFailure(ctx context.Context, peer *l
 	if p == nil || peer == nil || !peer.isRelay.Load() {
 		return false
 	}
+	if !p.pathPolicy.relayAvailable() {
+		log.Printf("LAN P2P socket rotation skipped: reason=%s peer=%s relay_enabled=false", reason, peer.id)
+		return false
+	}
+	if peer.hasActiveTraffic(lanActiveTrafficTTL) {
+		log.Printf("LAN P2P socket rotation skipped: reason=%s peer=%s active_traffic=true", reason, peer.id)
+		return false
+	}
 	failures := peer.openFailures.Add(1)
 	relaySinceRaw := peer.relaySince.Load()
 	relayAge := time.Duration(0)
@@ -1290,6 +1400,17 @@ func (p *lanP2P) maybeRotateSocketAfterRelayFailure(ctx context.Context, peer *l
 	}
 	go p.rotateSocketAndRestartPunch(ctx, fmt.Sprintf("%s peer=%s failures=%d relay_age=%s", reason, peer.id, failures, relayAge.Round(time.Second)))
 	return true
+}
+
+func (peer *lanP2PPeer) hasActiveTraffic(ttl time.Duration) bool {
+	if peer == nil || ttl <= 0 {
+		return false
+	}
+	lastRaw := peer.lastTrafficAt.Load()
+	if lastRaw <= 0 {
+		return false
+	}
+	return time.Since(time.Unix(0, lastRaw)) <= ttl
 }
 
 func (p *lanP2P) hasReadyPeer(except string) bool {
@@ -1387,6 +1508,8 @@ func (p *lanP2P) resetAllPeersAfterSocketRotation(ctx context.Context) {
 		peer.punching.Store(false)
 		peer.isRelay.Store(false)
 		peer.datagramReady.Store(false)
+		peer.longPunching.Store(false)
+		peer.punchSignals.Store(0)
 		peer.openFailures.Store(0)
 		peer.relaySince.Store(0)
 		peer.addr.Store(nil)
@@ -1433,6 +1556,7 @@ func (p *lanP2P) resetPeerAfterOpenFailure(ctx context.Context, peer *lanP2PPeer
 		peer.punched.Store(false)
 		peer.punching.Store(false)
 		peer.datagramReady.Store(false)
+		peer.punchSignals.Store(0)
 		p.resetRelayTimer(ctx, peer.id)
 	}
 	peer.kcpMu.Unlock()
@@ -1804,6 +1928,8 @@ func (p *lanP2P) readTunnelFrames(ctx context.Context, adapter *wintun.Adapter, 
 				peer.punched.Store(false)
 				peer.punching.Store(false)
 				peer.isRelay.Store(false)
+				peer.datagramReady.Store(false)
+				peer.punchSignals.Store(0)
 				p.resetRelayTimer(ctx, peer.id)
 			}
 			peer.kcpMu.Unlock()
@@ -1969,12 +2095,15 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		if !peer.isRelay.Load() || !p.pathPolicy.RelayOnly {
 			peer.addr.Store(cloneUDPAddr(src))
 		}
-		if msg.Payload == lanDatagramReadyFrame && peer.tx != nil && peer.rx != nil {
-			peer.datagramReady.Store(true)
+		datagramConfirmed := false
+		if msg.Payload == lanDatagramReadyFrame {
+			datagramConfirmed = p.markPunchSignal(peer, lanPunchSignalIncoming)
 		}
-		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && peer.datagramReady.Load() && !p.pathPolicy.RelayOnly) {
+		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && datagramConfirmed && !p.pathPolicy.RelayOnly) {
 			log.Printf("LAN P2P punched via incoming punch: peer=%s addr=%s", peer.id, src)
 			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
+		} else if msg.Payload == lanDatagramReadyFrame && !datagramConfirmed {
+			log.Printf("LAN P2P one-way punch observed: peer=%s addr=%s signal=incoming", peer.id, src)
 		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 		p.writeControl(src, &protocol.Message{Type: protocol.MsgPunchAck, From: p.deviceID, Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame})
@@ -1990,12 +2119,15 @@ func (p *lanP2P) handleControl(ctx context.Context, data []byte, src *net.UDPAdd
 		if !peer.isRelay.Load() || !p.pathPolicy.RelayOnly {
 			peer.addr.Store(cloneUDPAddr(src))
 		}
-		if msg.Payload == lanDatagramReadyFrame && peer.tx != nil && peer.rx != nil {
-			peer.datagramReady.Store(true)
+		datagramConfirmed := false
+		if msg.Payload == lanDatagramReadyFrame {
+			datagramConfirmed = p.markPunchSignal(peer, lanPunchSignalAck)
 		}
-		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && peer.datagramReady.Load() && !p.pathPolicy.RelayOnly) {
+		if peer.punched.CompareAndSwap(false, true) || (peer.isRelay.Load() && datagramConfirmed && !p.pathPolicy.RelayOnly) {
 			log.Printf("LAN P2P punched via ack: peer=%s addr=%s", peer.id, src)
 			p.openTunnelUnlessDatagramReady(ctx, adapter, router, link, peer)
+		} else if msg.Payload == lanDatagramReadyFrame && !datagramConfirmed {
+			log.Printf("LAN P2P one-way punch observed: peer=%s addr=%s signal=ack", peer.id, src)
 		}
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: src.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 	}
@@ -2166,6 +2298,9 @@ func lanNATTypeForPeer(p2p *lanP2P, peerID, dataPath string) string {
 	if p2p == nil {
 		return ""
 	}
+	if !p2p.pathPolicy.relayAvailable() && strings.TrimSpace(dataPath) == "" {
+		return "relay_disabled"
+	}
 	if strings.TrimSpace(p2p.upnpAddr) != "" {
 		return "upnp_mapped"
 	}
@@ -2187,6 +2322,9 @@ func lanNATTypeForPeer(p2p *lanP2P, peerID, dataPath string) string {
 
 func lanFallbackReason(p2p *lanP2P, dataPath, pathReason string) string {
 	if !strings.HasPrefix(dataPath, "relay_") {
+		if p2p != nil && !p2p.pathPolicy.relayAvailable() && strings.TrimSpace(pathReason) == "relay_disabled" {
+			return "relay_disabled"
+		}
 		return ""
 	}
 	if p2p != nil {
