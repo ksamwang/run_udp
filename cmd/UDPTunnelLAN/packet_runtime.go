@@ -58,6 +58,10 @@ const (
 	lanPendingMaxPerSession = 8
 	lanSessionIntentTTL     = 30 * time.Second
 	lanSessionIntentMax     = 256
+	lanHotPathTTL           = 20 * time.Minute
+	lanHotPathKeepAliveMin  = 30 * time.Second
+	lanHotPathKeepAliveMid  = 60 * time.Second
+	lanHotPathKeepAliveMax  = 2 * time.Minute
 	lanDatagramReadyFrame   = "UDPTunnelLAN-DATAGRAM-READY"
 )
 
@@ -578,6 +582,15 @@ func isLANFastPathPort(port int) bool {
 	}
 }
 
+func isLANHotPathPort(port int) bool {
+	switch port {
+	case 22, 139, 445, 3389:
+		return true
+	default:
+		return false
+	}
+}
+
 type lanSessionIntent struct {
 	Key          string
 	PeerID       string
@@ -590,6 +603,21 @@ type lanSessionIntent struct {
 	FirstSeen    time.Time
 	LastSeen     time.Time
 	Packets      int
+}
+
+type lanHotPath struct {
+	Key             string
+	PeerID          string
+	DstPort         int
+	PublicAddr      string
+	Path            string
+	TrafficClass    string
+	Successes       int
+	Failures        int
+	LastSuccess     time.Time
+	LastUsed        time.Time
+	NextKeepAliveAt time.Time
+	LastFailure     string
 }
 
 func newLANSessionIntent(frame packet.RoutedFrame, now time.Time) (lanSessionIntent, bool) {
@@ -814,6 +842,8 @@ type lanP2P struct {
 	openRetries     map[string]bool
 	sessionIntents  map[string]*lanSessionIntent
 	sessionMu       sync.Mutex
+	hotPaths        map[string]*lanHotPath
+	hotPathMu       sync.Mutex
 	readLoopGen     atomic.Uint64
 	rotating        atomic.Bool
 	lastRotation    atomic.Int64
@@ -869,7 +899,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	upnpMapping, upnpAddr := tryLANUPnPFunc(ctx, conn, deviceID)
 	p := &lanP2P{
 		conn: conn, upnpMapping: upnpMapping, server: server, pathPolicy: pathPolicy, tcpFastPath: strings.TrimSpace(resp.Network.TCPFastPath), deviceID: deviceID, identity: identity, adapter: adapter, router: router, link: link, x25519Priv: priv, x25519Pub: pub,
-		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{}, sessionIntents: map[string]*lanSessionIntent{},
+		upnpAddr: upnpAddr, peers: map[string]*lanP2PPeer{}, peerConv: map[uint32]string{}, peerConvProfile: map[uint32]string{}, registering: map[string]bool{}, relayTimers: map[string]bool{}, openRetries: map[string]bool{}, sessionIntents: map[string]*lanSessionIntent{}, hotPaths: map[string]*lanHotPath{},
 	}
 	p.pathPolicy.RelayEnabled = resp.RelayEnabled
 	p.pathPolicy.RelayConfigured = true
@@ -886,6 +916,7 @@ func startLANP2P(ctx context.Context, serverAddr string, adapter *wintun.Adapter
 	p.UpsertPeers(ctx, identity, resp.Peers)
 	p.enableRelayForBadNAT(ctx)
 	p.startReadLoop(ctx)
+	go p.hotPathMaintenanceLoop(ctx)
 	log.Printf("LAN P2P started: socket=%s server=%s upnp=%q peers=%d", conn.LocalAddr(), server, upnpAddr, len(resp.Peers))
 	return p
 }
@@ -1062,6 +1093,7 @@ func (p *lanP2P) RecordSessionIntent(ctx context.Context, frame packet.RoutedFra
 
 	peer.lastTrafficClass.Store(intent.TrafficClass)
 	peer.lastTrafficAt.Store(now.UnixNano())
+	p.tryUseHotPath(ctx, peer, intent, now)
 	if !peer.datagramReady.Load() && !peer.connected.Load() && !p.pathPolicy.RelayOnly {
 		if !p.pathPolicy.relayAvailable() {
 			peer.longPunching.Store(true)
@@ -1071,6 +1103,28 @@ func (p *lanP2P) RecordSessionIntent(ctx context.Context, frame packet.RoutedFra
 	}
 	log.Printf("LAN session intent: peer=%s proto=%s src=%s:%d dst=%s:%d class=%s intents=%d",
 		intent.PeerID, intent.Protocol, intent.SrcIP, intent.SrcPort, intent.DstIP, intent.DstPort, intent.TrafficClass, activeCount)
+}
+
+func (p *lanP2P) tryUseHotPath(ctx context.Context, peer *lanP2PPeer, intent lanSessionIntent, now time.Time) {
+	if p == nil || peer == nil || !isLANHotPathPort(intent.DstPort) || p.pathPolicy.RelayOnly {
+		return
+	}
+	hot, ok := p.hotPath(intent.PeerID, intent.DstPort, now)
+	if !ok {
+		return
+	}
+	addr, err := net.ResolveUDPAddr("udp", hot.PublicAddr)
+	if err != nil || addr == nil {
+		p.markHotPathFailure(intent.PeerID, intent.DstPort, "bad_addr")
+		return
+	}
+	if !peer.datagramReady.Load() && !peer.connected.Load() {
+		peer.addr.Store(addr)
+		peer.longPunching.Store(false)
+		peer.punched.Store(false)
+		p.startPunchLoop(ctx, peer)
+	}
+	log.Printf("LAN hot path reuse: peer=%s port=%d addr=%s path=%s successes=%d", intent.PeerID, intent.DstPort, hot.PublicAddr, hot.Path, hot.Successes)
 }
 
 func (p *lanP2P) sessionIntent(peerID string, srcPort, dstPort int) (lanSessionIntent, bool) {
@@ -1107,6 +1161,122 @@ func (p *lanP2P) pruneSessionIntentsLocked(now time.Time) {
 			}
 		}
 		delete(p.sessionIntents, oldestKey)
+	}
+}
+
+func hotPathKey(peerID string, dstPort int) string {
+	if strings.TrimSpace(peerID) == "" || dstPort <= 0 {
+		return ""
+	}
+	return peerID + "\x00" + strconv.Itoa(dstPort)
+}
+
+func (p *lanP2P) hotPath(peerID string, dstPort int, now time.Time) (lanHotPath, bool) {
+	if p == nil {
+		return lanHotPath{}, false
+	}
+	p.hotPathMu.Lock()
+	defer p.hotPathMu.Unlock()
+	p.pruneHotPathsLocked(now)
+	hot := p.hotPaths[hotPathKey(peerID, dstPort)]
+	if hot == nil {
+		return lanHotPath{}, false
+	}
+	hot.LastUsed = now
+	return *hot, true
+}
+
+func (p *lanP2P) rememberHotPath(peer *lanP2PPeer, path string) {
+	if p == nil || peer == nil || peer.isRelay.Load() {
+		return
+	}
+	addr := peer.addr.Load()
+	if addr == nil {
+		return
+	}
+	now := time.Now()
+	intents := p.activeSessionIntentsForPeer(peer.id, now)
+	if len(intents) == 0 {
+		return
+	}
+	p.hotPathMu.Lock()
+	if p.hotPaths == nil {
+		p.hotPaths = map[string]*lanHotPath{}
+	}
+	p.pruneHotPathsLocked(now)
+	for _, intent := range intents {
+		if !isLANHotPathPort(intent.DstPort) {
+			continue
+		}
+		key := hotPathKey(peer.id, intent.DstPort)
+		hot := p.hotPaths[key]
+		if hot == nil {
+			hot = &lanHotPath{Key: key, PeerID: peer.id, DstPort: intent.DstPort}
+			p.hotPaths[key] = hot
+		}
+		hot.PublicAddr = addr.String()
+		hot.Path = path
+		hot.TrafficClass = intent.TrafficClass
+		hot.Successes++
+		hot.LastSuccess = now
+		hot.LastUsed = now
+		hot.LastFailure = ""
+		hot.NextKeepAliveAt = now.Add(hotPathKeepAliveEvery(now.Sub(hot.LastSuccess)))
+		log.Printf("LAN hot path learned: peer=%s port=%d addr=%s path=%s successes=%d", peer.id, intent.DstPort, hot.PublicAddr, path, hot.Successes)
+	}
+	p.hotPathMu.Unlock()
+}
+
+func (p *lanP2P) markHotPathFailure(peerID string, dstPort int, reason string) {
+	if p == nil {
+		return
+	}
+	p.hotPathMu.Lock()
+	defer p.hotPathMu.Unlock()
+	hot := p.hotPaths[hotPathKey(peerID, dstPort)]
+	if hot == nil {
+		return
+	}
+	hot.Failures++
+	hot.LastFailure = reason
+	log.Printf("LAN hot path failed: peer=%s port=%d reason=%s failures=%d", peerID, dstPort, reason, hot.Failures)
+	if hot.Failures >= 2 {
+		delete(p.hotPaths, hot.Key)
+	}
+}
+
+func (p *lanP2P) activeSessionIntentsForPeer(peerID string, now time.Time) []lanSessionIntent {
+	if p == nil {
+		return nil
+	}
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
+	p.pruneSessionIntentsLocked(now)
+	out := make([]lanSessionIntent, 0)
+	for _, intent := range p.sessionIntents {
+		if intent.PeerID == peerID {
+			out = append(out, *intent)
+		}
+	}
+	return out
+}
+
+func (p *lanP2P) pruneHotPathsLocked(now time.Time) {
+	for key, hot := range p.hotPaths {
+		if now.Sub(hot.LastUsed) > lanHotPathTTL || now.Sub(hot.LastSuccess) > lanHotPathTTL {
+			delete(p.hotPaths, key)
+		}
+	}
+}
+
+func hotPathKeepAliveEvery(idle time.Duration) time.Duration {
+	switch {
+	case idle < 2*time.Minute:
+		return lanHotPathKeepAliveMin
+	case idle < 10*time.Minute:
+		return lanHotPathKeepAliveMid
+	default:
+		return lanHotPathKeepAliveMax
 	}
 }
 
@@ -1150,6 +1320,7 @@ func (p *lanP2P) useDatagramFastPath(peer *lanP2PPeer, link *packet.LinkManager)
 	if link != nil {
 		_, _ = link.UpsertPeer(packet.PeerEndpoint{DeviceID: peer.id, Addr: addr.String()}, packet.PeerEndpoint{Addr: "udp-relay"}, true)
 	}
+	p.rememberHotPath(peer, lanPathP2PDatagram)
 	log.Printf("LAN P2P datagram path ready: peer=%s addr=%s path=%s", peer.id, addr, lanPathP2PDatagram)
 	return true
 }
@@ -1181,6 +1352,9 @@ func (p *lanP2P) markDatagramReadyIfConfirmed(peer *lanP2PPeer) bool {
 	}
 	if peer.datagramReady.CompareAndSwap(false, true) {
 		log.Printf("LAN P2P datagram two-way confirmed: peer=%s signals=%d", peer.id, signals)
+	}
+	if peer.datagramReady.Load() {
+		p.rememberHotPath(peer, lanPathP2PDatagram)
 	}
 	return peer.datagramReady.Load()
 }
@@ -1393,6 +1567,61 @@ func (p *lanP2P) startPunchLoop(ctx context.Context, peer *lanP2PPeer) {
 			}
 		}
 	}()
+}
+
+func (p *lanP2P) hotPathMaintenanceLoop(ctx context.Context) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			p.sendDueHotPathKeepAlives(now)
+		}
+	}
+}
+
+func (p *lanP2P) sendDueHotPathKeepAlives(now time.Time) {
+	if p == nil {
+		return
+	}
+	p.peerMu.RLock()
+	peers := make([]*lanP2PPeer, 0, len(p.peers))
+	for _, peer := range p.peers {
+		peers = append(peers, peer)
+	}
+	p.peerMu.RUnlock()
+	for _, peer := range peers {
+		p.sendDueHotPathKeepAlive(peer, now)
+	}
+}
+
+func (p *lanP2P) sendDueHotPathKeepAlive(peer *lanP2PPeer, now time.Time) {
+	if p == nil || peer == nil || !peer.datagramReady.Load() || peer.isRelay.Load() {
+		return
+	}
+	addr := peer.addr.Load()
+	if addr == nil {
+		return
+	}
+	p.hotPathMu.Lock()
+	p.pruneHotPathsLocked(now)
+	due := make([]int, 0)
+	for _, hot := range p.hotPaths {
+		if hot.PeerID != peer.id || hot.NextKeepAliveAt.IsZero() || hot.NextKeepAliveAt.After(now) {
+			continue
+		}
+		due = append(due, hot.DstPort)
+		hot.NextKeepAliveAt = now.Add(hotPathKeepAliveEvery(now.Sub(hot.LastUsed)))
+	}
+	p.hotPathMu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	msg := &protocol.Message{Type: protocol.MsgPunch, From: p.deviceID, Profile: store.ProfileLANPacket, Payload: lanDatagramReadyFrame}
+	p.writeControl(addr, msg)
+	log.Printf("LAN hot path keepalive: peer=%s ports=%v addr=%s", peer.id, due, addr)
 }
 
 func (p *lanP2P) writeControl(dst *net.UDPAddr, msg *protocol.Message) {
@@ -1990,6 +2219,9 @@ func (p *lanP2P) openTunnel(ctx context.Context, adapter *wintun.Adapter, router
 		path = packet.LinkPathRelay
 		dataPath = "relay_kcp"
 	}
+	if path == packet.LinkPathP2P {
+		p.rememberHotPath(peer, dataPath)
+	}
 	log.Printf("LAN P2P KCP tunnel ready: peer=%s role=%s path=%s link_path=%s", peer.id, role, dataPath, path)
 	go func() {
 		<-ctx.Done()
@@ -2151,6 +2383,7 @@ func (p *lanP2P) readTunnelFrames(ctx context.Context, adapter *wintun.Adapter, 
 				peer.isRelay.Store(false)
 				peer.datagramReady.Store(false)
 				peer.punchSignals.Store(0)
+				p.markHotPathsForPeerFailed(peer.id, "kcp_read_failed")
 				p.resetRelayTimer(ctx, peer.id)
 			}
 			peer.kcpMu.Unlock()
@@ -2191,6 +2424,24 @@ func (p *lanP2P) handleDatagramFrame(adapter *wintun.Adapter, router *packet.Rou
 	log.Printf("LAN P2P datagram frame received: peer=%s path=%s bytes=%d", peer.id, lanPathP2PDatagram, len(payload))
 	if err := adapter.WritePacket(payload); err != nil {
 		log.Printf("LAN P2P datagram write packet failed: peer=%s bytes=%d err=%v", peer.id, len(payload), err)
+	}
+}
+
+func (p *lanP2P) markHotPathsForPeerFailed(peerID string, reason string) {
+	if p == nil {
+		return
+	}
+	p.hotPathMu.Lock()
+	defer p.hotPathMu.Unlock()
+	for key, hot := range p.hotPaths {
+		if hot.PeerID != peerID {
+			continue
+		}
+		hot.Failures++
+		hot.LastFailure = reason
+		if hot.Failures >= 2 {
+			delete(p.hotPaths, key)
+		}
 	}
 }
 

@@ -326,6 +326,101 @@ func TestLANP2PRecordSessionIntentStartsPunching(t *testing.T) {
 	}
 }
 
+func TestLANP2PHotPathLearnAndReuse(t *testing.T) {
+	peer := &lanP2PPeer{id: "dev-b"}
+	firstAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40000}
+	peer.addr.Store(firstAddr)
+	p := &lanP2P{
+		deviceID: "dev-a",
+		peers:    map[string]*lanP2PPeer{"dev-b": peer},
+		pathPolicy: lanPathPolicyConfig{
+			Name: "prefer_p2p", RelayEnabled: false, RelayConfigured: true,
+		},
+		hotPaths: map[string]*lanHotPath{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	syn := packet.RoutedFrame{
+		NetworkID: 7, DstDevice: "dev-b", Payload: []byte("syn"),
+		Header: packet.IPv4Header{
+			Protocol: packet.IPv4ProtocolTCP,
+			SourceIP: net.IPv4(172, 16, 10, 2), DestIP: net.IPv4(172, 16, 10, 3),
+			SourcePort: 51000, DestPort: 3389, TCPSYN: true,
+		},
+	}
+	p.RecordSessionIntent(ctx, syn)
+	peer.datagramReady.Store(true)
+	p.rememberHotPath(peer, lanPathP2PDatagram)
+
+	hot, ok := p.hotPath("dev-b", 3389, time.Now())
+	if !ok || hot.PublicAddr != firstAddr.String() || hot.Path != lanPathP2PDatagram {
+		t.Fatalf("hot path not learned: ok=%v hot=%+v", ok, hot)
+	}
+
+	peer.datagramReady.Store(false)
+	peer.connected.Store(false)
+	peer.punching.Store(false)
+	peer.punched.Store(false)
+	peer.addr.Store(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 41000})
+	retry := syn
+	retry.Header.SourcePort = 51001
+	p.RecordSessionIntent(ctx, retry)
+
+	if got := peer.addr.Load(); got == nil || got.String() != firstAddr.String() {
+		t.Fatalf("hot path address not reused: %v", got)
+	}
+	if !peer.punching.Load() {
+		t.Fatal("hot path reuse should start punching")
+	}
+}
+
+func TestLANP2PHotPathKeepAliveAndFailure(t *testing.T) {
+	conn, dst, err := udpPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	defer dst.Close()
+	peer := &lanP2PPeer{id: "dev-b"}
+	peer.addr.Store(dst.LocalAddr().(*net.UDPAddr))
+	peer.datagramReady.Store(true)
+	now := time.Now()
+	p := &lanP2P{
+		conn:     conn,
+		deviceID: "dev-a",
+		peers:    map[string]*lanP2PPeer{"dev-b": peer},
+		hotPaths: map[string]*lanHotPath{
+			hotPathKey("dev-b", 3389): {
+				Key: hotPathKey("dev-b", 3389), PeerID: "dev-b", DstPort: 3389,
+				PublicAddr: dst.LocalAddr().String(), Path: lanPathP2PDatagram,
+				Successes: 1, LastSuccess: now.Add(-time.Minute), LastUsed: now.Add(-time.Minute),
+				NextKeepAliveAt: now.Add(-time.Second),
+			},
+		},
+	}
+
+	p.sendDueHotPathKeepAlive(peer, now)
+
+	buf := make([]byte, 2048)
+	_ = dst.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := dst.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := protocol.Decode(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != protocol.MsgPunch || msg.Payload != lanDatagramReadyFrame {
+		t.Fatalf("bad hot path keepalive: %+v", msg)
+	}
+	p.markHotPathsForPeerFailed("dev-b", "test")
+	p.markHotPathsForPeerFailed("dev-b", "test")
+	if _, ok := p.hotPath("dev-b", 3389, time.Now()); ok {
+		t.Fatal("failed hot path should be removed")
+	}
+}
+
 func TestLANTCPFastPathCandidate(t *testing.T) {
 	tests := []struct {
 		name  string
