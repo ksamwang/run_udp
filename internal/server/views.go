@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"udp_tunnel_demo/internal/store"
 )
+
+const lanOnlineTTL = 60 * time.Second
 
 func (a *App) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 	devices, err := a.db.ListDevices(ctx)
@@ -19,6 +23,30 @@ func (a *App) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	productStates, err := a.db.ListDeviceProductStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	virtualAddresses, err := a.db.ListVirtualAddresses(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	peerStates, err := a.db.ListVirtualPeerStates(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	productByDevice := map[string]map[string]store.DeviceProductState{}
+	for _, state := range productStates {
+		if productByDevice[state.DeviceID] == nil {
+			productByDevice[state.DeviceID] = map[string]store.DeviceProductState{}
+		}
+		productByDevice[state.DeviceID][state.Product] = state
+	}
+	addressByDevice := map[string]store.VirtualAddress{}
+	for _, address := range virtualAddresses {
+		addressByDevice[address.DeviceID] = address
+	}
+	lanByDevice := summarizeLANPeerStates(peerStates)
 	stateMap := latestStateByPair(states)
 	deviceErrs := map[string]string{}
 	for _, st := range states {
@@ -51,8 +79,108 @@ func (a *App) enrichedDevices(ctx context.Context) ([]store.Device, error) {
 			devices[i].HealthSummary = "有规则但未建链"
 		}
 		devices[i].LastError = deviceErrs[devices[i].ID]
+		applyProductStateToDevice(&devices[i], productByDevice[devices[i].ID], addressByDevice[devices[i].ID], lanByDevice[devices[i].ID])
 	}
 	return devices, nil
+}
+
+type lanPeerSummary struct {
+	p2pPeers           int
+	relayPeers         int
+	downPeers          int
+	adapterState       string
+	selectedCIDR       string
+	routeConflict      string
+	lastError          string
+	activeSessions     int
+	hotPaths           int
+	socketRotations    uint64
+	lastRotationReason string
+	updatedAt          string
+}
+
+func summarizeLANPeerStates(states []store.VirtualPeerState) map[string]lanPeerSummary {
+	out := map[string]lanPeerSummary{}
+	for _, state := range states {
+		summary := out[state.DeviceID]
+		switch state.Path {
+		case "p2p":
+			summary.p2pPeers++
+		case "relay":
+			summary.relayPeers++
+		default:
+			if state.State == "down" || state.Path == "down" || state.Path == "" {
+				summary.downPeers++
+			}
+		}
+		if summary.updatedAt == "" || state.UpdatedAt > summary.updatedAt {
+			summary.updatedAt = state.UpdatedAt
+			summary.adapterState = state.AdapterState
+			summary.selectedCIDR = state.SelectedCIDR
+			summary.routeConflict = state.RouteConflict
+			summary.lastError = state.LastError
+			summary.lastRotationReason = state.LastRotationReason
+		}
+		summary.activeSessions += state.ActiveSessions
+		summary.hotPaths += state.HotPaths
+		if state.SocketRotations > summary.socketRotations {
+			summary.socketRotations = state.SocketRotations
+		}
+		out[state.DeviceID] = summary
+	}
+	return out
+}
+
+func applyProductStateToDevice(d *store.Device, states map[string]store.DeviceProductState, address store.VirtualAddress, lan lanPeerSummary) {
+	capabilities := []string{}
+	if agent, ok := states["agent"]; ok {
+		capabilities = append(capabilities, "Agent")
+		d.AgentOnline = agent.Online
+		d.LastAgentSeen = agent.LastSeenAt
+		d.AgentLastSource = agent.LastSource
+	}
+	if lanState, ok := states["lan"]; ok {
+		if lanState.LastSource == "lan_status" {
+			capabilities = append(capabilities, "UDPTunnelLAN")
+		}
+		d.LastLANSeen = lanState.LastSeenAt
+		d.LANLastSource = lanState.LastSource
+		d.LANLastError = firstString(lan.lastError, lanState.LastError)
+		d.LANOnline = lanState.LastSource == "lan_status" && recentWithin(lanState.LastSeenAt, lanOnlineTTL)
+	}
+	d.ProductCapabilities = capabilities
+	d.LANVirtualIP = address.VirtualIP
+	d.LANNetworkID = address.NetworkID
+	d.LANAdapterState = lan.adapterState
+	d.LANSelectedCIDR = lan.selectedCIDR
+	d.LANRouteConflict = lan.routeConflict
+	if lan.p2pPeers+lan.relayPeers+lan.downPeers > 0 {
+		d.LANPathSummary = fmt.Sprintf("P2P %d / Relay %d / Down %d", lan.p2pPeers, lan.relayPeers, lan.downPeers)
+	}
+	d.LANActiveSessions = lan.activeSessions
+	d.LANHotPaths = lan.hotPaths
+	d.LANSocketRotations = lan.socketRotations
+	d.LANRotationReason = lan.lastRotationReason
+}
+
+func recentWithin(value string, ttl time.Duration) bool {
+	if value == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) <= ttl
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (a *App) enrichedRules(ctx context.Context) ([]store.ForwardRule, error) {

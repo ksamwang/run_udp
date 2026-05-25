@@ -1257,6 +1257,58 @@ func TestHandleDevicePatchDisablesAndListShowsHealth(t *testing.T) {
 	}
 }
 
+func TestAdminDevicesExposeProductStates(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	mustUpsertDevice(t, a, ctx, "dev-a", true)
+	if err := a.db.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: "dev-a", Product: "agent", Online: true, LastSource: "agent_heartbeat",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertVirtualAddress(ctx, store.VirtualAddress{
+		DeviceID: "dev-a", NetworkID: 1, VirtualIP: "172.16.10.2", Hostname: "dev-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.PutVirtualPeerState(ctx, store.VirtualPeerState{
+		DeviceID: "dev-a", PeerID: "dev-b", NetworkID: 1, Path: "p2p", AdapterState: "up",
+		SelectedCIDR: "172.16.10.0/24", ActiveSessions: 2, HotPaths: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: "dev-a", Product: "lan", Online: true, LastSource: "lan_status",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAdminJSON(t, a, http.MethodGet, "/api/admin/devices", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var devices []store.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("unexpected devices: %+v", devices)
+	}
+	got := devices[0]
+	if !got.AgentOnline || !got.LANOnline {
+		t.Fatalf("expected split online states: %+v", got)
+	}
+	if got.AgentLastSource != "agent_heartbeat" || got.LANLastSource != "lan_status" {
+		t.Fatalf("unexpected sources: %+v", got)
+	}
+	if got.LANVirtualIP != "172.16.10.2" || got.LANAdapterState != "up" || got.LANPathSummary != "P2P 1 / Relay 0 / Down 0" {
+		t.Fatalf("unexpected lan summary: %+v", got)
+	}
+	if len(got.ProductCapabilities) != 2 || got.ProductCapabilities[0] != "Agent" || got.ProductCapabilities[1] != "UDPTunnelLAN" {
+		t.Fatalf("unexpected capabilities: %+v", got.ProductCapabilities)
+	}
+}
+
 func TestHandleAgentEndpointsRejectDisabledDevice(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()

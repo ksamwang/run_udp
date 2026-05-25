@@ -60,6 +60,24 @@ export type Device = {
   created_at: string
   health_summary?: string
   last_error?: string
+  product_capabilities?: string[]
+  agent_online: boolean
+  last_agent_seen?: string
+  agent_last_source?: string
+  lan_online: boolean
+  last_lan_seen?: string
+  lan_last_source?: string
+  lan_last_error?: string
+  lan_virtual_ip?: string
+  lan_network_id?: number
+  lan_adapter_state?: string
+  lan_selected_cidr?: string
+  lan_route_conflict?: string
+  lan_path_summary?: string
+  lan_active_sessions?: number
+  lan_hot_paths?: number
+  lan_socket_rotations?: number
+  lan_last_rotation_reason?: string
 }
 
 export type ForwardRule = {

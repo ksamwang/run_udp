@@ -7,17 +7,46 @@ import (
 )
 
 type Device struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Addr          string `json:"addr"`
-	UpnpAddr      string `json:"upnp_addr,omitempty"`
-	Want          string `json:"want,omitempty"`
-	Online        bool   `json:"online"`
-	Enabled       bool   `json:"enabled"`
-	LastSeen      string `json:"last_seen"`
-	CreatedAt     string `json:"created_at"`
-	HealthSummary string `json:"health_summary,omitempty"`
-	LastError     string `json:"last_error,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Addr                string   `json:"addr"`
+	UpnpAddr            string   `json:"upnp_addr,omitempty"`
+	Want                string   `json:"want,omitempty"`
+	Online              bool     `json:"online"`
+	Enabled             bool     `json:"enabled"`
+	LastSeen            string   `json:"last_seen"`
+	CreatedAt           string   `json:"created_at"`
+	HealthSummary       string   `json:"health_summary,omitempty"`
+	LastError           string   `json:"last_error,omitempty"`
+	ProductCapabilities []string `json:"product_capabilities,omitempty"`
+	AgentOnline         bool     `json:"agent_online"`
+	LastAgentSeen       string   `json:"last_agent_seen,omitempty"`
+	AgentLastSource     string   `json:"agent_last_source,omitempty"`
+	LANOnline           bool     `json:"lan_online"`
+	LastLANSeen         string   `json:"last_lan_seen,omitempty"`
+	LANLastSource       string   `json:"lan_last_source,omitempty"`
+	LANLastError        string   `json:"lan_last_error,omitempty"`
+	LANVirtualIP        string   `json:"lan_virtual_ip,omitempty"`
+	LANNetworkID        int64    `json:"lan_network_id,omitempty"`
+	LANAdapterState     string   `json:"lan_adapter_state,omitempty"`
+	LANSelectedCIDR     string   `json:"lan_selected_cidr,omitempty"`
+	LANRouteConflict    string   `json:"lan_route_conflict,omitempty"`
+	LANPathSummary      string   `json:"lan_path_summary,omitempty"`
+	LANActiveSessions   int      `json:"lan_active_sessions,omitempty"`
+	LANHotPaths         int      `json:"lan_hot_paths,omitempty"`
+	LANSocketRotations  uint64   `json:"lan_socket_rotations,omitempty"`
+	LANRotationReason   string   `json:"lan_last_rotation_reason,omitempty"`
+}
+
+type DeviceProductState struct {
+	DeviceID   string         `json:"device_id"`
+	Product    string         `json:"product"`
+	Online     bool           `json:"online"`
+	LastSeenAt string         `json:"last_seen_at"`
+	LastSource string         `json:"last_source"`
+	Version    string         `json:"version,omitempty"`
+	LastError  string         `json:"last_error,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type ForwardRule struct {

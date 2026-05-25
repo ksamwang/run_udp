@@ -1,5 +1,5 @@
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Card, message, Popconfirm, Space, Switch, Table, Tooltip, Typography } from 'antd'
+import { Button, Card, message, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { useEffect, useState } from 'react'
@@ -75,13 +75,22 @@ export function DevicesPage() {
           loading={devices.isLoading}
           dataSource={devices.data || []}
           columns={[
-            { title: '状态', dataIndex: 'online', width: 96, render: (_, r) => <StatusTag online={r.online} enabled={r.enabled} /> },
+            {
+              title: '产品能力',
+              dataIndex: 'product_capabilities',
+              width: 180,
+              render: (_, r) => {
+                const caps = r.product_capabilities || []
+                return caps.length ? <Space size={4} wrap>{caps.map((cap) => <Tag key={cap}>{cap}</Tag>)}</Space> : <Typography.Text type="secondary">未发现产品</Typography.Text>
+              },
+            },
+            { title: 'Agent', dataIndex: 'agent_online', width: 110, render: (_, r) => r.agent_last_source ? <StatusTag online={r.agent_online} enabled={r.enabled} /> : <Tag>未发现</Tag> },
+            { title: 'UDPTunnelLAN', dataIndex: 'lan_online', width: 140, render: (_, r) => r.lan_last_source ? <StatusTag online={r.lan_online} enabled={r.enabled} /> : <Tag>未发现</Tag> },
             { title: '设备名', dataIndex: 'name', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{v || r.id}</Typography.Text><Typography.Text type="secondary" copyable>{r.id}</Typography.Text></Space> },
-            { title: '公网地址', dataIndex: 'addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
-            { title: '端口映射地址', dataIndex: 'upnp_addr', render: (v) => v ? <Typography.Text copyable>{v}</Typography.Text> : '-' },
-            { title: '健康摘要', dataIndex: 'health_summary', render: (v) => v || '-' },
-            { title: '最近错误', dataIndex: 'last_error', render: (v) => v || '-' },
-            { title: '最后心跳', dataIndex: 'last_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '最近来源', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text>Agent: {r.agent_last_source || '-'}</Typography.Text><Typography.Text>LAN: {r.lan_last_source || '-'}</Typography.Text></Space> },
+            { title: '最近 Agent 上报', dataIndex: 'last_agent_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '最近 LAN 上报', dataIndex: 'last_lan_seen', render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            { title: '最近错误', render: (_, r) => r.last_error || r.lan_last_error || '-' },
             { title: '启用', dataIndex: 'enabled', width: 88, render: (v, r) => <Switch checked={v} loading={enabledMutation.isPending} onChange={(checked) => enabledMutation.mutate({ id: r.id, enabled: checked })} /> },
             {
               title: '操作',

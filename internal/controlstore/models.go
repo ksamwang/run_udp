@@ -29,6 +29,19 @@ type Device struct {
 
 func (Device) TableName() string { return "devices" }
 
+type DeviceProductState struct {
+	DeviceID   string `gorm:"primaryKey;size:191;column:device_id"`
+	Product    string `gorm:"primaryKey;size:32;column:product"`
+	Online     bool   `gorm:"index;not null;default:false;column:online"`
+	LastSeenAt string `gorm:"index;size:64;not null;default:'';column:last_seen_at"`
+	LastSource string `gorm:"size:64;not null;default:'';column:last_source"`
+	Version    string `gorm:"size:64;not null;default:'';column:version"`
+	LastError  string `gorm:"type:text;not null;column:last_error"`
+	Metadata   string `gorm:"type:json;column:metadata"`
+}
+
+func (DeviceProductState) TableName() string { return "device_product_states" }
+
 type ForwardRule struct {
 	ID         int64  `gorm:"primaryKey;column:id"`
 	Name       string `gorm:"size:255;not null;default:'';column:name"`

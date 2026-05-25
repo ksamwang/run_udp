@@ -3,6 +3,7 @@ package controlstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -54,6 +55,7 @@ func (s *MySQLStore) AutoMigrate() error {
 		&Meta{},
 		&SystemSetting{},
 		&Device{},
+		&DeviceProductState{},
 		&ForwardRule{},
 		&Session{},
 		&AuditEvent{},
@@ -149,6 +151,53 @@ func (s *MySQLStore) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr,
 		LastSeen:  now,
 		CreatedAt: now,
 	}).Error
+}
+
+func (s *MySQLStore) UpsertDeviceProductState(ctx context.Context, state store.DeviceProductState) error {
+	if strings.TrimSpace(state.DeviceID) == "" || strings.TrimSpace(state.Product) == "" {
+		return nil
+	}
+	now := nowString()
+	if state.LastSeenAt == "" {
+		state.LastSeenAt = now
+	}
+	metadata := "{}"
+	if len(state.Metadata) > 0 {
+		if b, err := json.Marshal(state.Metadata); err == nil {
+			metadata = string(b)
+		} else {
+			return err
+		}
+	}
+	row := DeviceProductState{
+		DeviceID:   state.DeviceID,
+		Product:    state.Product,
+		Online:     state.Online,
+		LastSeenAt: state.LastSeenAt,
+		LastSource: state.LastSource,
+		Version:    state.Version,
+		LastError:  state.LastError,
+		Metadata:   metadata,
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}, {Name: "product"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"online": row.Online, "last_seen_at": row.LastSeenAt, "last_source": row.LastSource,
+			"version": row.Version, "last_error": row.LastError, "metadata": row.Metadata,
+		}),
+	}).Create(&row).Error
+}
+
+func (s *MySQLStore) ListDeviceProductStates(ctx context.Context) ([]store.DeviceProductState, error) {
+	var rows []DeviceProductState
+	if err := s.db.WithContext(ctx).Order("device_id, product").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]store.DeviceProductState, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toStore())
+	}
+	return out, nil
 }
 
 func (s *MySQLStore) MarkOfflineBefore(ctx context.Context, cutoff time.Time) error {
@@ -1107,6 +1156,17 @@ func (d Device) toStore() store.Device {
 	return store.Device{
 		ID: d.ID, Name: d.Name, Addr: d.Addr, UpnpAddr: d.UpnpAddr, Want: d.Want,
 		Online: d.Online, Enabled: d.Enabled, LastSeen: d.LastSeen, CreatedAt: d.CreatedAt,
+	}
+}
+
+func (s DeviceProductState) toStore() store.DeviceProductState {
+	metadata := map[string]any{}
+	if strings.TrimSpace(s.Metadata) != "" {
+		_ = json.Unmarshal([]byte(s.Metadata), &metadata)
+	}
+	return store.DeviceProductState{
+		DeviceID: s.DeviceID, Product: s.Product, Online: s.Online, LastSeenAt: s.LastSeenAt,
+		LastSource: s.LastSource, Version: s.Version, LastError: s.LastError, Metadata: metadata,
 	}
 }
 

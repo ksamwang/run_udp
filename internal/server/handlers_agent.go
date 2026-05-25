@@ -35,6 +35,9 @@ func (a *App) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	name := req.Name
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
 	if err == nil {
+		err = a.putAgentProductState(r.Context(), "agent_register", req.DeviceID, addr, req.UpnpAddr, "", req.NATType, a.agentOnline(req.Tunnels), req.Tunnels)
+	}
+	if err == nil {
 		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
 	}
 	writeJSONOrError(w, map[string]any{"ok": true}, err)
@@ -63,6 +66,9 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	name := req.Name
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, addr, req.UpnpAddr, "", a.agentOnline(req.Tunnels))
+	if err == nil {
+		err = a.putAgentProductState(r.Context(), "agent_heartbeat", req.DeviceID, addr, req.UpnpAddr, "", req.NATType, a.agentOnline(req.Tunnels), req.Tunnels)
+	}
 	if err == nil {
 		err = a.putTunnelReports(r.Context(), req.DeviceID, req.Tunnels)
 	}
@@ -103,6 +109,13 @@ func (a *App) handleAgentTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	online := req.State == "connecting" || req.State == "p2p" || req.State == "relay"
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, req.Name, addr, req.UpnpAddr, req.Peer, online)
+	if err == nil {
+		err = a.putAgentProductState(r.Context(), "agent_heartbeat", req.DeviceID, addr, req.UpnpAddr, req.Peer, req.NATType, online, []agentTunnelReport{{
+			Peer: req.Peer, Profile: req.Profile, State: req.State, Via: req.Via, NATType: req.NATType,
+			PublicAddr: req.PublicAddr, ConvID: req.ConvID, RTTMs: req.RTTMs, LastError: req.LastError,
+			Attempt: req.Attempt, NextRetryAt: req.NextRetryAt, LastTransitionAt: req.LastTransitionAt,
+		}})
+	}
 	if err == nil {
 		err = a.db.PutTunnelState(r.Context(), store.TunnelState{
 			DeviceID:         req.DeviceID,
@@ -146,6 +159,9 @@ func (a *App) handleAgentBootstrap(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.DeviceName)
 	resp := a.bootstrapConfig(r, req.DeviceID, name)
 	err := a.db.UpsertDevice(r.Context(), req.DeviceID, name, requestAddr(r), "", "", false)
+	if err == nil {
+		err = a.putAgentProductState(r.Context(), "agent_register", req.DeviceID, requestAddr(r), "", "", "", false, nil)
+	}
 	writeJSONOrError(w, resp, err)
 }
 
@@ -226,6 +242,26 @@ func (a *App) putTunnelReports(ctx context.Context, deviceID string, tunnels []a
 		}
 	}
 	return nil
+}
+
+func (a *App) putAgentProductState(ctx context.Context, source, deviceID, addr, upnpAddr, want, natType string, online bool, tunnels []agentTunnelReport) error {
+	metadata := map[string]any{
+		"addr": addr, "upnp_addr": upnpAddr, "want": want, "nat_type": natType,
+		"tunnel_state": "", "tunnel_via": "", "health_summary": "", "rule_count": 0,
+	}
+	lastError := ""
+	for _, t := range tunnels {
+		if metadata["tunnel_state"] == "" && strings.TrimSpace(t.State) != "" {
+			metadata["tunnel_state"] = t.State
+			metadata["tunnel_via"] = t.Via
+		}
+		if lastError == "" && strings.TrimSpace(t.LastError) != "" {
+			lastError = t.LastError
+		}
+	}
+	return a.db.UpsertDeviceProductState(ctx, store.DeviceProductState{
+		DeviceID: deviceID, Product: "agent", Online: online, LastSource: source, LastError: lastError, Metadata: metadata,
+	})
 }
 
 func (a *App) ensureAgentDeviceAllowed(ctx context.Context, deviceID string) error {

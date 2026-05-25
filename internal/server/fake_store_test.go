@@ -16,6 +16,7 @@ type fakeStore struct {
 	mu             sync.Mutex
 	meta           map[string]string
 	devices        map[string]store.Device
+	productStates  map[string]store.DeviceProductState
 	rules          map[int64]store.ForwardRule
 	nextRuleID     int64
 	sessions       map[int64]store.Session
@@ -43,6 +44,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		meta:           map[string]string{},
 		devices:        map[string]store.Device{},
+		productStates:  map[string]store.DeviceProductState{},
 		rules:          map[int64]store.ForwardRule{},
 		sessions:       map[int64]store.Session{},
 		tunnelStates:   map[string]store.TunnelState{},
@@ -113,6 +115,36 @@ func (s *fakeStore) UpsertDevice(ctx context.Context, id, name, addr, upnpAddr, 
 	d.LastSeen = now
 	s.devices[id] = d
 	return nil
+}
+
+func (s *fakeStore) UpsertDeviceProductState(ctx context.Context, state store.DeviceProductState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(state.DeviceID) == "" || strings.TrimSpace(state.Product) == "" {
+		return nil
+	}
+	if state.LastSeenAt == "" {
+		state.LastSeenAt = nowTestString()
+	}
+	key := state.DeviceID + "\x00" + state.Product
+	s.productStates[key] = state
+	return nil
+}
+
+func (s *fakeStore) ListDeviceProductStates(ctx context.Context) ([]store.DeviceProductState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.DeviceProductState, 0, len(s.productStates))
+	for _, state := range s.productStates {
+		out = append(out, state)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeviceID == out[j].DeviceID {
+			return out[i].Product < out[j].Product
+		}
+		return out[i].DeviceID < out[j].DeviceID
+	})
+	return out, nil
 }
 
 func (s *fakeStore) MarkOfflineBefore(ctx context.Context, cutoff time.Time) error {
